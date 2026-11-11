@@ -1,4 +1,4 @@
-import { PERMISSION_KEYS, type PermissionKey } from "@libiaolink/contracts";
+import { PERMISSION_KEYS, type PermissionKey, type TaskCapabilities } from "@libiaolink/contracts";
 import type { ActorAuthorization, DataScope } from "../identity/index.js";
 
 /**
@@ -84,35 +84,97 @@ export function isProjectVisible(
 export interface ProjectResourceContext {
   member: boolean;
   projectManager: boolean;
-  /** 当前项目的部门权限；项目内写操作必须为 edit。 */
-  groupAccessLevel?: "edit" | "view";
+  /** 当前账号是否负责本项目任一未删除任务（只读项目浏览来源）。 */
+  taskOwner?: boolean;
+  /** 当前项目的部门权限；null = 关系可见但部门规则未命中。 */
+  groupAccessLevel?: "edit" | "view" | null;
+  /** 有效项目访问级别；缺省时兼容回落 groupAccessLevel。 */
+  accessLevel?: "edit" | "view";
+}
+
+/** 有效项目编辑权：管理员、本项目项目经理或规则 edit（均汇总进 accessLevel）；成员 / 任务负责人关系不提升。 */
+export function isProjectEditor(context?: Pick<ProjectResourceContext, "accessLevel" | "groupAccessLevel">): boolean {
+  return context?.accessLevel === "edit" || (context?.accessLevel === undefined && context?.groupAccessLevel === "edit");
 }
 
 /**
- * 项目内角色隐含的权限位（ADR-011 §4.3 平权例外 + ADR-020 / ADR-023 既有口径）：
- * 名册成员在其项目内即可读、可改任务进度、可完成节点（节点操作一期平权）、可填日报与处理问题（A3 与 §4.1）。
+ * 任务级能力（Pro 逐人权限唯一口径）：
+ * - 项目编辑者（管理员 / 本项目项目经理 / 规则 edit）= 整项目任务可编辑；
+ * - 任务负责人 = 仅本人任务可编辑，不能改负责人 / 排序 / 删除 / 批量；
+ * - 其余 = 只读。
+ */
+export function taskCapabilitiesOf(
+  actorId: string,
+  context: Pick<ProjectResourceContext, "accessLevel" | "groupAccessLevel"> | null,
+  ownerIds: readonly string[],
+): TaskCapabilities {
+  if (isProjectEditor(context ?? undefined)) {
+    return {
+      level: "edit",
+      source: "project_edit",
+      canEditFields: true,
+      canUpdateProgress: true,
+      canComplete: true,
+      canFinalize: true,
+      canUpload: true,
+      canAssignOwners: true,
+      canDelete: true,
+    };
+  }
+  if (ownerIds.includes(actorId)) {
+    return {
+      level: "edit",
+      source: "task_owner",
+      canEditFields: true,
+      canUpdateProgress: true,
+      canComplete: true,
+      canFinalize: true,
+      canUpload: true,
+      canAssignOwners: false,
+      canDelete: false,
+    };
+  }
+  return {
+    level: "view",
+    source: "view",
+    canEditFields: false,
+    canUpdateProgress: false,
+    canComplete: false,
+    canFinalize: false,
+    canUpload: false,
+    canAssignOwners: false,
+    canDelete: false,
+  };
+}
+
+/**
+ * 项目内成员隐含的权限位：仅项目浏览与只读资源访问。
+ * 任务负责人的写能力由 taskCapabilitiesOf 逐任务裁决；项目级写操作要求当前项目 accessLevel=edit。
  */
 export const PROJECT_MEMBER_IMPLIED_KEYS: readonly PermissionKey[] = [
   "project.view",
   "member.view",
   "task.view",
-  "task.create",
-  "task.update",
-  "task.progress",
   "report.view",
-  "report.fill",
   "issue.view",
-  "issue.manage",
   "node.view",
-  "node.complete",
-  "file.upload",
   "file.download",
   "stakeholder.view",
 ];
 
-/** 项目内项目经理隐含的权限位：成员全部 + 项目维护 / 名册 / 节点增删 / 阶段推进回退（ADR-020 / ADR-023）。 */
+/**
+ * 项目内项目经理隐含的权限位：成员只读位 + 项目维护、任务、节点、日报、问题与文件写能力。
+ * 写位在此显式列出，不随成员只读集合变化（ADR-020 / ADR-023）。
+ */
 export const PROJECT_MANAGER_IMPLIED_KEYS: readonly PermissionKey[] = [
   ...PROJECT_MEMBER_IMPLIED_KEYS,
+  "task.create",
+  "task.update",
+  "task.progress",
+  "report.fill",
+  "issue.manage",
+  "node.complete",
+  "file.upload",
   "project.update",
   "project.delete",
   "project.archive",
@@ -126,16 +188,16 @@ export const PROJECT_MANAGER_IMPLIED_KEYS: readonly PermissionKey[] = [
 ];
 
 /**
- * 任务定档 / 取消定档的唯一角色口径（2026-10-27）：仅任务当前负责人或项目经理。
- * 项目经理来自 ProjectAccessContext（主数据 managerIds 或项目名册 project_manager）；
+ * 任务定档 / 取消定档的唯一口径（Pro 逐人权限）：任务当前负责人或项目编辑者。
+ * 被任命为本项目项目经理时由权限服务写入 accessLevel=edit；成员 / 任务负责人关系不凭关系本身定档。
  * 该规则同时供任务接口与文件定档联动任务定档的旁路复用，避免两套判定漂移。
  */
 export function canManageTaskFinalization(
   actorId: string,
   taskOwnerIds: readonly string[],
-  projectManager: boolean,
+  projectEditor: boolean,
 ): boolean {
-  return projectManager || taskOwnerIds.includes(actorId);
+  return projectEditor || taskOwnerIds.includes(actorId);
 }
 
 /** 策略层用到的全部权限键必须落在契约枚举内（防手写错字；用例覆盖）。 */

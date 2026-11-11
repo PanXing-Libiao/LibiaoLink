@@ -101,7 +101,7 @@ const throwId = created.body.id;
 console.log("抛荒项目：" + throwCode + "（" + throwId + "）");
 // 归档硬前置 = 验收阶段 done（SQL 夹具）；缺项 = 插入一条未完成任务（保证 422 二次确认路径可复现）。
 await db.query("update project_stages set status = $2, advanced_at = now() where project_id = $1 and stage_key = $3", [throwId, "done", "acceptance"]);
-await db.query("insert into tasks (project_id, title, status) values ($1, $2, $3)", [throwId, "回放-未完成任务-" + stamp, "pending"]);
+await db.query("insert into tasks (project_id, stage_key, manager_ids, title, status) select id, stage_key, manager_ids, $2, $3 from projects where id = $1", [throwId, "回放-未完成任务-" + stamp, "pending"]);
 
 async function cleanupThrowProject() {
   await db.query("delete from follows where object_type = $1 and object_id = $2", ["project", throwId]);

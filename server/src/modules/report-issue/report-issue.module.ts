@@ -8,6 +8,7 @@ import { NotifyModule } from "../notify/index.js";
 import { IssueRepository } from "./issue.repository.js";
 import { IssueService } from "./issue.service.js";
 import { IssueController, ReportController } from "./report-issue.controller.js";
+import { ReportDigestService } from "./report-digest.service.js";
 import { ReportRepository } from "./report.repository.js";
 import { ReportService } from "./report.service.js";
 import { ReportSummaryService } from "./report-summary.service.js";
@@ -24,8 +25,8 @@ import { ReportSummaryService } from "./report-summary.service.js";
 @Module({
   imports: [IdentityModule, PermissionModule, AdminModule, CalendarModule, ProjectModule, NotifyModule],
   controllers: [ReportController, IssueController],
-  providers: [ReportRepository, IssueRepository, ReportService, IssueService, ReportSummaryService],
-  exports: [ReportService, IssueService, ReportSummaryService],
+  providers: [ReportRepository, IssueRepository, ReportService, IssueService, ReportSummaryService, ReportDigestService],
+  exports: [ReportService, IssueService, ReportSummaryService, ReportDigestService],
 })
 export class ReportIssueModule {}
 

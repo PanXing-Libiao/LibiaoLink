@@ -44,7 +44,7 @@ function issueSnapshot(row: IssueRow): Record<string, unknown> {
  * 3) 关闭 = state=done 且 closed_at / closed_by 同写；回退（done → 其它态）一并清空（ck_issues_closed_pairs）；
  * 4) 空更新（无任何字段变化）= 400，防刷留痕；乐观锁 version 冲突 409；归档项目 409 PROJECT_ARCHIVED；
  * 5) 附图（file_links(object_type=issue)）整体替换；删除为成对删除（删问题 = 连它来源的那篇日报及其全部问题）。
- * 权限：读 = issue.view（成员平权）；写 = issue.manage（成员平权，见 permission.rules 平权例外）。
+ * 权限：读 = issue.view；写 = issue.manage，且要求当前项目 accessLevel=edit。
  */
 @Injectable()
 export class IssueService {
@@ -68,6 +68,19 @@ export class IssueService {
       limit: query.limit,
       total,
     };
+  }
+
+  /** 内部导出用：只读项目问题总数，不加载问题正文、负责人或附图。 */
+  async countForExport(projectId: string): Promise<number> {
+    return this.issues.countForExport(projectId);
+  }
+
+  /** 内部导出用：按页加载问题与附图，不重复查询 total。 */
+  async listForExport(projectId: string, query: { page: number; limit: number }): Promise<IssueListResponse["items"]> {
+    const filter = parseIssueFilter(query);
+    const rows = await this.issues.listForExport(projectId, filter, query.page, query.limit);
+    const photos = await loadIssuePhotos(rows.map((row) => row.id), this.database.db);
+    return rows.map((row) => this.toIssue(row, photos.get(row.id) ?? []));
   }
 
   /** GET /api/v1/projects/{id}/issues/{issueId}：问题 + 处理过程留痕（时间正序）。 */

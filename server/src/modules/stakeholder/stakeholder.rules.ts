@@ -1,6 +1,5 @@
 import { STAKEHOLDER_COMPANY_TYPES } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
-import type { ActorAuthorization } from "../identity/index.js";
 import type { ProjectScopeFilter } from "../permission/index.js";
 
 /**
@@ -9,22 +8,25 @@ import type { ProjectScopeFilter } from "../permission/index.js";
  */
 
 /**
- * 记录级可见集规格（v0.2 §4.1）：
- * all = 全量台账（项目可见集为 all，即管理员 / 数据范围含 all）；
- * restricted = 「我录入的」（A5-04 销售端口 / 数据范围 own_stakeholders 的落点）∪ 「关联项目落在我的可见项目内」（A5-03）。
- * 「我录入的」对所有角色恒成立（记录级兜底，避免「有角色反而看得更少」——与名册兜底同一口径）。
- * 两者都不命中 = 空集（不是全量）—— 宁可少看，不可越权。
+ * 记录级可见集规格：每条干系人记录归属一个项目，可见性只由所属项目决定。
+ * all = 全量台账（项目可见集为 all，即管理员）；restricted = 所属项目落在当前账号可见项目内。
+ * 项目之间互不继承：即使同一自然人由同一账号录入，不同项目也是独立记录。
  */
 export type StakeholderVisibility =
   | { kind: "all" }
-  | { kind: "restricted"; ownId: string | null; projectIds: string[] };
+  | { kind: "restricted"; projectIds: string[] };
 
-export function stakeholderVisibility(
-  authorization: ActorAuthorization,
-  projectScope: ProjectScopeFilter,
-): StakeholderVisibility {
+export function stakeholderVisibility(projectScope: ProjectScopeFilter): StakeholderVisibility {
   if (projectScope.kind === "all") return { kind: "all" };
-  return { kind: "restricted", ownId: authorization.userId, projectIds: [...projectScope.ids] };
+  return { kind: "restricted", projectIds: [...projectScope.ids] };
+}
+
+export function isStakeholderProjectFilterVisible(
+  filter: StakeholderFilter,
+  visibility: StakeholderVisibility,
+): boolean {
+  if (filter.projectId === null) return true;
+  return visibility.kind === "all" || visibility.projectIds.includes(filter.projectId);
 }
 
 /** 列表过滤条件（纯解析结果）。 */

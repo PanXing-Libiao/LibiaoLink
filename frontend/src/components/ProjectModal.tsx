@@ -55,7 +55,7 @@ type ProjectModalProps = {
   dictTools: DictTools;
   /** 是否持有 dict.manage（Push 172）：决定「＋ 添加项目类型」与两类条目删除入口的呈现（服务端仍是最终裁决）。 */
   canManageDicts: boolean;
-  /** 项目经理候选（GET /api/v1/users）。 */
+  /** 项目经理候选（有效项目部成员 ∪ 系统管理员；编辑时另含本项目存量经理，用于兼容历史数据）。 */
   managerOptions: Member[];
   /** 是否持有 project.archive（Push 262）：决定「已归档」选项的呈现（服务端仍是最终裁决）。 */
   canArchive?: boolean;
@@ -313,6 +313,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
               placeholder={t("drawer.manager.placeholder")}
               ariaLabel={t("drawer.manager.aria")}
             />
+            <span className="mt-1 block text-xs text-zinc-400">{t("manager.candidateHint")}</span>
           </div>
           <div className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">{t("modal.province")}</span>

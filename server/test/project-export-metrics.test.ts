@@ -27,15 +27,27 @@ function createService(projects: unknown): ProjectExportService {
 function createEmptyPageService(mode: "legacy" | "stream"): ProjectExportService {
   const emptyPage = { items: [], page: 1, limit: 200, total: 0 };
   const list = vi.fn().mockResolvedValue(emptyPage);
+  const emptyItems = vi.fn().mockResolvedValue([]);
+  const zero = vi.fn().mockResolvedValue(0);
   return new ProjectExportService(
     { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "指标测试项目", managerIds: [], managerNames: [] }) } as never,
-    { list } as never,
-    { list } as never,
-    { list } as never,
-    { listProjectChanges: list } as never,
-    { list } as never,
-    { listProjectFiles: list, listExportFileRefs: vi.fn().mockResolvedValue(new Map()) } as never,
-    { listUsers: list } as never,
+    { countForExport: zero, listForExport: emptyItems } as never,
+    { list, countForExport: zero, listForExport: emptyItems } as never,
+    { list, countForExport: zero, listForExport: emptyItems } as never,
+    { listProjectChanges: list, countProjectChangesForExport: zero, listProjectChangesForExport: emptyItems } as never,
+    {
+      list,
+      countForExport: zero,
+      listForExport: emptyItems,
+      prepareExportContext: vi.fn().mockResolvedValue({}),
+    } as never,
+    {
+      listProjectFiles: list,
+      countProjectFilesForExport: zero,
+      listProjectFilesForExport: emptyItems,
+      listExportFileRefs: vi.fn().mockResolvedValue(new Map()),
+    } as never,
+    { listUsers: list, countForExport: zero, listForExport: emptyItems } as never,
     { can: vi.fn().mockResolvedValue(true) } as never,
     { record: vi.fn().mockResolvedValue(undefined) } as never,
     { db: {} } as never,

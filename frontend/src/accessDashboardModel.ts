@@ -7,6 +7,7 @@ import type {
   GroupAccessProjectScope,
 } from "./accessApi";
 import { effectiveMemberAccess, scopePermissionsOf } from "./accessRules";
+import { automaticRoleOf, automaticRolesById, type AutomaticRoleSummary } from "./accessRoleModel";
 
 export type AccessLevel = "operate" | "view" | "login";
 export type AccessProjectLevel = "all" | "own" | "selected" | "login";
@@ -28,6 +29,7 @@ export type AccessPersonSummary = {
   isAdmin: boolean;
   level: AccessLevel;
   projectLevel: AccessProjectLevel;
+  automatic: AutomaticRoleSummary;
   searchText: string;
 };
 
@@ -114,7 +116,7 @@ function projectLevelOf(person: {
   member: GroupAccessMember;
   groups: readonly AccessPersonGroup[];
   isAdmin: boolean;
-}, groupsByKey: ReadonlyMap<string, GroupAccessGroup>): AccessProjectLevel {
+}, groupsByKey: ReadonlyMap<string, GroupAccessGroup>, automatic: AutomaticRoleSummary): AccessProjectLevel {
   if (person.isAdmin) return "all";
   let hasRule = false;
   let hasOwn = false;
@@ -131,8 +133,9 @@ function projectLevelOf(person: {
       if (permission.projectScope === "selected" && effective.projectIds.length > 0) hasSelected = true;
     }
   }
-  if (!hasRule) return "login";
-  if (hasOwn) return "own";
+  // 自动项目关系即使没有部门额外范围，也已在服务端形成可见项目；看板沿用同一口径，不再误计为“仅登录”。
+  if (!hasRule && automatic.relationCount === 0) return "login";
+  if (hasOwn || automatic.relationCount > 0) return "own";
   if (hasSelected) return "selected";
   return "login";
 }
@@ -141,8 +144,8 @@ function hasEditAccessOf(person: {
   member: GroupAccessMember;
   groups: readonly AccessPersonGroup[];
   isAdmin: boolean;
-}, groupsByKey: ReadonlyMap<string, GroupAccessGroup>): boolean {
-  if (person.isAdmin) return true;
+}, groupsByKey: ReadonlyMap<string, GroupAccessGroup>, automatic: AutomaticRoleSummary): boolean {
+  if (person.isAdmin || automatic.managerCount > 0) return true;
   for (const membership of person.groups) {
     const group = groupsByKey.get(membership.groupKey);
     if (group === undefined) continue;
@@ -190,13 +193,15 @@ function pathTextOf(path: readonly string[], groupKey: string): string {
  * 权限看板统计口径：
  * - 人与部门均来自 GET /api/v1/access；跨部门按 userId 去重。
  * - 系统管理员始终归入编辑，项目范围按全部项目计。
- * - 普通账号取所属部门全部适用规则的并集：任一 all 即全部；否则 own 优先，其次有项目的 selected；
- *   任一适用规则为 edit 且项目范围不是 none 才归编辑，否则为仅浏览；没有适用数据规则 = 仅登录。
+ * - 项目经理由项目关系自动获得编辑权；项目成员 / 任务负责人自动获得项目可见性。
+ * - 普通账号取自动项目关系与所属部门全部适用规则的并集：任一 all 即全部；否则关系 / own 优先，
+ *   其次有项目的 selected；自动项目经理或任一适用规则为 edit 才归编辑；完全没有关系与范围 = 仅登录。
  * - 看板只统计启用账号；停用账号仍在详情名单中展示，但不计入权限分布。
  */
 export function buildAccessDashboardModel(data: GroupAccessOverview, scopeGroupKey: string | null): AccessDashboardModel {
   const groupsByKey = new Map(data.groups.map((group) => [group.groupKey, group] as const));
   const projectsById = new Map(data.projects.map((project) => [project.id, project] as const));
+  const automaticById = automaticRolesById(data);
   const adminById = new Map(data.admins.map((admin) => [admin.userId, admin] as const));
   const scopedKey = scopeGroupKey !== null && groupsByKey.has(scopeGroupKey) ? scopeGroupKey : null;
   const scopeKeys = scopedKey === null ? null : new Set(subtreeKeysOf(scopedKey, groupsByKey));
@@ -246,8 +251,9 @@ export function buildAccessDashboardModel(data: GroupAccessOverview, scopeGroupK
   for (const person of peopleById.values()) {
     const admin = adminById.get(person.member.userId) ?? null;
     const isAdmin = admin !== null;
-    const projectLevel = projectLevelOf({ member: person.member, groups: person.groups, isAdmin }, groupsByKey);
-    const level = levelOf(projectLevel, isAdmin, hasEditAccessOf({ member: person.member, groups: person.groups, isAdmin }, groupsByKey));
+    const automatic = automaticRoleOf(automaticById, person.member.userId);
+    const projectLevel = projectLevelOf({ member: person.member, groups: person.groups, isAdmin }, groupsByKey, automatic);
+    const level = levelOf(projectLevel, isAdmin, hasEditAccessOf({ member: person.member, groups: person.groups, isAdmin }, groupsByKey, automatic));
     const searchParts = [person.member.displayName, person.member.username, person.member.email ?? "", ...person.groups.map((group) => group.pathText)];
     allPeople.push({
       member: person.member,
@@ -256,6 +262,7 @@ export function buildAccessDashboardModel(data: GroupAccessOverview, scopeGroupK
       isAdmin,
       level,
       projectLevel,
+      automatic,
       searchText: searchParts.join(" ").toLowerCase(),
     });
   }

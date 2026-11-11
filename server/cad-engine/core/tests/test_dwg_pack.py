@@ -1,12 +1,14 @@
 """Lossless DWG packed transport: fast rows, fallback rows and revision identity."""
+import base64
+import gzip
 from pathlib import Path
 import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from unified.canonical import canonical_sha256  # noqa: E402
-from unified.dwg_pack import pack_document, unpack_document  # noqa: E402
+from unified.canonical import canonical_chunks, canonical_sha256  # noqa: E402
+from unified.dwg_pack import COMPRESSED_FIELDS, compress_document, pack_document, unpack_document  # noqa: E402
 
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 STYLE = {'color': {'mode': 'by-layer'}, 'plot': True}
@@ -105,6 +107,28 @@ class PackedDwgTest(unittest.TestCase):
         self.assertEqual(unpacked['geometries'], document['geometries'])
         self.assertEqual(unpacked['representations'], document['representations'])
 
+    def test_temporary_polyline_keeps_source_points_for_special_displays(self):
+        from unified.dwg_adapter import _compact_display_polylines
+
+        doc = fixture()
+        points = [[10., 20., 0.], [30., 40., 0.]]
+        geometry = {'type': 'polyline', 'points': points, 'closed': False,
+                    'bulges': [0.], 'widths': [[0., 0.]]}
+        doc['drawing']['entities']['entity-1']['geometry'] = geometry
+        display = {'topology': 'lines', 'count': 2}
+        for special, expected in [(set(), 'paired'), ({'entity-1'}, 'zeros')]:
+            view = pack_document(doc)
+            _compact_display_polylines(view, {'entity-1': 'paired'}, {'entity-1': display}, special)
+            packed = view['packed']
+            row = next(r for r in packed['entities'] if packed['strings'][r[0]] == 'entity-1')
+            self.assertEqual(packed['polylineFields'], [['entity-1', expected]])
+            self.assertEqual(row[12].get('points'), points if special else None)
+            self.assertNotIn('widths', row[12])
+            self.assertNotIn('bulges', row[12])
+        self.assertEqual(geometry['points'], points)
+        self.assertEqual(geometry['widths'], [[0., 0.]])
+        self.assertEqual(geometry['bulges'], [0.])
+
     def test_fallback_entity_and_display_stay_verbatim(self):
         document = fixture()
         packed = pack_document(document)
@@ -116,6 +140,23 @@ class PackedDwgTest(unittest.TestCase):
         self.assertEqual(unpacked['drawing']['entities']['entity-2'],
                          document['drawing']['entities']['entity-2'])
         self.assertEqual(unpacked['geometries']['g-2'], document['geometries']['g-2'])
+
+    def test_early_curve_batches_preserve_canonical_bytes(self):
+        packed = pack_document(fixture())
+        display = packed['packed']['displays'][0]
+        packed['packed']['strings'].append('长字段："\\\\' * 3000)
+        for count in (0, 255, 256, 257):
+            with self.subTest(count=count):
+                packed['packed']['curveRows'] = [
+                    [format(i, 'X'), 'line', 'space-1', 'layer-0', 0, i, True, -0.0, i * 48, 2]
+                    for i in range(count)
+                ]
+                packed['packed']['displays'] = [display] * count
+                body = {key: packed[key] for key in COMPRESSED_FIELDS}
+                expected = b''.join(canonical_chunks(body))
+                compressed = compress_document(packed)['packed']
+                self.assertEqual(compressed['byteLength'], len(expected))
+                self.assertEqual(gzip.decompress(base64.b64decode(compressed['data'])), expected)
 
     def test_fallback_geometry_keeps_its_index_accessor(self):
         document = fixture()

@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { DeliverableTypeSchema, PRIORITY_VALUES } from "@libiaolink/contracts";
 import type { WorkspaceIssueItem, WorkspaceProject, WorkspaceResponse, WorkspaceTaskItem } from "@libiaolink/contracts";
-import { PermissionService } from "../permission/index.js";
+import { PermissionService, taskCapabilitiesOf } from "../permission/index.js";
 import { deriveDisplayStatus, deriveOnTime, shanghaiToday, type TaskDerivationInput } from "../task/index.js";
 import { WorkspaceRepository, type WorkspaceIssueRow, type WorkspaceProjectRow, type WorkspaceTaskRow } from "./workspace.repository.js";
 import { emptyTaskGroups, taskGroupOf } from "./workspace.rules.js";
@@ -29,11 +29,16 @@ export class WorkspaceService {
       this.repository.listMyTasks(actorId, scope),
       this.repository.listMyIssues(actorId, scope),
     ]);
+    const projectIds = uniqueProjectIds(taskRows, issueRows);
+    const accessLevels = await this.permission.projectGroupAccessLevelsOf(actorId, projectIds);
     const myTasks = emptyTaskGroups<WorkspaceTaskItem>();
     for (const row of taskRows) {
-      myTasks[taskGroupOf(row.plannedEnd, today)].push(toTaskItem(row, today));
+      const accessLevel = accessLevels.get(row.projectId) ?? "view";
+      myTasks[taskGroupOf(row.plannedEnd, today)].push(
+        toTaskItem(row, today, taskCapabilitiesOf(actorId, { accessLevel }, row.ownerIds)),
+      );
     }
-    const projects = await this.loadProjects(taskRows, issueRows, actorId);
+    const projects = await this.loadProjects(taskRows, issueRows, accessLevels);
     return {
       today,
       myTasks,
@@ -49,34 +54,41 @@ export class WorkspaceService {
   private async loadProjects(
     taskRows: readonly WorkspaceTaskRow[],
     issueRows: readonly WorkspaceIssueRow[],
-    actorId: string,
+    accessLevels: ReadonlyMap<string, "edit" | "view">,
   ): Promise<WorkspaceProject[]> {
-    const projectIds: string[] = [];
-    const seen = new Set<string>();
-    for (const projectId of [...taskRows.map((row) => row.projectId), ...issueRows.map((row) => row.projectId)]) {
-      if (seen.has(projectId)) continue;
-      seen.add(projectId);
-      projectIds.push(projectId);
-    }
+    const projectIds = uniqueProjectIds(taskRows, issueRows);
     const rows = await this.repository.listProjects(projectIds);
-    const levels = await this.permission.projectGroupAccessLevelsOf(actorId, rows.map((row) => row.id));
     const byId = new Map(rows.map((row) => [row.id, row]));
     const projects: WorkspaceProject[] = [];
     for (const projectId of projectIds) {
       const row = byId.get(projectId);
       if (row !== undefined) {
-        projects.push(toProjectItem(row, levels.get(row.id) ?? "view"));
+        projects.push(toProjectItem(row, accessLevels.get(row.id) ?? "view"));
       }
     }
     return projects;
   }
 }
 
+/** 工作台涉及的未删除项目 id（任务行优先，问题行补位；保持首次出现顺序）。 */
+function uniqueProjectIds(
+  taskRows: readonly WorkspaceTaskRow[],
+  issueRows: readonly WorkspaceIssueRow[],
+): string[] {
+  return Array.from(
+    new Set([...taskRows.map((row) => row.projectId), ...issueRows.map((row) => row.projectId)]),
+  );
+}
+
 /**
  * 行 → 契约视图：任务表 15 列全字段（2026-10-13 全字段修订）；displayStatus / onTime 读时派生（A1-06 / A14，含显式覆盖 · Push 179）；
  * 进度 / 优先级 / 成果类型归一化与任务列表同口径。
  */
-function toTaskItem(row: WorkspaceTaskRow, today: string): WorkspaceTaskItem {
+function toTaskItem(
+  row: WorkspaceTaskRow,
+  today: string,
+  capabilities: WorkspaceTaskItem["capabilities"],
+): WorkspaceTaskItem {
   const input: TaskDerivationInput = {
     status: row.status,
     statusOverride: row.statusOverride,
@@ -98,6 +110,8 @@ function toTaskItem(row: WorkspaceTaskRow, today: string): WorkspaceTaskItem {
     titleEn: row.titleEn,
     ownerIds: row.ownerIds,
     ownerNames: row.ownerNames ?? [],
+    managerIds: row.managerIds,
+    managerNames: row.managerNames ?? [],
     status: row.status as WorkspaceTaskItem["status"],
     displayStatus: deriveDisplayStatus(input),
     progress: normalizeProgress(Number(row.progress)),
@@ -118,6 +132,7 @@ function toTaskItem(row: WorkspaceTaskRow, today: string): WorkspaceTaskItem {
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    capabilities,
   };
 }
 
@@ -148,7 +163,7 @@ function toIssueItem(row: WorkspaceIssueRow): WorkspaceIssueItem {
 /** 行 → 契约项目卡（ProjectSchema + managerNames；时间戳转 ISO8601；权限按当前登录人裁决）。 */
 function toProjectItem(
   row: WorkspaceProjectRow,
-  groupAccessLevel: WorkspaceProject["groupAccessLevel"],
+  accessLevel: WorkspaceProject["accessLevel"],
 ): WorkspaceProject {
   return {
     id: row.id,
@@ -162,7 +177,8 @@ function toProjectItem(
     managerNames: row.managerNames ?? [],
     stageKey: row.stageKey as WorkspaceProject["stageKey"],
     status: row.status as WorkspaceProject["status"],
-    groupAccessLevel,
+    accessLevel,
+    groupAccessLevel: accessLevel,
     description: row.description,
     version: row.version,
     createdAt: row.createdAt.toISOString(),

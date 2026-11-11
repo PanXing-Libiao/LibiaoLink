@@ -91,6 +91,8 @@ function makeTask(overrides: Partial<WorkspaceTaskRow> = {}): WorkspaceTaskRow {
     updatedAt: new Date("2026-09-02T00:00:00.000Z"),
     ownerIds: [ME, OTHER],
     ownerNames: ["我", "他人"],
+    managerIds: [ME],
+    managerNames: ["我"],
     changeLinks: [],
     fileSummary: { total: 0, draft: 0, final: 0 },
     files: [],

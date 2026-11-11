@@ -61,6 +61,7 @@ export interface FileTaskReissueBriefRow {
   stageKey: string | null;
   nodeId: string | null;
   title: string;
+  ownerIds: string[];
   deletedAt: Date | null;
 }
 
@@ -302,6 +303,7 @@ export class FileRepository {
         stageKey: tasks.stageKey,
         nodeId: tasks.nodeId,
         title: tasks.title,
+        ownerIds: tasks.ownerIds,
         deletedAt: tasks.deletedAt,
       })
       .from(tasks)
@@ -772,6 +774,37 @@ export class FileRepository {
     return { items, total: Number(totals[0]?.value ?? 0) };
   }
 
+  /** 导出专用文件行读取：保持列表口径，不重复查询 total。 */
+  async listProjectFilesForExport(
+    projectId: string,
+    filter: FileListFilter,
+    sorts: readonly FileListSort[],
+    limit: number,
+    offset: number,
+    client: DbClient = this.database.db,
+  ): Promise<FileLibraryRow[]> {
+    const where = and(...fileLibraryConditions(projectId, filter));
+    return client
+      .select({ file: files, createdByName: users.displayName })
+      .from(files)
+      .leftJoin(users, eq(users.id, files.createdBy))
+      .where(where)
+      .orderBy(...fileLibraryOrderBy(sorts))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  /** 导出专用文件总数：与 listProjectFilesForExport 共用筛选口径。 */
+  async countProjectFilesForExport(
+    projectId: string,
+    filter: FileListFilter,
+    client: DbClient = this.database.db,
+  ): Promise<number> {
+    const where = and(...fileLibraryConditions(projectId, filter));
+    const totals = await client.select({ value: count() }).from(files).where(where);
+    return Number(totals[0]?.value ?? 0);
+  }
+
   /**
    * 变更记录列表（M4-04 读面 · A4-15）：项目 + 多值阶段 / 节点 / 变更文件 / 申请人筛选 + 关键字 + 白名单排序 + 分页；
    * `total` 与 items 走同一 where（分页元数据一致）。fileId / versionId / versionSeq 由 file_versions 反查
@@ -800,6 +833,41 @@ export class FileRepository {
       .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
       .where(where);
     return { items, total: Number(totals[0]?.value ?? 0) };
+  }
+
+  /** 导出专用变更行读取：保持列表口径，不重复查询 total。 */
+  async listChangeRequestsForExport(
+    projectId: string,
+    filter: ChangeRequestListFilter,
+    sorts: readonly ChangeRequestSort[],
+    limit: number,
+    offset: number,
+    client: DbClient = this.database.db,
+  ): Promise<ChangeRequestJoinedRow[]> {
+    const where = and(...changeRequestConditions(projectId, filter));
+    return client
+      .select(CHANGE_REQUEST_SELECT)
+      .from(changeRequests)
+      .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .where(where)
+      .orderBy(...changeRequestOrderBy(sorts))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  /** 导出专用变更总数：与 listChangeRequestsForExport 共用筛选与连接口径。 */
+  async countChangeRequestsForExport(
+    projectId: string,
+    filter: ChangeRequestListFilter,
+    client: DbClient = this.database.db,
+  ): Promise<number> {
+    const where = and(...changeRequestConditions(projectId, filter));
+    const totals = await client
+      .select({ value: count() })
+      .from(changeRequests)
+      .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .where(where);
+    return Number(totals[0]?.value ?? 0);
   }
 
   /** 变更记录单条（M4-04 读面 · 详情）：不存在 → null；可见性由服务层按 projectId 判定（不可见统一 404）。 */

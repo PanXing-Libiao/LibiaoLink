@@ -609,7 +609,7 @@ function buildEnv(overrides = {}) {
     );
 
     const tasks = await db.query(
-      "insert into tasks (project_id, stage_key, sort_index, title, status, progress, priority, owner_ids, deliverable_types, version, planned_start, planned_end, actual_end) values ($1, 'presale', 0, $2, 'done', 1, '高', array[$3::uuid], array['CAD图纸'], 5, null, null, null), ($6, 'presale', 1, $4, 'done', 1, '高', array[$5::uuid], array['CAD图纸'], 1, null, null, null) returning id, version",
+      "insert into tasks (project_id, stage_key, sort_index, title, status, progress, priority, owner_ids, manager_ids, deliverable_types, version, planned_start, planned_end, actual_end) values ($1, 'presale', 0, $2, 'done', 1, '高', array[$3::uuid], array[$3::uuid], array['CAD图纸'], 5, null, null, null), ($6, 'presale', 1, $4, 'done', 1, '高', array[$5::uuid], array[$5::uuid], array['CAD图纸'], 1, null, null, null) returning id, version",
       [projectA, "安装摄像头", owner, "机房布线", owner2, projectB],
     );
     cleanup.taskIds = tasks.rows.map((row) => row.id);

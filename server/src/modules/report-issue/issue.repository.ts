@@ -132,6 +132,36 @@ export class IssueRepository {
     return { rows: rows as IssueRow[], total: counted[0]?.total ?? 0 };
   }
 
+  /** 导出专用行读取：保持列表口径，不重复查询 total。 */
+  async listForExport(
+    projectId: string,
+    filter: IssueFilter,
+    page: number,
+    limit: number,
+    client: DbClient = this.database.db,
+  ): Promise<IssueRow[]> {
+    const where = this.buildWhere(projectId, filter);
+    const rows = await client
+      .select(ISSUE_COLUMNS)
+      .from(issues)
+      .leftJoin(users, eq(users.id, issues.reporterId))
+      .leftJoin(ISSUE_OWNER, eq(ISSUE_OWNER.id, issues.ownerId))
+      .where(where)
+      .orderBy(desc(issues.raisedAt), desc(issues.createdAt))
+      .limit(limit)
+      .offset((page - 1) * limit);
+    return rows as IssueRow[];
+  }
+
+  /** 导出专用总数：只查 count，不加载问题正文、负责人或附图。 */
+  async countForExport(projectId: string, client: DbClient = this.database.db): Promise<number> {
+    const counted = await client
+      .select({ total: sql<number>`count(*)::int` })
+      .from(issues)
+      .where(eq(issues.projectId, projectId));
+    return counted[0]?.total ?? 0;
+  }
+
   async findById(projectId: string, issueId: string, client: DbClient = this.database.db): Promise<IssueRow | null> {
     const rows = await client
       .select(ISSUE_COLUMNS)
@@ -151,6 +181,22 @@ export class IssueRepository {
       .leftJoin(users, eq(users.id, issues.reporterId))
       .leftJoin(ISSUE_OWNER, eq(ISSUE_OWNER.id, issues.ownerId))
       .where(eq(issues.sourceReportId, reportId))
+      .orderBy(asc(issues.createdAt), asc(issues.id));
+    return rows as IssueRow[];
+  }
+
+  /** 按提出日期读取（DateOnly 直比）：手工与日报派生问题同一口径，按创建时刻 / id 稳定排序。 */
+  async listByRaisedDate(
+    projectId: string,
+    raisedDate: string,
+    client: DbClient = this.database.db,
+  ): Promise<IssueRow[]> {
+    const rows = await client
+      .select(ISSUE_COLUMNS)
+      .from(issues)
+      .leftJoin(users, eq(users.id, issues.reporterId))
+      .leftJoin(ISSUE_OWNER, eq(ISSUE_OWNER.id, issues.ownerId))
+      .where(and(eq(issues.projectId, projectId), eq(issues.raisedAt, raisedDate)))
       .orderBy(asc(issues.createdAt), asc(issues.id));
     return rows as IssueRow[];
   }

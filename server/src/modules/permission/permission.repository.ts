@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { and, asc, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
 import type {
   GroupAccessAccessLevel,
+  GroupAccessAutomaticRole,
   GroupAccessMemberScope,
   GroupAccessPage,
   GroupAccessProjectScope,
@@ -21,6 +22,7 @@ import {
 import { users } from "../../db/schema/identity.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
+import { tasks } from "../../db/schema/tasks.js";
 import {
   mergeScopePermissions,
   normalizeScopePermissions,
@@ -40,10 +42,15 @@ export interface ProjectRef {
 /** 记录级解析结果：可见项目上下文 + 项目内角色（can 的项目级来源）。 */
 export interface ProjectAccessContext {
   projectId: string;
+  /** 名册成员或项目经理（只代表项目内关系，不等于项目编辑权）。 */
   member: boolean;
   projectManager: boolean;
-  /** 当前账号在该项目的部门权限（所有命中范围取最高）；项目内写操作必须为 edit。 */
-  groupAccessLevel: GroupAccessAccessLevel;
+  /** 当前账号是否至少负责该项目的一条未删除任务（Pro 逐人权限：可见整个项目，编辑仅本人任务）。 */
+  taskOwner?: boolean;
+  /** 当前账号在该项目的部门 / 个人规则权限（所有命中范围取最高）；null = 关系可见但部门规则未命中。 */
+  groupAccessLevel: GroupAccessAccessLevel | null;
+  /** 最终有效项目访问级别：管理员、本项目项目经理或规则 edit 为 edit；其余关系来源只给 view。 */
+  accessLevel?: GroupAccessAccessLevel;
 }
 
 /** 权限页用户展示字段。 */
@@ -123,6 +130,40 @@ export class PermissionRepository {
       .from(projectMembers)
       .where(and(eq(projectMembers.userId, actorId), eq(projectMembers.roleInProject, "project_manager")));
     return rows.map((row) => row.projectId);
+  }
+
+  /** 我是当前负责人（owner_ids 命中）的未删除任务所属项目。 */
+  async listTaskOwnerProjectIds(actorId: string): Promise<string[]> {
+    const rows = await this.database.db
+      .selectDistinct({ projectId: tasks.projectId })
+      .from(tasks)
+      .where(and(isNull(tasks.deletedAt), sql`${tasks.ownerIds} @> array[${actorId}]::uuid[]`));
+    return rows.map((row) => row.projectId);
+  }
+
+  /** 项目关系并集：名册成员 ∪ 项目经理 ∪ 任务负责人。成员 / 任务负责人关系只保证浏览；本项目项目经理可编辑。 */
+  async listRelatedProjectIds(actorId: string): Promise<string[]> {
+    const [memberIds, ownedIds, managedRosterIds, taskOwnerIds] = await Promise.all([
+      this.listMemberProjectIds(actorId),
+      this.listOwnedProjectIds(actorId),
+      this.listManagedRosterProjectIds(actorId),
+      this.listTaskOwnerProjectIds(actorId),
+    ]);
+    return [...new Set([...memberIds, ...ownedIds, ...managedRosterIds, ...taskOwnerIds])];
+  }
+
+  /** 当前账号是否负责该项目任一未删除任务（单项目记录级解析用）。 */
+  async hasTaskOwnership(actorId: string, projectId: string): Promise<boolean> {
+    const rows = await this.database.db
+      .select({ taskId: tasks.id })
+      .from(tasks)
+      .where(and(
+        eq(tasks.projectId, projectId),
+        isNull(tasks.deletedAt),
+        sql`${tasks.ownerIds} @> array[${actorId}]::uuid[]`,
+      ))
+      .limit(1);
+    return rows.length > 0;
   }
 
   /**
@@ -655,6 +696,81 @@ export class PermissionRepository {
         .returning({ userId: groupAccessMemberRules.userId });
       return deleted.length;
     });
+  }
+
+  /**
+   * 自动项目角色（权限管理页实时展示）：项目经理 / 项目成员来自项目关系，任务负责人来自未删除任务。
+   * 不写库、不依赖手工规则；关系变化后下一次读取立即反映。
+   */
+  async listAutomaticProjectRoles(): Promise<GroupAccessAutomaticRole[]> {
+    const [managedRows, managerRosterRows, memberRosterRows, taskOwnerRows] = await Promise.all([
+      this.database.db
+        .select({ projectId: projects.id, managerIds: projects.managerIds })
+        .from(projects)
+        .where(isNull(projects.deletedAt)),
+      this.database.db
+        .select({ projectId: projectMembers.projectId, userId: projectMembers.userId })
+        .from(projectMembers)
+        .innerJoin(projects, eq(projects.id, projectMembers.projectId))
+        .where(and(isNull(projects.deletedAt), eq(projectMembers.roleInProject, "project_manager"))),
+      this.database.db
+        .select({ projectId: projectMembers.projectId, userId: projectMembers.userId })
+        .from(projectMembers)
+        .innerJoin(projects, eq(projects.id, projectMembers.projectId))
+        .where(and(isNull(projects.deletedAt), eq(projectMembers.roleInProject, "project_member"))),
+      this.database.db
+        .select({ projectId: tasks.projectId, ownerIds: tasks.ownerIds })
+        .from(tasks)
+        .innerJoin(projects, eq(projects.id, tasks.projectId))
+        .where(and(isNull(tasks.deletedAt), isNull(projects.deletedAt))),
+    ]);
+
+    type RoleState = {
+      managerProjectIds: Set<string>;
+      memberProjectIds: Set<string>;
+      taskOwnerProjectIds: Set<string>;
+      taskOwnerTaskCount: number;
+    };
+    const roles = new Map<string, RoleState>();
+    const stateOf = (userId: string): RoleState => {
+      const existing = roles.get(userId);
+      if (existing !== undefined) return existing;
+      const created: RoleState = {
+        managerProjectIds: new Set<string>(),
+        memberProjectIds: new Set<string>(),
+        taskOwnerProjectIds: new Set<string>(),
+        taskOwnerTaskCount: 0,
+      };
+      roles.set(userId, created);
+      return created;
+    };
+
+    for (const row of managedRows) {
+      for (const userId of row.managerIds) stateOf(userId).managerProjectIds.add(row.projectId);
+    }
+    for (const row of managerRosterRows) stateOf(row.userId).managerProjectIds.add(row.projectId);
+    for (const row of memberRosterRows) stateOf(row.userId).memberProjectIds.add(row.projectId);
+    for (const row of taskOwnerRows) {
+      const projectOwners = new Set(row.ownerIds);
+      for (const userId of projectOwners) {
+        const state = stateOf(userId);
+        state.taskOwnerProjectIds.add(row.projectId);
+        state.taskOwnerTaskCount += 1;
+      }
+    }
+
+    return [...roles.entries()]
+      .map(([userId, state]) => ({
+        userId,
+        projectManagerProjectIds: [...state.managerProjectIds].sort(),
+        // 同一人同时出现在项目经理与项目成员来源时只保留项目经理，避免页面重复计数与降级歧义。
+        projectMemberProjectIds: [...state.memberProjectIds]
+          .filter((projectId) => !state.managerProjectIds.has(projectId))
+          .sort(),
+        taskOwnerProjectIds: [...state.taskOwnerProjectIds].sort(),
+        taskOwnerTaskCount: state.taskOwnerTaskCount,
+      }))
+      .sort((left, right) => left.userId.localeCompare(right.userId));
   }
 
   async listAccessProjects(): Promise<Array<{ id: string; code: string; name: string }>> {

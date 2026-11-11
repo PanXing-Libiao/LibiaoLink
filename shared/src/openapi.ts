@@ -16,6 +16,7 @@ import {
   ProjectGroupPutBodySchema,
   ProjectListQuerySchema,
   ProjectListResponseSchema,
+  ProjectManagerCandidateListSchema,
   ProjectMemberCreateBodySchema,
   ProjectMemberListResponseSchema,
   ProjectMemberSchema,
@@ -66,7 +67,6 @@ import {
   StakeholderDeleteResponseSchema,
   StakeholderListQuerySchema,
   StakeholderListResponseSchema,
-  StakeholderProjectLinkBodySchema,
   StakeholderSchema,
   StakeholderUpdateBodySchema,
 } from "./modules/stakeholders.ts";
@@ -309,6 +309,16 @@ export function buildOpenApiDocument() {
 
   registry.registerPath({
     method: "get",
+    path: "/api/v1/projects/manager-candidates",
+    tags: ["projects"],
+    summary: "项目经理候选（有效项目部成员 ∪ 系统管理员；仅启用且未离职）",
+    responses: {
+      200: { description: "候选名单", ...json(ProjectManagerCandidateListSchema) },
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
     path: "/api/v1/projects/{id}",
     tags: ["projects"],
     summary: "项目详情",
@@ -350,7 +360,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/projects/{id}/deliverable-types",
     tags: ["projects"],
-    summary: "新增全站自定义成果文件类型（仅当前项目项目经理；写入 deliverableType 全局字典，所有项目共享）",
+    summary: "新增全站自定义成果文件类型（仅当前项目编辑者；写入 deliverableType 全局字典，所有项目共享）",
     request: { params: idParams, body: json(ProjectDeliverableTypeCreateBodySchema) },
     responses: {
       201: { description: "创建成功（更新后的 deliverableType 字典）", ...json(DictSchema) },
@@ -1784,31 +1794,6 @@ export function buildOpenApiDocument() {
     request: { params: z.object({ stakeholderId: UuidSchema }) },
     responses: {
       200: { description: "删除结果（deleted 标记）", ...json(StakeholderDeleteResponseSchema) },
-      404: commonErrors[404],
-    },
-  });
-
-  registry.registerPath({
-    method: "post",
-    path: "/api/v1/stakeholders/{stakeholderId}/projects",
-    tags: ["stakeholders"],
-    summary: "关联项目（A5-03；幂等：已关联返回同一结果）；写审计留痕",
-    request: { params: z.object({ stakeholderId: UuidSchema }), body: json(StakeholderProjectLinkBodySchema) },
-    responses: {
-      200: { description: "关联后的干系人", ...json(StakeholderSchema) },
-      400: commonErrors[400],
-      404: commonErrors[404],
-    },
-  });
-
-  registry.registerPath({
-    method: "delete",
-    path: "/api/v1/stakeholders/{stakeholderId}/projects/{projectId}",
-    tags: ["stakeholders"],
-    summary: "解除项目关联（A5-03）：未关联 404；写审计留痕",
-    request: { params: z.object({ stakeholderId: UuidSchema, projectId: UuidSchema }) },
-    responses: {
-      200: { description: "解除后的干系人", ...json(StakeholderSchema) },
       404: commonErrors[404],
     },
   });

@@ -36,6 +36,11 @@ export const EnvSchema = z
     GROUP_ACCESS_ADMIN_GROUP_KEYS: z.string().default(""),
     /** 权限管理员用户 ID 白名单（逗号分隔；用于不属于管理员部门的指定账号，如 panxing）。 */
     GROUP_ACCESS_ADMIN_USER_IDS: z.string().default(""),
+    /**
+     * 可担任项目经理的部门名称（逗号 / 中文逗号分隔）：默认同时识别正式机 Project Dept 与测试机项目部；
+     * 匹配部门及其全部子部门，最终校验仍按部门同步得到的 Casdoor group_key。
+     */
+    PROJECT_MANAGER_DEPARTMENT_NAMES: z.string().default("Project Dept,项目部"),
     // ---- 对象存储（ADR-006：S3 协议抽象 + 一期 MinIO 单节点；本地沙箱见 deploy/minio/） ----
     S3_ENDPOINT: z.string().min(1).default("http://127.0.0.1:9000"),
     S3_REGION: z.string().min(1).default("us-east-1"),
@@ -226,6 +231,10 @@ export const EnvSchema = z
     /** 按会话限速（Spike 实测口径：30 条/分钟 + 1000 条/小时；0 = 未启用）。 */
     WECOM_BOT_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(0).max(1000000).default(30),
     WECOM_BOT_RATE_LIMIT_PER_HOUR: z.coerce.number().int().min(0).max(10000000).default(1000),
+    /** 企微机器人日报查询（单聊）：false = 不改现有回调行为；S0 仅暴露开关，查询接线在 S3 启用。 */
+    WECOM_REPORT_QUERY_DM_ENABLED: z.enum(["true", "false"]).default("false"),
+    /** 企微机器人日报查询（群聊）：false = 不改现有群回调行为；S0 仅暴露开关，查询接线在 S3 启用。 */
+    WECOM_REPORT_QUERY_GROUP_ENABLED: z.enum(["true", "false"]).default("false"),
     /** R06 动态海报开关：true = 按项目真实数据生成姓名墙 PNG；生成失败回退下方静态图。 */
     WECOM_R06_DYNAMIC_POSTER: z.enum(["true", "false"]).default("true"),
     /** R06 动态海报字体（可选）：空 = 使用服务端资产思源宋体（SemiBold / Bold，随仓库发布）；可指向其它已授权字体。 */

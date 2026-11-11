@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Injectable, ServiceUnavailableException, type OnModuleDestroy } from "@nestjs/common";
 import { CadJobSchema, CadJobCreateResponseSchema, z, type CadNameCodepage } from "@libiaolink/contracts";
 import { request, type ClientRequest, type IncomingMessage } from "node:http";
@@ -12,6 +13,7 @@ export { CAD_ENGINE_VERSION, CAD_VIEWER_VERSION, CAD_FORMAT_VERSIONS, cadFormatV
 const JSON_LIMIT = 64 * 1024;
 const RESOURCE_LIMIT = 512 * 1024 * 1024;
 type Identity = { name: string; sourceSHA256: string; sourceByteLength: number; namespace: string; cacheScope: string; nameCodepage: CadNameCodepage; resourceFingerprint?: string };
+export const cadArchiveNamespace = (artifactId: string) => createHash("sha256").update("cad-archive:" + artifactId).digest("hex");
 export type CadJob = z.infer<typeof CadJobSchema>;
 export type CadResource = { stream: Readable; bytes: number; artifactBytes?: number; encoding?: "br" };
 /** 原文件交给沙箱的一次性字节流；sha256 与 byteLength 由受权输入层先确定，传输层不再整文件重算。 */
@@ -156,7 +158,7 @@ export class CadEngineClient implements OnModuleDestroy {
   }
   async status(input: { jobId: string; namespace: string }): Promise<CadJob> { return CadJobSchema.parse(await this.json("status", input)); }
   async cancel(input: { jobId: string; namespace: string }): Promise<CadJob> { return CadJobSchema.parse(await this.json("cancel", input)); }
-  async file(action: "manifest" | "buffer", input: { jobId: string; namespace: string; lease?: string; sha256?: string }): Promise<CadResource> {
+  async file(action: "manifest" | "buffer", input: { namespace: string; lease?: string; sha256?: string } & ({jobId: string} | {displayOnly: true})): Promise<CadResource> {
     const stream = await this.open(action, input);
     const length = stream.headers["content-length"], artifact = stream.headers["x-cad-artifact-bytes"];
     if (typeof length !== "string" || !/^\d+$/.test(length) || Number(length) > RESOURCE_LIMIT

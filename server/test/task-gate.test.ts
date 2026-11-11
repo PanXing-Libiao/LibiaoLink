@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
-import type { PermissionService } from "../src/modules/permission/index.js";
+import type { PermissionService, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 import type { TaskCompletionTargetRow, TaskFileSummaryCounts, TaskListRow, TaskRow, TaskUpdatePatch } from "../src/modules/task/task.repository.js";
 import type { TaskRepository } from "../src/modules/task/task.repository.js";
 import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
@@ -52,6 +52,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     taskNodeId: null,
     title: "货架组装",
     titleEn: null,
+    managerIds: ["00000000-0000-4000-8000-000000000001"],
     ownerIds: [],
     status: "pending",
     statusOverride: null,
@@ -124,11 +125,12 @@ class FakeTaskRepository {
   async insertEvents(): Promise<void> {
     this.eventCount += 1;
   }
+  async syncProjectManagerIdsFromTasks(_projectId: string, _at: Date): Promise<void> {}
   async touchProject(projectId: string): Promise<void> {
     this.touched.push(projectId);
   }
   async findListRowById(): Promise<TaskListRow | null> {
-    return this.task === null ? null : { task: this.task, ownerNames: [], changeLinks: [] };
+    return this.task === null ? null : { task: this.task, ownerNames: [], managerNames: [], changeLinks: [] };
   }
   async listChangeLinks(): Promise<never[]> {
     return [];
@@ -181,10 +183,19 @@ function makeService(repo: FakeTaskRepository, gate: FakeTaskGateRepository): {
     db as unknown as DatabaseService,
     repo as unknown as TaskRepository,
     gate as unknown as TaskGateRepository,
-    {} as unknown as PermissionService,
+    {
+      assertProjectVisible: async (_actorId: string, projectId: string) => ({
+        projectId,
+        member: true,
+        projectManager: true,
+        groupAccessLevel: "edit",
+        accessLevel: "edit",
+      }),
+    } as unknown as PermissionService,
     audit as unknown as AuditService,
     {} as unknown as TaskNodeRepository,
     {} as unknown as TemplateService,
+    { assertAssignable: async () => {} } as unknown as ProjectManagerEligibilityService,
   );
   return { service, db, audit };
 }

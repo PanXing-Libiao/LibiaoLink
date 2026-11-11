@@ -50,7 +50,9 @@ export type Project = {
   stageKey: string;
   /** 项目状态（契约 status：active / paused / done / archived）。 */
   status: string;
-  /** 当前登录人在该项目的部门权限：edit 可写 / view 仅浏览；由服务端逐项目裁决。 */
+  /** 当前登录人在该项目的最终项目权限：管理员 / 所管本项目的项目经理 / 规则 edit 为 edit；其余可见关系为 view。 */
+  accessLevel: "edit" | "view";
+  /** 兼容旧字段：当前值同 accessLevel；项目级写入口统一改用 accessLevel。 */
   groupAccessLevel: "edit" | "view";
   /** 进入项目回收站的时间（展示用「YYYY-MM-DD HH:mm」）；未删除 = null。 */
   deletedAt: string | null;

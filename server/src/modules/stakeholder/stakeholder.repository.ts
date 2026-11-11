@@ -5,6 +5,7 @@ import type { DbClient } from "../../db/db-client.js";
 import { users } from "../../db/schema/identity.js";
 import { projects } from "../../db/schema/projects.js";
 import { projectStakeholders, stakeholders } from "../../db/schema/stakeholders.js";
+import { isStakeholderProjectFilterVisible } from "./stakeholder.rules.js";
 import type { StakeholderFilter, StakeholderSort, StakeholderVisibility } from "./stakeholder.rules.js";
 
 /** 台账行（含录入人显示名；DTO 裁剪在服务层做）。 */
@@ -109,6 +110,42 @@ export class StakeholderRepository {
     return { rows: rows as StakeholderRow[], total: counted[0]?.total ?? 0 };
   }
 
+  /** 导出专用行读取：保持可见集、筛选与排序口径，不重复查询 total。 */
+  async listForExport(
+    filter: StakeholderFilter,
+    visibility: StakeholderVisibility,
+    sort: StakeholderSort[],
+    page: number,
+    limit: number,
+    client: DbClient = this.database.db,
+  ): Promise<StakeholderRow[]> {
+    const where = this.buildWhere(filter, visibility);
+    if (where === null) return [];
+    return client
+      .select(ROW_COLUMNS)
+      .from(stakeholders)
+      .leftJoin(users, eq(users.id, stakeholders.createdBy))
+      .where(where)
+      .orderBy(...this.orderBy(sort))
+      .limit(limit)
+      .offset((page - 1) * limit) as Promise<StakeholderRow[]>;
+  }
+
+  /** 导出专用总数：与 listForExport 共用筛选与可见集。 */
+  async countForExport(
+    filter: StakeholderFilter,
+    visibility: StakeholderVisibility,
+    client: DbClient = this.database.db,
+  ): Promise<number> {
+    const where = this.buildWhere(filter, visibility);
+    if (where === null) return 0;
+    const counted = await client
+      .select({ total: sql<number>`count(*)::int` })
+      .from(stakeholders)
+      .where(where);
+    return counted[0]?.total ?? 0;
+  }
+
   /** 详情（软删行视为不存在 → 404，防 IDOR）。 */
   async findById(stakeholderId: string, client: DbClient = this.database.db): Promise<StakeholderRow | null> {
     const rows = await client
@@ -171,7 +208,7 @@ export class StakeholderRepository {
     return deleted.length > 0;
   }
 
-  /** 关联项目（A5-03）：批量取（列表一次 join，避免 N+1）。 */
+  /** 所属项目（一期单项目归属）：批量取（列表一次 join，避免 N+1）。 */
   async listProjects(stakeholderIds: string[], client: DbClient = this.database.db): Promise<StakeholderProjectRow[]> {
     if (stakeholderIds.length === 0) return [];
     return (await client
@@ -197,23 +234,14 @@ export class StakeholderRepository {
     return rows.length > 0;
   }
 
-  /** 关联写入：冲突（已关联）返回 false —— 幂等，不重复写审计。 */
+  /** 所属项目写入：每条干系人记录只能有一条（迁移 0085 唯一约束兜底）。 */
   async insertLink(stakeholderId: string, projectId: string, actorId: string, at: Date, client: DbClient): Promise<boolean> {
     const inserted = await client
       .insert(projectStakeholders)
       .values({ stakeholderId, projectId, linkedBy: actorId, linkedAt: at })
-      .onConflictDoNothing({ target: [projectStakeholders.projectId, projectStakeholders.stakeholderId] })
+      .onConflictDoNothing({ target: [projectStakeholders.stakeholderId] })
       .returning({ id: projectStakeholders.id });
     return inserted.length > 0;
-  }
-
-  /** 解除关联：未关联返回 false（调用方转 404）。 */
-  async deleteLink(stakeholderId: string, projectId: string, client: DbClient): Promise<boolean> {
-    const removed = await client
-      .delete(projectStakeholders)
-      .where(and(eq(projectStakeholders.stakeholderId, stakeholderId), eq(projectStakeholders.projectId, projectId)))
-      .returning({ id: projectStakeholders.id });
-    return removed.length > 0;
   }
 
   /**
@@ -223,21 +251,16 @@ export class StakeholderRepository {
   private buildWhere(filter: StakeholderFilter, visibility: StakeholderVisibility) {
     const conditions = [isNull(stakeholders.deletedAt)];
     if (visibility.kind === "restricted") {
-      const parts = [];
-      if (visibility.ownId !== null) parts.push(eq(stakeholders.createdBy, visibility.ownId));
-      if (visibility.projectIds.length > 0) {
-        parts.push(
-          inArray(
-            stakeholders.id,
-            this.database.db
-              .select({ id: projectStakeholders.stakeholderId })
-              .from(projectStakeholders)
-              .where(inArray(projectStakeholders.projectId, visibility.projectIds)),
-          ),
-        );
-      }
-      if (parts.length === 0) return null;
-      conditions.push(or(...parts)!);
+      if (visibility.projectIds.length === 0) return null;
+      conditions.push(
+        inArray(
+          stakeholders.id,
+          this.database.db
+            .select({ id: projectStakeholders.stakeholderId })
+            .from(projectStakeholders)
+            .where(inArray(projectStakeholders.projectId, visibility.projectIds)),
+        ),
+      );
     }
     if (filter.keyword !== null) {
       const like = "%" + filter.keyword + "%";
@@ -245,6 +268,7 @@ export class StakeholderRepository {
     }
     if (filter.companyTypes !== null) conditions.push(inArray(stakeholders.companyType, filter.companyTypes));
     if (filter.projectId !== null) {
+      if (!isStakeholderProjectFilterVisible(filter, visibility)) return null;
       conditions.push(
         inArray(
           stakeholders.id,

@@ -3,34 +3,34 @@
  * 字段级脱敏的服务层回归见 test/stakeholder-service.test.ts（验收项「字段级脱敏用例通过」）。
  */
 import { describe, expect, it } from "vitest";
-import { buildStakeholderFilter, matchesKeyword, parseStakeholderSort, stakeholderVisibility } from "../src/modules/stakeholder/index.js";
-import type { ActorAuthorization } from "../src/modules/identity/index.js";
+import {
+  buildStakeholderFilter,
+  isStakeholderProjectFilterVisible,
+  matchesKeyword,
+  parseStakeholderSort,
+  stakeholderVisibility,
+} from "../src/modules/stakeholder/index.js";
 
-const ME = "11111111-1111-4111-8111-111111111111";
 const PROJECT = "22222222-2222-4222-8222-222222222222";
 
-function actor(overrides: Partial<ActorAuthorization> = {}): ActorAuthorization {
-  return { userId: ME, roleCodes: [], dataScopes: [], permissionKeys: [], ...overrides };
-}
-
-describe("stakeholderVisibility（记录级）", () => {
+describe("stakeholderVisibility（项目级记录）", () => {
   it("项目可见集为 all（管理员）→ 台账全量", () => {
-    expect(stakeholderVisibility(actor({ dataScopes: ["all"] }), { kind: "all" })).toEqual({ kind: "all" });
+    expect(stakeholderVisibility({ kind: "all" })).toEqual({ kind: "all" });
   });
 
-  it("项目可见集为 ids → 「我录入的」∪「关联项目在可见集内」；ownId 恒为本人", () => {
-    const visibility = stakeholderVisibility(actor({ dataScopes: ["involved_projects"] }), { kind: "ids", ids: [PROJECT] });
-    expect(visibility).toEqual({ kind: "restricted", ownId: ME, projectIds: [PROJECT] });
+  it("项目可见集为 ids → restricted 只保留可见项目", () => {
+    const visibility = stakeholderVisibility({ kind: "ids", ids: [PROJECT] });
+    expect(visibility).toEqual({ kind: "restricted", projectIds: [PROJECT] });
   });
 
-  it("销售（own_stakeholders）无可见项目 → ownId 仍在（我录入的可见）", () => {
-    const visibility = stakeholderVisibility(actor({ dataScopes: ["own_stakeholders"] }), { kind: "ids", ids: [] });
-    expect(visibility).toEqual({ kind: "restricted", ownId: ME, projectIds: [] });
+  it("无可见项目 → 空可见集，不按录入人兜底", () => {
+    const visibility = stakeholderVisibility({ kind: "ids", ids: [] });
+    expect(visibility).toEqual({ kind: "restricted", projectIds: [] });
   });
 
   it("可见集 ids 为副本：改动不影响入参", () => {
     const ids = [PROJECT];
-    const visibility = stakeholderVisibility(actor(), { kind: "ids", ids });
+    const visibility = stakeholderVisibility({ kind: "ids", ids });
     if (visibility.kind !== "restricted") throw new Error("应为 restricted");
     visibility.projectIds.push("x");
     expect(ids).toEqual([PROJECT]);
@@ -50,8 +50,11 @@ describe("buildStakeholderFilter（过滤解析）", () => {
     expect(() => buildStakeholderFilter({ page: 1, limit: 50, "filter[companyType]": "customer,unknown" })).toThrow(/非法公司分类/);
   });
 
-  it("项目筛选原样透传（uuid 由契约校验）", () => {
-    expect(buildStakeholderFilter({ page: 1, limit: 50, "filter[projectId]": PROJECT }).projectId).toBe(PROJECT);
+  it("项目筛选原样透传（uuid 由契约校验）；无权项目筛选不可用", () => {
+    const filter = buildStakeholderFilter({ page: 1, limit: 50, "filter[projectId]": PROJECT });
+    expect(filter.projectId).toBe(PROJECT);
+    expect(isStakeholderProjectFilterVisible(filter, { kind: "restricted", projectIds: [PROJECT] })).toBe(true);
+    expect(isStakeholderProjectFilterVisible(filter, { kind: "restricted", projectIds: [] })).toBe(false);
   });
 });
 

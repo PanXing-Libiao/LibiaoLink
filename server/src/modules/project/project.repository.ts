@@ -23,6 +23,13 @@ export interface ProjectViewRow {
   managerNames: (string | null)[] | null;
 }
 
+/** 项目精确查询的最小引用：只暴露定位与展示所需字段。 */
+export interface ProjectReferenceRow {
+  id: string;
+  code: string;
+  name: string;
+}
+
 export interface ProjectInsertInput {
   /** 显式主键（导入表导入：图片对象键要含 projectId，须在事务前定下项目 id）；缺省 = 库内 defaultRandom()。 */
   id?: string;
@@ -167,6 +174,36 @@ export class ProjectRepository {
     return rows[0] ?? null;
   }
 
+  /** 按权限范围读取项目引用（id / code / name）：供机器人按编号或名称精确解析，不加载业务明细。 */
+  async listVisibleReferences(
+    scope: ProjectScopeFilter,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectReferenceRow[]> {
+    if (scope.kind === "ids" && scope.ids.length === 0) return [];
+    const where = scope.kind === "ids"
+      ? and(isNull(projects.deletedAt), inArray(projects.id, scope.ids))
+      : isNull(projects.deletedAt);
+    const rows = await client
+      .select({ id: projects.id, code: projects.code, name: projects.name })
+      .from(projects)
+      .where(where)
+      .orderBy(asc(projects.code), asc(projects.id));
+    return rows as ProjectReferenceRow[];
+  }
+
+  /** 按 id 读取最小项目引用（供群绑定命令只与绑定项目比对）。 */
+  async findReferenceById(
+    id: string,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectReferenceRow | null> {
+    const rows = await client
+      .select({ id: projects.id, code: projects.code, name: projects.name })
+      .from(projects)
+      .where(and(eq(projects.id, id), isNull(projects.deletedAt)))
+      .limit(1);
+    return (rows[0] ?? null) as ProjectReferenceRow | null;
+  }
+
   async insert(input: ProjectInsertInput, at: Date, client: DbClient = this.database.db): Promise<ProjectRow> {
     const seqNo = await this.allocateSeqNo(client);
     try {
@@ -243,6 +280,26 @@ export class ProjectRepository {
       throw new Error("projects.seq_no 分配失败：" + String(result.rows[0]?.seqNo));
     }
     return seqNo;
+  }
+
+  /**
+   * 项目级经理变更：同步本项目全部有效任务的项目经理展示快照。
+   * 未定档任务推进 version，避免旧版行内编辑覆盖；已定档任务只更新展示快照，不推进 version。
+   */
+  async syncProjectManagersToTasks(
+    projectId: string,
+    managerIds: string[],
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<void> {
+    await client
+      .update(tasks)
+      .set({ managerIds, version: sql`${tasks.version} + 1`, updatedAt: at })
+      .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt), isNull(tasks.finalizedAt)));
+    await client
+      .update(tasks)
+      .set({ managerIds })
+      .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt), isNotNull(tasks.finalizedAt)));
   }
 
   async updateWithVersion(

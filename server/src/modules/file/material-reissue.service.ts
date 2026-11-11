@@ -13,7 +13,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox } from "../../db/outbox.js";
 import { buildBlobObjectKey, ObjectStorage } from "../../storage/index.js";
 import { UserService } from "../identity/index.js";
-import { PermissionService } from "../permission/index.js";
+import { PermissionService, isProjectEditor } from "../permission/index.js";
 import { FileRepository, type ChangeRequestRow, type FileLinkInsertInput, type FileRow, type FileVersionRow } from "./file.repository.js";
 import { toChangeRequestView, toFileView, toVersionView } from "./file.service.js";
 import {
@@ -47,11 +47,6 @@ export class MaterialReissueService {
 
   async create(projectId: string, body: CreateBody, actorId: string): Promise<Result> {
     const access = await this.permission.assertProjectVisible(actorId, projectId);
-    await this.permission.assertCan(actorId, "file.upload", {
-      member: access.member,
-      projectManager: access.projectManager,
-      groupAccessLevel: access.groupAccessLevel,
-    });
     const project = await this.repository.findProjectReissueBrief(projectId);
     if (project === null || project.deletedAt !== null) {
       throw new AppError("NOT_FOUND", "项目不存在或不可见");
@@ -64,6 +59,9 @@ export class MaterialReissueService {
       throw new AppError("VALIDATION_FAILED", "来源任务不存在或不属于该项目", [
         { code: "invalid_task", message: "taskId 必须属于当前项目且未删除", path: "taskId" },
       ]);
+    }
+    if (!isProjectEditor(access) && !task.ownerIds.includes(actorId)) {
+      throw new AppError("FORBIDDEN", "仅项目编辑者或当前任务负责人可发起物料变更补发");
     }
     validateOtherText(body);
     const applicant = await this.users.getUser(actorId);

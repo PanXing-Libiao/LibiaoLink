@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
-import type { PermissionService } from "../src/modules/permission/index.js";
+import type { PermissionService, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
 import type {
   TaskEventInput,
@@ -69,6 +69,7 @@ function makeRow(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
     taskNodeId: null,
     title: "任务 " + id.slice(0, 8),
     titleEn: null,
+    managerIds: ["00000000-0000-4000-8000-000000000001"],
     ownerIds: [],
     status: "pending",
     statusOverride: null,
@@ -197,6 +198,7 @@ class FakeTaskRepository {
       nodeId: input.nodeId,
       title: input.title,
       ownerIds: input.ownerIds,
+      managerIds: input.managerIds,
       sortIndex: input.sortIndex,
       deliverableTypes: input.deliverableTypes,
       createdAt: at,
@@ -226,6 +228,7 @@ class FakeTaskRepository {
     this.events.push(...events);
   }
 
+  async syncProjectManagerIdsFromTasks(_projectId: string, _at: Date): Promise<void> {}
   async touchProject(projectId: string): Promise<void> {
     this.touched.push(projectId);
   }
@@ -271,10 +274,19 @@ function makeService(repo: FakeTaskRepository): { service: TaskService; db: Fake
     db as unknown as DatabaseService,
     repo as unknown as TaskRepository,
     new FakeTaskGateRepository() as unknown as TaskGateRepository,
-    {} as unknown as PermissionService,
+    {
+      assertProjectVisible: async (_actorId: string, projectId: string) => ({
+        projectId,
+        member: true,
+        projectManager: true,
+        groupAccessLevel: "edit",
+        accessLevel: "edit",
+      }),
+    } as unknown as PermissionService,
     audit as unknown as AuditService,
     {} as unknown as TaskNodeRepository,
     {} as unknown as TemplateService,
+    { assertAssignable: async () => {} } as unknown as ProjectManagerEligibilityService,
   );
   return { service, db, audit };
 }

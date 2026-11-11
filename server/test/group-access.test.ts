@@ -418,6 +418,11 @@ describe("GroupAccessService 部门通讯录", () => {
         updatedAt: new Date("2026-10-26T00:00:00Z"),
       })],
       listAccessProjects: async () => [],
+      listAutomaticProjectRoles: async () => [
+        { userId: PROJECT_A, projectManagerProjectIds: [PROJECT_B], projectMemberProjectIds: [], taskOwnerProjectIds: [PROJECT_C], taskOwnerTaskCount: 2 },
+        { userId: PROJECT_B, projectManagerProjectIds: [], projectMemberProjectIds: [PROJECT_B], taskOwnerProjectIds: [], taskOwnerTaskCount: 0 },
+        { userId: PROJECT_D, projectManagerProjectIds: [], projectMemberProjectIds: [], taskOwnerProjectIds: [PROJECT_A, PROJECT_B], taskOwnerTaskCount: 3 },
+      ],
       findRuleMetadata: async () => ({ groupName: "Quality", updatedAt: new Date("2026-10-23T00:00:00Z") }),
       listActiveUsersByIds: async (userIds: readonly string[]) => userIds.includes(PROJECT_A) ? [{
         userId: PROJECT_A,
@@ -460,6 +465,11 @@ describe("GroupAccessService 部门通讯录", () => {
       } as Env),
     );
     const overview = await service.overview(PROJECT_A);
+    expect(overview.automaticRoles).toEqual([
+      { userId: PROJECT_A, projectManagerProjectIds: [PROJECT_B], projectMemberProjectIds: [], taskOwnerProjectIds: [PROJECT_C], taskOwnerTaskCount: 2 },
+      { userId: PROJECT_B, projectManagerProjectIds: [], projectMemberProjectIds: [PROJECT_B], taskOwnerProjectIds: [], taskOwnerTaskCount: 0 },
+      { userId: PROJECT_D, projectManagerProjectIds: [], projectMemberProjectIds: [], taskOwnerProjectIds: [PROJECT_A, PROJECT_B], taskOwnerTaskCount: 3 },
+    ]);
     expect(overview.groups.map((group) => ({
       key: group.groupKey,
       parent: group.parentGroupKey,
@@ -788,6 +798,7 @@ class FakeGroupRepository {
   memberRules: GroupAccessMemberRuleData[] = [];
   refs = new Map<string, { managerIds: string[]; deletedAt: Date | null }>();
   memberships = new Map<string, string>();
+  taskOwnerProjectIds = new Set<string>();
   manualAdminUserIds: string[] = [];
 
   async listUserGroupKeys(): Promise<string[]> {
@@ -835,6 +846,18 @@ class FakeGroupRepository {
   async findMembership(_actorId: string, projectId: string): Promise<string | null> {
     return this.memberships.get(projectId) ?? null;
   }
+  async hasTaskOwnership(_actorId: string, projectId: string): Promise<boolean> {
+    return this.taskOwnerProjectIds.has(projectId);
+  }
+  async listRelatedProjectIds(actorId: string): Promise<string[]> {
+    const ids = new Set<string>();
+    for (const [projectId, ref] of this.refs) {
+      if (ref.managerIds.includes(actorId)) ids.add(projectId);
+      if (this.memberships.has(projectId)) ids.add(projectId);
+    }
+    for (const projectId of this.taskOwnerProjectIds) ids.add(projectId);
+    return [...ids];
+  }
 }
 
 function serviceWith(options: {
@@ -874,16 +897,37 @@ function serviceWith(options: {
 }
 
 describe("PermissionService 群组接入", () => {
-  it("项目范围按角色可见集与群组白名单取交集，详情同口径", async () => {
+  it("项目范围 = 部门 / 个人规则范围 ∪ 项目关系；项目成员关系只读", async () => {
     const { service, repository } = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "selected", projectIds: [PROJECT_A] })],
     });
+    repository.refs.set(PROJECT_A, { managerIds: [PROJECT_B], deletedAt: null });
+    repository.refs.set(PROJECT_B, { managerIds: [PROJECT_B], deletedAt: null });
+    repository.memberships.set(PROJECT_A, "project_member");
+    repository.memberships.set(PROJECT_B, "project_member");
+    expect(await service.projectScope(PROJECT_A)).toEqual({ kind: "ids", ids: [PROJECT_A, PROJECT_B] });
+    expect(await service.resolveProjectAccess(PROJECT_A, PROJECT_A)).toMatchObject({ projectId: PROJECT_A, accessLevel: "view" });
+    expect(await service.resolveProjectAccess(PROJECT_A, PROJECT_B)).toMatchObject({ projectId: PROJECT_B, accessLevel: "view" });
+  });
+
+  it("项目经理关系提升本项目编辑权，且不会扩到非所管项目", async () => {
+    const { service, repository } = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "all", accessLevel: "view" })],
+    });
     repository.refs.set(PROJECT_A, { managerIds: [PROJECT_A], deletedAt: null });
-    repository.refs.set(PROJECT_B, { managerIds: [PROJECT_A], deletedAt: null });
-    expect(await service.projectScope(PROJECT_A)).toEqual({ kind: "ids", ids: [PROJECT_A] });
-    expect(await service.resolveProjectAccess(PROJECT_A, PROJECT_A)).toMatchObject({ projectId: PROJECT_A });
-    expect(await service.resolveProjectAccess(PROJECT_A, PROJECT_B)).toBeNull();
+    repository.refs.set(PROJECT_B, { managerIds: [PROJECT_B], deletedAt: null });
+    expect(await service.resolveProjectAccess(PROJECT_A, PROJECT_A)).toMatchObject({
+      projectManager: true,
+      groupAccessLevel: "view",
+      accessLevel: "edit",
+    });
+    expect(await service.resolveProjectAccess(PROJECT_A, PROJECT_B)).toMatchObject({
+      projectManager: false,
+      groupAccessLevel: "view",
+      accessLevel: "view",
+    });
   });
 
   it("无部门账号映射为未分组并应用未分组规则；已有部门不注入", async () => {
@@ -957,7 +1001,7 @@ describe("PermissionService 群组接入", () => {
     expect(await service.can(PROJECT_A, "task.update", { member: true, projectManager: false, groupAccessLevel: "view" })).toBe(false);
     expect(await service.can(PROJECT_A, "dict.manage")).toBe(false);
     expect(await service.can(PROJECT_A, "project.create")).toBe(true);
-    expect(await service.canManageBlueprint(PROJECT_A)).toBe(true);
+    expect(await service.canManageBlueprint(PROJECT_A)).toBe(false);
     expect(await service.permissionsOf(PROJECT_A)).toMatchObject({
       groupAllEdit: false,
       groupOwnEdit: true,
@@ -981,6 +1025,25 @@ describe("PermissionService 群组接入", () => {
     expect(await service.projectGroupAccessLevelsOf(PROJECT_A, [PROJECT_A, PROJECT_B])).toEqual(new Map([
       [PROJECT_A, "edit"],
       [PROJECT_B, "view"],
+    ]));
+  });
+
+  it("批量项目权限：无部门规则时，本项目项目经理仍为 edit，非所管项目为 view", async () => {
+    const { service, repository } = serviceWith({
+      groupKeys: [],
+      rules: [],
+    });
+    repository.refs.set(PROJECT_A, { managerIds: [PROJECT_A], deletedAt: null });
+    repository.refs.set(PROJECT_B, { managerIds: [PROJECT_B], deletedAt: null });
+    expect(await service.projectGroupAccessLevelsOf(PROJECT_A, [PROJECT_A, PROJECT_B])).toEqual(new Map([
+      [PROJECT_A, "edit"],
+      [PROJECT_B, "view"],
+    ]));
+
+    repository.memberships.set(PROJECT_B, "project_manager");
+    expect(await service.projectGroupAccessLevelsOf(PROJECT_A, [PROJECT_A, PROJECT_B])).toEqual(new Map([
+      [PROJECT_A, "edit"],
+      [PROJECT_B, "edit"],
     ]));
   });
 
@@ -1175,7 +1238,7 @@ describe("PermissionService 群组接入", () => {
     });
   });
 
-  it("项目经理仅能穿透当前有效项目范围，范围外项目仍只显示本人记录", async () => {
+  it("项目经理关系可见的项目纳入本人操作记录范围", async () => {
     const { service, repository } = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "selected", projectIds: [PROJECT_B] })],
@@ -1183,7 +1246,7 @@ describe("PermissionService 群组接入", () => {
     repository.refs.set(PROJECT_A, { managerIds: [PROJECT_A], deletedAt: null });
     repository.refs.set(PROJECT_B, { managerIds: [PROJECT_B], deletedAt: null });
     expect((await service.permissionsOf(PROJECT_A)).groupProjectAccess).toBe("allowed");
-    expect(await service.auditAccessOf(PROJECT_A)).toEqual({ scope: "self", managedProjectIds: [] });
+    expect(await service.auditAccessOf(PROJECT_A)).toEqual({ scope: "project_manager", managedProjectIds: [PROJECT_A] });
   });
 
   it("软删项目不计入可浏览三态，也不为项目经理扩大操作记录范围", async () => {
@@ -1212,19 +1275,21 @@ describe("PermissionService 群组接入", () => {
     expect((await service.permissionsOf(PROJECT_A)).groupProjectAccess).toBe("allowed");
   });
 
-  it("任务模板维护只认管理员或部门编辑规则，不因权限开关关闭而全员可写", async () => {
+  it("流程蓝图仅管理员；节点库只认管理员或有效项目经理，部门编辑范围不授予", async () => {
     const view = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "all", accessLevel: "view" })],
     });
     expect(await view.service.canManageBlueprint(PROJECT_A)).toBe(false);
+    expect(await view.service.canManageTaskNodes(PROJECT_A)).toBe(false);
     await expect(view.service.assertCanManageBlueprint(PROJECT_A)).rejects.toMatchObject({ code: "FORBIDDEN" });
 
     const edit = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "all", accessLevel: "edit" })],
     });
-    expect(await edit.service.canManageBlueprint(PROJECT_A)).toBe(true);
+    expect(await edit.service.canManageBlueprint(PROJECT_A)).toBe(false);
+    expect(await edit.service.canManageTaskNodes(PROJECT_A)).toBe(false);
 
     const disabled = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
@@ -1232,12 +1297,84 @@ describe("PermissionService 群组接入", () => {
       groupEnforced: false,
     });
     expect(await disabled.service.canManageBlueprint(PROJECT_A)).toBe(false);
+    expect(await disabled.service.canManageTaskNodes(PROJECT_A)).toBe(false);
+
+    const manager = serviceWith({ groupKeys: [], rules: [] });
+    manager.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_A], deletedAt: null });
+    expect(await manager.service.canManageBlueprint(PROJECT_A)).toBe(false);
+    expect(await manager.service.canManageTaskNodes(PROJECT_A)).toBe(true);
 
     const admin = serviceWith({ groupKeys: ["libiaorobot.com/系统管理员"], rules: [], groupEnforced: false });
     expect(await admin.service.canManageBlueprint(PROJECT_A)).toBe(true);
+    expect(await admin.service.canManageTaskNodes(PROJECT_A)).toBe(true);
   });
 
-  it("任务节点 / 模板读取仅对有项目数据范围的账号放行，管理员或限制关闭恒可读", async () => {
+  it("公共任务模板写权限只认管理员或有效项目经理，部门编辑范围不授予", async () => {
+    const deptView = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "all", accessLevel: "view" })],
+    });
+    expect(await deptView.service.canManageTaskTemplates(PROJECT_A)).toBe(false);
+
+    const deptEdit = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "all", accessLevel: "edit" })],
+    });
+    expect(await deptEdit.service.canManageBlueprint(PROJECT_A)).toBe(false);
+    expect(await deptEdit.service.canManageTaskNodes(PROJECT_A)).toBe(false);
+    expect(await deptEdit.service.canManageTaskTemplates(PROJECT_A)).toBe(false);
+    expect(await deptEdit.service.permissionsOf(PROJECT_A)).toMatchObject({
+      taskTemplateRead: true,
+      taskTemplateManage: false,
+    });
+    await expect(deptEdit.service.assertCanManageTaskTemplates(PROJECT_A)).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const disabled = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [],
+      groupEnforced: false,
+    });
+    expect(await disabled.service.canManageTaskTemplates(PROJECT_A)).toBe(false);
+
+    const managerOfRecord = serviceWith({ groupKeys: [], rules: [] });
+    managerOfRecord.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_A], deletedAt: null });
+    expect(await managerOfRecord.service.canManageTaskNodes(PROJECT_A)).toBe(true);
+    expect(await managerOfRecord.service.canManageTaskTemplates(PROJECT_A)).toBe(true);
+    expect(await managerOfRecord.service.permissionsOf(PROJECT_A)).toMatchObject({
+      taskNodeManage: true,
+      taskTemplateRead: true,
+      taskTemplateManage: true,
+    });
+
+    const rosterManager = serviceWith({ groupKeys: [], rules: [] });
+    rosterManager.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_B], deletedAt: null });
+    rosterManager.repository.memberships.set(PROJECT_A, "project_manager");
+    expect(await rosterManager.service.canManageTaskTemplates(PROJECT_A)).toBe(true);
+
+    const taskOwnerOnly = serviceWith({ groupKeys: [], rules: [] });
+    taskOwnerOnly.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_B], deletedAt: null });
+    taskOwnerOnly.repository.taskOwnerProjectIds.add(PROJECT_A);
+    expect(await taskOwnerOnly.service.canManageTaskNodes(PROJECT_A)).toBe(false);
+    expect(await taskOwnerOnly.service.canManageTaskTemplates(PROJECT_A)).toBe(false);
+    expect(await taskOwnerOnly.service.permissionsOf(PROJECT_A)).toMatchObject({
+      taskNodeManage: false,
+      taskTemplateRead: true,
+      taskTemplateManage: false,
+    });
+
+    const deletedManager = serviceWith({ groupKeys: [], rules: [] });
+    deletedManager.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_A], deletedAt: new Date() });
+    expect(await deletedManager.service.canManageTaskTemplates(PROJECT_A)).toBe(false);
+    expect(await deletedManager.service.permissionsOf(PROJECT_A)).toMatchObject({
+      taskTemplateRead: false,
+      taskTemplateManage: false,
+    });
+
+    const admin = serviceWith({ groupKeys: ["libiaorobot.com/系统管理员"], rules: [], groupEnforced: false });
+    expect(await admin.service.canManageTaskTemplates(PROJECT_A)).toBe(true);
+  });
+
+  it("公共任务节点 / 模板读取对有效项目关系和项目数据范围放行", async () => {
     const denied = serviceWith({ groupKeys: ["libiaorobot.com/项目部"], rules: [] });
     expect(await denied.service.canReadBlueprint(PROJECT_A)).toBe(false);
     await expect(denied.service.assertCanReadBlueprint(PROJECT_A)).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -1264,6 +1401,21 @@ describe("PermissionService 群组接入", () => {
 
     const admin = serviceWith({ groupKeys: ["libiaorobot.com/系统管理员"], rules: [] });
     expect(await admin.service.canReadBlueprint(PROJECT_A)).toBe(true);
+
+    const member = serviceWith({ groupKeys: [], rules: [] });
+    member.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_B], deletedAt: null });
+    member.repository.memberships.set(PROJECT_A, "project_member");
+    expect(await member.service.canReadBlueprint(PROJECT_A)).toBe(true);
+
+    const taskOwner = serviceWith({ groupKeys: [], rules: [] });
+    taskOwner.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_B], deletedAt: null });
+    taskOwner.repository.taskOwnerProjectIds.add(PROJECT_A);
+    expect(await taskOwner.service.canReadBlueprint(PROJECT_A)).toBe(true);
+
+    const deletedRelation = serviceWith({ groupKeys: [], rules: [] });
+    deletedRelation.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_B], deletedAt: new Date() });
+    deletedRelation.repository.taskOwnerProjectIds.add(PROJECT_A);
+    expect(await deletedRelation.service.canReadBlueprint(PROJECT_A)).toBe(false);
   });
 
   it("own 项目范围展开为本人负责或进入名册的项目", async () => {

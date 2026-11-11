@@ -2,6 +2,7 @@
 // Input: a UCD 2.0 envelope whose document carries Drawing tables. The viewer never
 // re-reads DXF. Analytic source curves (Entity.geometry) and the discretized display
 // representation (Representation kind=drawing) are selectable, separate paths.
+import {restoreCurve} from './dwg-archive-curves.js';
 import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.3';
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
 import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.3';
@@ -26,10 +27,42 @@ const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
 const createStrokeTilePlanner = gpuModules?.[2].createStrokeTilePlanner;
 const ACCENT = '#d9426f';
 
+function lazyField(object, key, load) {
+  Object.defineProperty(object, key, {enumerable:true, configurable:true, get() {
+    const value = load();
+    Object.defineProperty(object, key, {value, enumerable:true, writable:true, configurable:true});
+    return value;
+  }});
+}
+
 export function mountDrawingViewer(envelope) {
   window.__cadTimingMark?.("drawingViewerMountStart");
   const viewerStarted = performance.now();
   const ucd = envelope.document, drawing = ucd.drawing, presentation = envelope.presentation;
+  function bindPolylineFields() {
+    // The worker has finished transferring tables and the binary buffers are hydrated.
+    const bytes = bufferBytes('buffer-0');
+    for (const [id, hint] of envelope.polylineFields) {
+      const entity = drawing.entities[id], geometry = entity.geometry;
+      let pointCount;
+      if (hint === 'paired') {
+        const [offset, count] = envelope.displayRows[entity.displayRepresentationId];
+        const xyz = new Float64Array(bytes.buffer, bytes.byteOffset + offset, count * 3);
+        pointCount = count / 2 + 1;
+        lazyField(geometry, 'points', () => Array.from({length:pointCount}, (_, index) => {
+          // Paired line segments are p0,p1, p1,p2, ... . Take the end of each segment.
+          const at = index === 0 ? 0 : (2 * index - 1) * 3;
+          return [xyz[at], xyz[at + 1], xyz[at + 2]];
+        }));
+      } else {
+        pointCount = geometry.points.length;
+      }
+      const segments = Math.max(0, geometry.closed ? pointCount : pointCount - 1);
+      lazyField(geometry, 'bulges', () => Array(segments).fill(0));
+      if (hint !== 'zeroBulges') lazyField(geometry, 'widths', () => Array.from({length:segments}, () => [0,0]));
+    }
+    delete envelope.polylineFields;
+  }
   const styleExt = (ucd.extensions && ucd.extensions['org.cad-preview.style-inheritance/1']) || {};
   const coverageExt = (ucd.extensions && ucd.extensions['org.cad-preview.drawing-coverage/1']) || {};
   const annotationItems = ucd.extensions?.['org.cad-preview.annotation-presentation/1']?.items || {};
@@ -41,6 +74,12 @@ export function mountDrawingViewer(envelope) {
   const mtextLayout = ucd.extensions?.['org.cad-preview.dxf-mtext/1'];
   const plotStyles = ucd.extensions?.['org.cad-preview.dxf-plot-styles/1'];
   const lineWeightSettings = ucd.extensions?.['org.libiaolink.dwg/1']?.lineWeightSettings;
+  let curveTables=null, curveNote=null, refreshTimer=0;
+  const nativeGeometry=ucd.extensions?.['org.libiaolink.dwg/1']?.nativeGeometry;
+  function exactCurve(entity) {
+    if (entity?.geometry?.displayOnly) restoreCurve(curveTables,entity,nativeGeometry);
+    return entity?.geometry;
+  }
   let plotPreview = false;
   const plotErrors = new Set(), plotFillCache = new Map();
   const viewport = document.getElementById('viewport');
@@ -313,6 +352,7 @@ export function mountDrawingViewer(envelope) {
     }
     return bytes;
   }
+  if (envelope.polylineFields) bindPolylineFields();
   function accessorView(id) {
     const a = ucd.accessors[id];
     if (!a) throw new Error('missing accessor ' + id);
@@ -352,6 +392,13 @@ export function mountDrawingViewer(envelope) {
   function representationGeometry(repId) {
     if (!repId) return null;
     if (repCache.has(repId)) return repCache.get(repId);
+    const row = envelope.displayRows?.[repId];
+    if (row) {
+      const [offset,count,topology] = row, bytes = bufferBytes('buffer-0');
+      const result = { positions:new Float64Array(bytes.buffer, bytes.byteOffset+offset, count*3),
+        indices:null, topology, range:{first:0,count}, localFromRepresentation:I };
+      repCache.set(repId,result); return result;
+    }
     const rep = ucd.representations[repId];
     if (!rep) return null;
     const geo = ucd.geometries[rep.bindings[0].geometryId];
@@ -477,7 +524,7 @@ export function mountDrawingViewer(envelope) {
       draw, entity, fillEntry:fillEntryFor(ucd, draw.itemId), mode, tolerance,
       representationGeometry, analyticFor,
       toWorld:point => apply(draw.localToSpace, point),
-      boundaryGeometry:id => drawing.entities[id] && drawing.entities[id].geometry
+      boundaryGeometry:id => exactCurve(drawing.entities[id])
     });
     if (!fill || !fill.bbox) return null;
     const path = new Path2D();
@@ -801,7 +848,7 @@ export function mountDrawingViewer(envelope) {
         const extend = (x, y) => { if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; };
         // Pattern strokes already encode their own dashes/dots. Keep them in
         // both display modes; drawing boundary polygons would solid-fill holes.
-        if (patternHatch || mode === 'display') {
+        if (patternHatch || mode === 'display' || exactCurve(entity)?.displayOnly) {
           const representation = representationGeometry(draw.displayRepresentationId);
           const skip = splineOriginPair(entity, representation) ? 2 : 0;
           const stroke = strokeSegmentsForRepresentation(representation,
@@ -2259,6 +2306,7 @@ export function mountDrawingViewer(envelope) {
     const host=panel.querySelector('.dproperties');if(!host)return;host.replaceChildren();
     const draw=instanceSelected?.draw||built.find(rec=>selected.has(rec.id))?.draw;
     const item=selectedBlockDetails?drawing.blockInstances[selectedInstance]:draw?(drawing.entities[draw.itemId]||drawing.annotations[draw.itemId]):null;
+    exactCurve(item);
     const ref=item?.sourceRefs?.[0];
     const source=ucd.extensions?.['org.cad-preview.dxf-source-facts/1']?.sources?.[ref?.sourceId];
     let facts=source?.objects?.[ref?.objectKey];
@@ -2838,9 +2886,17 @@ export function mountDrawingViewer(envelope) {
   }
   function onWheel(event) {
     event.preventDefault();
+    // Read deltaMode first: some browsers expose deltaY in different units
+    // depending on whether the event's unit has been requested.
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? cssH : 1;
+    const delta = event.deltaY * unit;
+    if (!Number.isFinite(delta) || delta === 0) return;
     const p = pointerPosition(event);
     beginInteraction();
-    zoomAt(p.x, p.y, event.deltaY < 0 ? 1.15 : 1 / 1.15);
+    // Camera updates accumulate even subpixel trackpad input; drawing is
+    // coalesced by requestInteractionDraw, with no residual zoom animation.
+    const steps = Math.max(-1, Math.min(1, -delta / 100));
+    zoomAt(p.x, p.y, 1.15 ** steps);
   }
   function onKeyDown(event) {
     if (event.target.closest?.('input,select,textarea')) return;
@@ -2866,6 +2922,12 @@ export function mountDrawingViewer(envelope) {
     '<div class="dsec"><strong>块定义与实例</strong><div class="dblocks"></div></div>' +
     '<div class="dsec"><strong>覆盖与损失</strong><div class="dcoverage"></div></div>' +
     '<div class="dsec"><button type="button" id="drawingReset">恢复源状态</button></div>';
+  if (envelope.deferredCurves) {
+    curveNote = document.createElement('p');
+    curveNote.className = 'dhint';
+    curveNote.textContent = '可继续看图，归档完成后会自动补齐曲线参数。';
+    panel.querySelector('.dmodes').parentElement.append(curveNote);
+  }
   if(meshIds.size){
     const section=document.createElement('div');section.className='dsec';
     section.innerHTML='<strong>视图</strong><div><button type="button" data-spatial-view="2d" aria-pressed="true">二维图纸</button> <button type="button" data-spatial-view="3d" aria-pressed="false">三维对象</button></div><p class="dhint" id="drawingMeshNote">三维对象仅包含本图已解析的面/网格；文字、标注和普通二维图元请回二维查看，不作为加工或验收依据。</p>';
@@ -2922,6 +2984,24 @@ export function mountDrawingViewer(envelope) {
     get mode() { return mode; },
     projection: () => projection,
     setSpace,
+    attachArchiveCurves(tables) {
+      curveTables=tables;
+      curveNote.textContent='完整曲线参数已就绪。';
+      renderSourceProperties();
+      for(const [key,state] of spaceStateCache) if(state.mode==='analytic')spaceStateCache.delete(key);
+      // Display-mode pixels are already final. Only a currently analytic view needs a repaint.
+      function refresh() {
+        if(destroyed || mode!=='analytic')return;
+        if(drag || interacting || initialBuild){refreshTimer=setTimeout(refresh,160);return;}
+        if(instancePlan)startInitialBuild(rebuildSteps(),draw);else rebuild();
+      }
+      refresh();
+    },
+    archiveCurvesFailed(retry) {
+      curveNote.textContent='暂未取得完整曲线参数，仍可看图。';
+      const button=document.createElement('button');button.textContent='重试';
+      button.onclick=()=>{button.remove();retry();};curveNote.append(button);
+    },
     setMode(next) { applyMode(next); },
     setPlotPreview(enabled) {
       const next = !!enabled;
@@ -3015,7 +3095,7 @@ export function mountDrawingViewer(envelope) {
     },
     resize, draw, overviewPaint, ready: Promise.all([rasterReady, fontReady, firstPaint]),
     destroy() {
-      destroyed = true;
+      destroyed = true; clearTimeout(refreshTimer);
       cancelInitialBuild();
       completeFirstPaint();
       meshViewer?.dispose();

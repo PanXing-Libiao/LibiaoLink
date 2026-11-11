@@ -1,5 +1,28 @@
 # notify 模块（S7·outbox · S7-4 · 通知投递内核 j1 / M5-04 首刀 · Push 178 + 接线段渠道护栏 · Push 180） + S8-3 契约落地（SSE 实时流 / 稍后提醒）· Push 210 + M5-04-1 SSE 实现 · Push 211 + M5-04-2 稍后提醒实现 · Push 212 + M5-04 收口 · Push 213 + M5-03-1 企微适配器内核 · Push 215 + M5-03-2 契约段 · Push 221 + 群通道迁移 0046 · Push 222 + M5-03-2 智能机器人长连接客户端（webhook 面退役）· Push 223 + M5-03-2 接线段（群绑定读写 + notify.group 消费 + 回调 ingest）· Push 224 + M5-03-3 应用消息 + C5-04 降级 + 告警出口 · Push 226 + M5-03-4 开工（T3-6 收官 · 93001 锁定 · PoC-2 证据骨架）· Push 227 + M5-03-4 T5 反向修复（告警复报去重）· Push 229 + M5-03-4 告警 / 失败文案收敛（核心语义口径）· Push 230 + M5-03-5-3 单聊 aibot 实现段（sendUserMarkdown + 限速 single + NotifyDmService + 激活仓储 + 回放）· Push 237 + M5-03-5-4 单聊 aibot 接线段（outbox 路由分流 + `:aibot` 产出接线 + worker 回调分流 + 集成回放）· Push 238 + M5-03-5-6 绑定码链路（迁移 0055 · 单聊 ingest 绑定 + 密文 open_userid 寻址 + D4 话术）· Push 247 + M5-03-5-6 契约刀（取码 / 查绑定态 / 解绑 + `audit_logs` + 生成客户端）· Push 249 + outbox 告警可执行化与恢复日报 · Push 257 + 单聊 enter_chat 欢迎语 · Push 261
 
+## 日报查询单聊图片（2026-11-11 · S2）
+
+- **发送面**：`WecomAibotClient.sendUserImage` 先复用 `validateAibotImage` 校验 PNG / JPG / GIF、文件名、10MB 与分片数，再完成 `aibot_upload_media_init/chunk/finish`，最后发送 `aibot_send_msg`。单聊帧固定 `chatid = 绑定行密文 open_userid`、`chat_type = 1`、`msgtype = image`、`image.media_id = upload.mediaId`，限速桶为 `single`，渠道为 `wecom_aibot`。
+- **共用路径**：`sendGroupImage` 与 `sendUserImage` 共用私有 `sendImage`；群聊仍为 `chatid = chatid`、`chat_type = 2`、`group` 桶，不改变现有群发送行为。
+- **错误分类**：图片上传阶段接收渠道与激活态，846607 群聊按 `groupActivated`、单聊按 `dmActivated` 分类，不再把单聊上传失败固定归入 `wecom_group`。上传失败不产生 image 消息；发送失败继续沿用既有回执分类。
+- **回归**：`server/test/wecom-aibot-image.test.ts` 覆盖单聊图片锁帧、群聊既有帧与上传 846607 双渠道分类；`server/scripts/m5-03-5-dm-replay.mjs` 新增 S2b，验证构建产物的上传分片、单聊图片帧与未激活分类（PASS 82 / FAIL 0）。本刀不接日报查询编排、不写审计 / outbox / 站内信；`server/` 属 wmj 线代记，请 wmj 复核。
+
+## 日报查询回调身份（2026-11-11 · S3）
+
+- **单聊**：`NotifyDmService.activateFromReportQuery` 只按 `(bot_id, 回调 from.userid)` 刷新激活行，不调用 `extractBindingCode`、不计绑定失败、不触发防猜锁。`resolveReportQueryActor` 只读绑定行与用户生命周期，停用 / 软删 / 未绑定均返回 `null`；`messagesEnabled` 不参与主动查询授权。
+- **群聊**：`NotifyGroupService.activateFromReportQuery` 只做合法群回调过滤、候选群登记与 `activated_at` 置位，不解析、也不执行群名命令。查询再由 `ProjectGroupService.projectIdByChatid` 读绑定项目。
+- **导出**：`applyMarkdownHardBreaks` 随 `truncateUtf8Bytes` 从 notify 公开出口导出，供 `report-query` 按企微 markdown 口径组装文字。
+- **测试 / 边界**：`server/test/report-query-service.test.ts` 覆盖查询优先于绑定码、群聊仅激活、身份未绑定与限流幂等；notify 仍不 import `report-issue`，查询链路不写审计 / outbox / 站内信 / 群播报。`server/` 属 wmj 线代记，请 wmj 复核。
+
+## 日报查询海报投递（2026-11-11 · S4 / S5）
+
+- **公开入口**：`DailyReportPosterDeliveryService.send({ kind, data, target, sendDaily, sendIssues, trace })`。`kind=single` 使用 `DailyReportPosterData` 并复用现有日报 / 问题专报；`kind=digest` 使用 `DailyReportDigestPosterData`，服务侧选择日报合集 / 问题合集渲染器。`data` 只使用 notify 自己的海报快照类型，不反向依赖 report-issue；单聊目标走 `sendUserImage`（`dmActivated=true`），群聊目标走 `sendGroupImage`（`groupActivated=true`）。
+- **发送顺序**：调用方先完成文字与深链回复；服务内严格按日报图 → 问题图发送，每次调用最多两张逻辑图。0 篇日报不生成日报合集；问题图只在 `sendIssues=true` 且对应快照有问题时生成。
+- **合集预算**：`renderDailyReportDigestPoster` / `renderDailyReportIssueDigestPoster` 固定 1440px 宽，画布最高 16000px；每篇日报 / 每个问题只取 1 张首图，取首图后整图最多 8 张缩略图。超过 8 张时投递层不生成该合集图，直接回退文字 + 深链；不截断附件后继续发送。正文预算耗尽显示“完整内容请点击上方深链”；单项原有多图但合计未超限时，图中提示每项仅展示 1 张。
+- **辅助标签可读性（2026-11-11 视觉复核）**：`REPORT` / `ISSUE` 为 12.5px 粗体，人数 / 阶段为 16px，`DONE` / `PLAN` / `PROGRESS` 节标题为 14px；节标题行高 36px、前置色块 22×7px。只调整合集海报视觉，不改发送与失败降级。
+- **附件 / 并发 / 失败隔离**：按当前发送开关筛选附件，同一 `objectKey` 只读取一次；合集日报与问题图各自只接收本图所需的图片映射。渲染闸门同时 1 张、排队最多 2 个；队列满、单张附件读取、渲染、10MB、上传或发送失败只跳过对应图片，日报图失败仍尝试问题图。成功 / 失败只记 `trace`、掩码目标末 4 位、错误名或 errcode，不记正文与完整 ID。
+- **测试 / 边界**：`server/test/daily-report-poster-delivery.test.ts` 覆盖单篇 / 合集分流、0 篇问题合集、双图顺序、每项首图 / 8 张上限、群 / 单聊目标、10MB、渲染 / 发送 / 附件失败隔离与并发队列上界；`server/test/daily-report-poster.test.ts` 覆盖两张合集图 1440px 宽、≤16000px 和超预算输出。不持久化海报字节、不写审计 / outbox / 站内信，既有群同步 `sendDailyReportPoster` 行为不变。`server/` 属 wmj 线代记，请 wmj 复核。
+
 ## 物料变更补发图片（2026-11-09）
 
 - **入口**：物料变更补发提交事务内追加 `notify.group`（模板码 `MATERIAL_REISSUE_GROUP`，`refType=change`，`refId=change_requests.id`）；通知失败不回滚补发提交，outbox 重试不会重复生成业务记录。

@@ -100,9 +100,17 @@ class FakeGateService {
 }
 
 class FakePermissionService {
-  admins = new Set<string>();
-  async canManageGroupAccess(actorId: string): Promise<boolean> {
-    return this.admins.has(actorId);
+  editors = new Set<string>();
+  async assertProjectVisible(actorId: string): Promise<Record<string, unknown>> {
+    const edit = this.editors.has(actorId);
+    return {
+      projectId: PROJECT,
+      member: edit,
+      projectManager: false,
+      taskOwner: false,
+      groupAccessLevel: edit ? "edit" : null,
+      accessLevel: edit ? "edit" : "view",
+    };
   }
 }
 
@@ -145,16 +153,16 @@ function makeService(permission = new FakePermissionService()): {
   return { service, db, flow, projects, gate, permission };
 }
 
-describe("流程管理硬闸（管理员 / 项目经理）", () => {
-  it("部门编辑账号不能凭遗留 roleCodes 获得项目经理豁免；部门权限管理员可以", async () => {
+describe("流程管理硬闸（最终项目编辑权）", () => {
+  it("非项目编辑者即使被指定为项目经理也拒绝；取得最终项目编辑权后放行", async () => {
     const permission = new FakePermissionService();
     const { service } = makeService(permission);
-    await expect(service.assertProjectManager(PROJECT, [MANAGER], ACTOR, "增删节点")).rejects.toMatchObject({
+    await expect(service.assertProjectEditor(PROJECT, ACTOR, "增删节点")).rejects.toMatchObject({
       code: "FORBIDDEN",
       httpStatus: 403,
     });
-    permission.admins.add(ACTOR);
-    await expect(service.assertProjectManager(PROJECT, [MANAGER], ACTOR, "增删节点")).resolves.toBeUndefined();
+    permission.editors.add(ACTOR);
+    await expect(service.assertProjectEditor(PROJECT, ACTOR, "增删节点")).resolves.toBeUndefined();
   });
 });
 

@@ -1,3 +1,5 @@
+> **2026-11-10 · CAD**　迁移 0088_cad_dwg_companion_sets.sql 允许 DWG 归档保存已选的固定版本配套文件。启用该入口前使用项目迁移器应用；原有 STEP 限制继续生效。
+
 # database/ · 数据库基线（g3 · S5）
 
 > 物料变更补发（2026-11-09 · 待测试机部署）：`0084_material_reissue.sql` 为 `change_requests` 增加 `change_type`（默认 `file_change`）与 `material_reissue jsonb`，并用 CHECK 保证普通变更无补发载荷、补发变更必有载荷。存量行自动按普通变更回填，不改既有列、不复制文件版本。回滚语句见迁移头注；部署新版 API / worker 前先执行迁移。

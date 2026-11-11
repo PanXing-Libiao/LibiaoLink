@@ -667,10 +667,19 @@ class FakePermissionService {
   projectManager = false;
   /** 彻底删除（purge）仅部门权限管理员：默认非管理员，用例按需放行。 */
   groupAccessAdmin = false;
+  /** 既有用例默认按项目编辑者；任务负责人专属用例改为 view。 */
+  accessLevel: "edit" | "view" = "edit";
 
-  async assertProjectVisible(_actorId: string, projectId: string): Promise<{ projectId: string; member: boolean; projectManager: boolean }> {
+  async assertProjectVisible(_actorId: string, projectId: string) {
     if (!this.visible) throw new Error("fake: 项目不可见");
-    return { projectId, member: true, projectManager: this.projectManager };
+    return {
+      projectId,
+      member: true,
+      projectManager: this.projectManager,
+      taskOwner: false,
+      groupAccessLevel: this.accessLevel,
+      accessLevel: this.accessLevel,
+    };
   }
 
   async assertCan(): Promise<void> {
@@ -2798,22 +2807,23 @@ describe("Push 249 · 任务定档联动与写口闸（业务口径「若是则�
     expect(h2.audit.entries.map((entry) => (entry as { objectType: string }).objectType)).toEqual(["file"]);
   });
 
-  it("挂接任务的文件定档：非负责人非项目经理 → 403（不锁文件、不联动任务）", async () => {
+  it("挂接任务的文件定档：非负责人且项目只读 → 403（不锁文件、不联动任务）", async () => {
     const h = makeService();
+    h.permission.accessLevel = "view";
     h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 5, taskId: TASK });
     h.repo.versions = [makeVersionRow({ id: VERSION, seq: 1 })];
     h.repo.task = { id: TASK, projectId: PROJECT, ownerIds: [OTHER_ACTOR], finalizedAt: null };
     await expect(h.service.finalizeFile(FILE, { version: 5 }, ACTOR)).rejects.toMatchObject({
       code: "FORBIDDEN",
       httpStatus: 403,
-      message: "仅任务负责人或项目经理可定档文件",
+      message: "仅项目编辑者或当前任务负责人可修改该任务文件",
     });
     expect(h.repo.filePatches).toHaveLength(0);
     expect(h.repo.finalizedTasks).toEqual([]);
     expect(h.repo.abortedTaskUploadSessions).toEqual([]);
   });
 
-  it("挂接任务的文件定档：项目经理非任务负责人也可定档", async () => {
+  it("挂接任务的文件定档：项目编辑者非任务负责人也可定档", async () => {
     const h = makeService();
     h.permission.projectManager = true;
     h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 5, taskId: TASK });

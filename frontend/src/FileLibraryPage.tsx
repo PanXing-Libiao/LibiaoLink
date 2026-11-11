@@ -297,7 +297,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     };
   }, [projects, debouncedKeyword, query.tab, projectIdKey, reloadTick]);
 
-  // 权限画像（与 AppHeader 共用同一份进程内单飞缓存）：功能位 + 项目级 groupAccessLevel 共同收敛恢复 / 删除入口。
+  // 权限画像（与 AppHeader 共用同一份进程内单飞缓存）：功能位 + 项目级 accessLevel 共同收敛恢复 / 删除入口。
   // 服务端逐请求仍是最终裁决；系统管理员绕过部门项目范围限制。
   const isAdmin = permissions?.groupAccessAdmin === true;
   const canDeleteProject = hasPermission(permissions, "project.delete");
@@ -315,9 +315,9 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
   const page = Math.min(query.page, totalPages);
   const pageItems = visibleItems.slice((page - 1) * PAGE_LIMIT, page * PAGE_LIMIT);
   const canEditProject = (projectId: string): boolean =>
-    isAdmin || projectById.get(projectId)?.groupAccessLevel === "edit";
+    isAdmin || projectById.get(projectId)?.accessLevel === "edit";
   const canRestoreProject = (project: ApiProject): boolean =>
-    canDeleteProject && (isAdmin || project.groupAccessLevel === "edit");
+    canDeleteProject && (isAdmin || project.accessLevel === "edit");
   const userNameById = new Map(directory.map((user) => [user.id, user.displayName] as const));
   const userNameOf = (id: string | null): string => (id === null ? "—" : userNameById.get(id) ?? id);
   const projectCodeOf = (id: string): string => projectById.get(id)?.code ?? "—";
@@ -904,7 +904,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                           statusText={projectStatusTextOf(locale, project.status)}
                           accentColor={accent.color}
                           accentText={accent.text}
-                          managerNames={project.managerNames.map((name) => (name === null || name === "" ? "—" : name)).join("、")}
+                          managerNames={project.managerNames}
                           time={formatDateTime(project.deletedAt ?? project.updatedAt)}
                           onRestore={
                             canRestoreProject(project)

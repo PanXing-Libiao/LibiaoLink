@@ -133,7 +133,7 @@
             "items": {
               "$ref": "#/components/schemas/PermissionKey"
             },
-            "description": "全量功能权限位基线；业务写能力另由部门编辑范围 / 项目 groupAccessLevel 裁决"
+            "description": "全量功能权限位基线；业务写能力另由部门编辑范围 / Project.accessLevel 裁决"
           },
           "groupKeys": {
             "type": "array",
@@ -159,7 +159,7 @@
           },
           "groupReadOnly": {
             "type": "boolean",
-            "description": "兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以项目 groupAccessLevel 为准，全局写能力以 groupAllEdit 为准"
+            "description": "兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以Project.accessLevel 为准，全局写能力以 groupAllEdit 为准"
           },
           "groupProjectAccess": {
             "$ref": "#/components/schemas/GroupProjectAccess"
@@ -177,7 +177,7 @@
                 "$ref": "#/components/schemas/GroupAccessAccessLevel"
               },
               {
-                "description": "旧客户端兼容摘要：任一范围可编辑 = edit，否则 view；项目级写权限以项目 groupAccessLevel 为准"
+                "description": "旧客户端兼容摘要：任一范围可编辑 = edit，否则 view；项目级写权限以Project.accessLevel 为准"
               }
             ]
           },
@@ -186,7 +186,7 @@
           },
           "groupAnyEdit": {
             "type": "boolean",
-            "description": "当前账号是否至少在一个项目范围拥有编辑权限（任务模板 / 节点库写入口）"
+            "description": "当前账号是否至少在一个项目范围拥有编辑权限（兼容摘要；节点库 / 任务模板分别看 taskNodeManage / taskTemplateManage）"
           },
           "groupAllEdit": {
             "type": "boolean",
@@ -199,6 +199,18 @@
           "groupSelectedEdit": {
             "type": "boolean",
             "description": "当前账号是否拥有指定项目编辑权限"
+          },
+          "taskNodeManage": {
+            "type": "boolean",
+            "description": "是否可新增 / 编辑 / 删除公共任务节点库：管理员，或至少管理一个未删除项目的项目经理；部门编辑范围不授予"
+          },
+          "taskTemplateRead": {
+            "type": "boolean",
+            "description": "是否可浏览公共任务模板：管理员、有项目数据范围的账号，或至少有一个可浏览有效项目关系（项目经理 / 项目成员 / 任务负责人）"
+          },
+          "taskTemplateManage": {
+            "type": "boolean",
+            "description": "是否可新建公共任务模板：管理员，或至少管理一个未删除项目的项目经理；具体模板的编辑 / 删除还要求当前账号是创建人或管理员"
           },
           "auditScope": {
             "$ref": "#/components/schemas/AuditScope"
@@ -1625,6 +1637,26 @@
           "artifactBytes": {
             "type": "integer",
             "minimum": 0
+          },
+          "dwgCurveColumnsV1": {
+            "type": "object",
+            "properties": {
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "byteLength": {
+                "type": "integer",
+                "minimum": 40,
+                "maximum": 268435456
+              }
+            },
+            "required": [
+              "sha256",
+              "byteLength"
+            ],
+            "additionalProperties": false,
+            "description": "已校验 DWG 的可选曲线参数列，与归档缓冲共用资源租约"
           },
           "resources": {
             "type": "object",
@@ -3753,7 +3785,7 @@
           "code",
           "name"
         ],
-        "description": "新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；deliverableType 的自定义成果由项目经理走 POST /projects/{id}/deliverable-types（本通用端点仍仅 dict.manage）；变更写审计留痕（C9-02）；响应为更新后的整个字典"
+        "description": "新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；deliverableType 的自定义成果由项目编辑者走 POST /projects/{id}/deliverable-types（本通用端点仍仅 dict.manage）；变更写审计留痕（C9-02）；响应为更新后的整个字典"
       },
       "DictItemUpdateBody": {
         "type": "object",
@@ -4788,7 +4820,7 @@
           "edit",
           "view"
         ],
-        "description": "当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发"
+        "description": "当前登录账号对该项目的最终有效访问级别：edit = 可执行项目级写操作 / view = 仅浏览。管理员、所管本项目的项目经理或部门 / 个人规则命中 edit 时为 edit；项目成员、任务负责人关系仅保证浏览，且项目经理身份不外溢到其他项目"
       },
       "GroupAccessAdmin": {
         "type": "object",
@@ -4861,6 +4893,48 @@
           "manual"
         ],
         "description": "管理员来源：configured 环境配置 / manual 手工添加"
+      },
+      "GroupAccessAutomaticRole": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectManagerProjectIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "项目经理项目：projects.manager_ids 或 project_members.role_in_project=project_manager"
+          },
+          "projectMemberProjectIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "项目名册成员项目（不含项目经理记录）"
+          },
+          "taskOwnerProjectIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "至少负责一条未删除任务的项目"
+          },
+          "taskOwnerTaskCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "负责的未删除任务总数"
+          }
+        },
+        "required": [
+          "userId",
+          "projectManagerProjectIds",
+          "projectMemberProjectIds",
+          "taskOwnerProjectIds",
+          "taskOwnerTaskCount"
+        ],
+        "description": "自动项目角色：由项目和任务数据实时生成，随人员关系与任务分配自动变化"
       },
       "GroupAccessDataProjectScope": {
         "type": "string",
@@ -5164,6 +5238,13 @@
             "items": {
               "$ref": "#/components/schemas/GroupAccessProject"
             }
+          },
+          "automaticRoles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessAutomaticRole"
+            },
+            "description": "自动项目角色（项目经理 / 项目成员 / 任务负责人）；按用户聚合，项目或任务关系变化后随接口实时更新"
           }
         },
         "required": [
@@ -5172,9 +5253,10 @@
           "currentGroupKeys",
           "admins",
           "groups",
-          "projects"
+          "projects",
+          "automaticRoles"
         ],
-        "description": "权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目；无部门账号汇总在虚拟未分组节点"
+        "description": "权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树、项目与自动项目角色；无部门账号汇总在虚拟未分组节点"
       },
       "GroupAccessPage": {
         "type": "string",
@@ -8005,6 +8087,9 @@
             },
             "description": "项目经理姓名数组：服务端按 managerIds 解析后随行下发，与 managerIds 同下标一一对应（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时该位为 null（前端显示「—」）"
           },
+          "accessLevel": {
+            "$ref": "#/components/schemas/GroupAccessAccessLevel"
+          },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
           },
@@ -8012,7 +8097,14 @@
             "$ref": "#/components/schemas/ProjectStatus"
           },
           "groupAccessLevel": {
-            "$ref": "#/components/schemas/GroupAccessAccessLevel"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "description": "旧客户端兼容字段：当前与 accessLevel 同值下发；项目级写入口统一以 accessLevel 为准"
+              }
+            ]
           },
           "description": {
             "type": [
@@ -8096,6 +8188,7 @@
           "projectType",
           "managerIds",
           "managerNames",
+          "accessLevel",
           "stageKey",
           "status",
           "groupAccessLevel",
@@ -8565,7 +8658,7 @@
         "required": [
           "name"
         ],
-        "description": "仅当前项目的项目经理 / 名册项目经理可新增；条目进入全站 deliverableType 字典，所有账号与项目可见"
+        "description": "仅当前项目的项目编辑者（管理员、所管本项目的项目经理或部门 / 个人规则 edit）可新增；条目进入全站 deliverableType 字典，所有账号与项目可见"
       },
       "ProjectFacets": {
         "type": "object",
@@ -8811,6 +8904,51 @@
           "limit",
           "total"
         ]
+      },
+      "ProjectManagerCandidate": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "inProjectDepartment": {
+                "type": "boolean",
+                "description": "是否为配置部门（默认 Project Dept / 项目部，含子部门）的直属有效成员"
+              },
+              "isSystemAdmin": {
+                "type": "boolean",
+                "description": "是否属于系统管理员（环境配置 / 管理员部门 / 手工授权）"
+              }
+            },
+            "required": [
+              "inProjectDepartment",
+              "isSystemAdmin"
+            ]
+          }
+        ],
+        "description": "项目经理候选（仅启用、未离职；项目部成员与系统管理员取并集并按用户去重）"
+      },
+      "ProjectManagerCandidateList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectManagerCandidate"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "description": "项目经理候选名单（GET /projects/manager-candidates）"
       },
       "ProjectMember": {
         "type": "object",
@@ -9890,7 +10028,8 @@
             "items": {
               "$ref": "#/components/schemas/StakeholderProjectRef"
             },
-            "description": "关联项目（A5-03）；按干系人反查"
+            "maxItems": 1,
+            "description": "所属项目（一期单项目归属；数组为前端兼容，最多 1 项）"
           },
           "createdAt": {
             "$ref": "#/components/schemas/DateTime"
@@ -9982,13 +10121,15 @@
             "items": {
               "$ref": "#/components/schemas/Uuid"
             },
-            "maxItems": 50,
-            "description": "建台账时一并关联的项目（A5-03）；项目不存在 404"
+            "minItems": 1,
+            "maxItems": 1,
+            "description": "所属项目：每条干系人记录必须且只能归属一个项目；项目不存在 404"
           }
         },
         "required": [
           "name",
-          "companyType"
+          "companyType",
+          "projectIds"
         ],
         "description": "新增干系人：变更写审计留痕（对象 = stakeholder）；判重提示（姓名 + 手机号）随批量导入（A5-05，lan 线 M8-01）落地，本切片不阻断"
       },
@@ -10051,25 +10192,6 @@
           "role"
         ],
         "description": "干系人导出列 key（仅页面当前可见列）"
-      },
-      "StakeholderProjectLinkBody": {
-        "type": "object",
-        "properties": {
-          "projectId": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Uuid"
-              },
-              {
-                "description": "目标项目 projects.id；不存在或已软删 404"
-              }
-            ]
-          }
-        },
-        "required": [
-          "projectId"
-        ],
-        "description": "把干系人关联到项目（幂等）；需 stakeholder.manage 且干系人可见"
       },
       "StakeholderProjectRef": {
         "type": "object",
@@ -10226,6 +10348,15 @@
             },
             "description": "任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应"
           },
+          "managerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "minItems": 1,
+            "maxItems": 200,
+            "description": "项目级项目经理快照（至少一位、可多位）：唯一可编辑来源是 projects.manager_ids，同项目所有任务一致；任务表行内 / 抽屉与项目弹窗修改都按项目级替换，并同步全部任务，不产生任务级经理身份"
+          },
           "status": {
             "$ref": "#/components/schemas/TaskBaseStatus"
           },
@@ -10376,6 +10507,7 @@
           "title",
           "titleEn",
           "ownerIds",
+          "managerIds",
           "status",
           "displayStatus",
           "progress",
@@ -10396,6 +10528,15 @@
           "updatedAt"
         ],
         "description": "任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 124）"
+      },
+      "TaskAccessSource": {
+        "type": "string",
+        "enum": [
+          "project_edit",
+          "task_owner",
+          "view"
+        ],
+        "description": "任务有效权限来源：project_edit 项目编辑者 / task_owner 当前任务负责人 / view 仅浏览"
       },
       "TaskBaseStatus": {
         "type": "string",
@@ -10614,6 +10755,64 @@
           "warnings"
         ],
         "description": "完成预检（canComplete=false 时 missing 给缺件明细）"
+      },
+      "TaskCapabilities": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "description": "任务有效编辑级别：edit 可编辑 / view 只读"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/TaskAccessSource"
+          },
+          "canEditFields": {
+            "type": "boolean",
+            "description": "可编辑任务普通字段（状态、计划、人数、重要度、成果类型、进展描述等）"
+          },
+          "canUpdateProgress": {
+            "type": "boolean",
+            "description": "可更新进度 / 实际完成日期 / 提交完成"
+          },
+          "canComplete": {
+            "type": "boolean",
+            "description": "可提交任务完成（仍受完成门禁约束）"
+          },
+          "canFinalize": {
+            "type": "boolean",
+            "description": "可定档 / 取消定档（任务负责人或项目编辑者）"
+          },
+          "canUpload": {
+            "type": "boolean",
+            "description": "可上传 / 追加版本 / 对本人任务文件发起变更"
+          },
+          "canAssignOwners": {
+            "type": "boolean",
+            "description": "可修改任务负责人（仅项目编辑者；任务负责人不可改自己的负责人）"
+          },
+          "canDelete": {
+            "type": "boolean",
+            "description": "可删除 / 排序 / 批量操作任务（仅项目编辑者）"
+          }
+        },
+        "required": [
+          "level",
+          "source",
+          "canEditFields",
+          "canUpdateProgress",
+          "canComplete",
+          "canFinalize",
+          "canUpload",
+          "canAssignOwners",
+          "canDelete"
+        ],
+        "description": "当前登录人对本任务的有效能力（列表接口随行下发；导出等内部用途可不带）"
       },
       "TaskChangeLink": {
         "type": "object",
@@ -10961,15 +11160,36 @@
                 },
                 "description": "负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组"
               },
+              "managerNames": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "description": "当前项目的项目经理姓名数组：与 managerIds 同下标一一对应，同项目所有任务一致"
+              },
               "files": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/TaskFileBrief"
                 }
+              },
+              "capabilities": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TaskCapabilities"
+                  },
+                  {
+                    "description": "当前登录人对本任务的有效能力"
+                  }
+                ]
               }
             },
             "required": [
               "ownerNames",
+              "managerNames",
               "files"
             ]
           }
@@ -11142,12 +11362,26 @@
                 },
                 "description": "负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」）"
               },
+              "managerNames": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "description": "当前项目的项目经理姓名数组（与 managerIds 同下标一一对应；同项目所有任务一致；取不到姓名时该位为 null）"
+              },
               "fileSummary": {
                 "$ref": "#/components/schemas/TaskFileSummary"
+              },
+              "capabilities": {
+                "$ref": "#/components/schemas/TaskCapabilities"
               }
             },
             "required": [
               "ownerNames",
+              "managerNames",
               "fileSummary"
             ]
           }
@@ -11703,6 +11937,15 @@
             },
             "maxItems": 200,
             "description": "任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换（≤ 200 位）、顺序 = 展示顺序"
+          },
+          "managerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "minItems": 1,
+            "maxItems": 200,
+            "description": "项目级项目经理：不传 = 不改；传数组 = 整体替换（至少一位），仅项目编辑者可修改。任务表行内 / 抽屉与项目弹窗共用此名单，修改会同步同项目全部任务；任务负责人只能浏览"
           },
           "sortIndex": {
             "type": "integer",
@@ -13748,6 +13991,26 @@
         }
       }
     },
+    "/api/v1/projects/manager-candidates": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "项目经理候选（有效项目部成员 ∪ 系统管理员；仅启用且未离职）",
+        "responses": {
+          "200": {
+            "description": "候选名单",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectManagerCandidateList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{id}": {
       "get": {
         "tags": [
@@ -13977,7 +14240,7 @@
         "tags": [
           "projects"
         ],
-        "summary": "新增全站自定义成果文件类型（仅当前项目项目经理；写入 deliverableType 全局字典，所有项目共享）",
+        "summary": "新增全站自定义成果文件类型（仅当前项目编辑者；写入 deliverableType 全局字典，所有项目共享）",
         "parameters": [
           {
             "schema": {
@@ -21632,116 +21895,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StakeholderDeleteResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/stakeholders/{stakeholderId}/projects": {
-      "post": {
-        "tags": [
-          "stakeholders"
-        ],
-        "summary": "关联项目（A5-03；幂等：已关联返回同一结果）；写审计留痕",
-        "parameters": [
-          {
-            "schema": {
-              "$ref": "#/components/schemas/Uuid"
-            },
-            "required": true,
-            "description": "UUID（主键与关联 ID）",
-            "name": "stakeholderId",
-            "in": "path"
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StakeholderProjectLinkBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "关联后的干系人",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Stakeholder"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "契约校验失败（VALIDATION_FAILED）",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/stakeholders/{stakeholderId}/projects/{projectId}": {
-      "delete": {
-        "tags": [
-          "stakeholders"
-        ],
-        "summary": "解除项目关联（A5-03）：未关联 404；写审计留痕",
-        "parameters": [
-          {
-            "schema": {
-              "$ref": "#/components/schemas/Uuid"
-            },
-            "required": true,
-            "description": "UUID（主键与关联 ID）",
-            "name": "stakeholderId",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "$ref": "#/components/schemas/Uuid"
-            },
-            "required": true,
-            "description": "UUID（主键与关联 ID）",
-            "name": "projectId",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "解除后的干系人",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Stakeholder"
                 }
               }
             }

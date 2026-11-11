@@ -1,8 +1,10 @@
 import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { DeliverableTypeSchema, FileStatusSchema, PrioritySchema, StageKeySchema, TaskBaseStatusSchema, TaskDisplayStatusSchema } from "../common/dicts.ts";
+import { GroupAccessAccessLevelSchema } from "./group-access.ts";
 
 const TASK_OWNER_IDS_LIMIT = 200;
+const TASK_MANAGER_IDS_LIMIT = 200;
 const TASK_TEMPLATE_NODE_IDS_LIMIT = 500;
 const TASK_DELIVERABLE_TYPES_LIMIT = 20;
 
@@ -53,6 +55,14 @@ export const TaskSchema = z
     ownerIds: z.array(UuidSchema).openapi({
       description: "任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应",
     }),
+    managerIds: z
+      .array(UuidSchema)
+      .min(1)
+      .max(TASK_MANAGER_IDS_LIMIT)
+      .openapi({
+        description:
+          "项目级项目经理快照（至少一位、可多位）：唯一可编辑来源是 projects.manager_ids，同项目所有任务一致；任务表行内 / 抽屉与项目弹窗修改都按项目级替换，并同步全部任务，不产生任务级经理身份",
+      }),
     status: TaskBaseStatusSchema,
     displayStatus: TaskDisplayStatusSchema,
     progress: TaskProgressSchema,
@@ -110,6 +120,29 @@ export const TaskFileBriefSchema = z
   })
   .openapi("TaskFileBrief");
 
+/** 任务级有效能力（Pro 逐人权限）：项目编辑者拥有整项目；任务负责人只拥有本人任务；其余为只读。 */
+export const TASK_ACCESS_SOURCE_VALUES = ["project_edit", "task_owner", "view"] as const;
+
+export const TaskAccessSourceSchema = z
+  .enum(TASK_ACCESS_SOURCE_VALUES)
+  .openapi("TaskAccessSource", { description: "任务有效权限来源：project_edit 项目编辑者 / task_owner 当前任务负责人 / view 仅浏览" });
+
+export const TaskCapabilitiesSchema = z
+  .object({
+    level: GroupAccessAccessLevelSchema.openapi({ description: "任务有效编辑级别：edit 可编辑 / view 只读" }),
+    source: TaskAccessSourceSchema,
+    canEditFields: z.boolean().openapi({ description: "可编辑任务普通字段（状态、计划、人数、重要度、成果类型、进展描述等）" }),
+    canUpdateProgress: z.boolean().openapi({ description: "可更新进度 / 实际完成日期 / 提交完成" }),
+    canComplete: z.boolean().openapi({ description: "可提交任务完成（仍受完成门禁约束）" }),
+    canFinalize: z.boolean().openapi({ description: "可定档 / 取消定档（任务负责人或项目编辑者）" }),
+    canUpload: z.boolean().openapi({ description: "可上传 / 追加版本 / 对本人任务文件发起变更" }),
+    canAssignOwners: z.boolean().openapi({ description: "可修改任务负责人（仅项目编辑者；任务负责人不可改自己的负责人）" }),
+    canDelete: z.boolean().openapi({ description: "可删除 / 排序 / 批量操作任务（仅项目编辑者）" }),
+  })
+  .openapi("TaskCapabilities", { description: "服务端计算的任务级能力，前端据此逐任务收敛写入口" });
+
+export type TaskCapabilities = z.infer<typeof TaskCapabilitiesSchema>;
+
 /**
  * 任务列表项（A7）：表格 15 列 + 内联摘要（负责人姓名 / 文件摘要）。
  * 前端不再逐行反查 /users 或 /files，避免 N+1；「变更关联」列（第 15 列）直接吃 Task.changeLinks
@@ -119,13 +152,19 @@ export const TaskListItemSchema = TaskSchema.extend({
   ownerNames: z.array(z.string().nullable()).openapi({
     description: "负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」）",
   }),
+  managerNames: z.array(z.string().nullable()).openapi({
+    description: "当前项目的项目经理姓名数组（与 managerIds 同下标一一对应；同项目所有任务一致；取不到姓名时该位为 null）",
+  }),
   fileSummary: TaskFileSummarySchema,
+  capabilities: TaskCapabilitiesSchema.optional().openapi({ description: "当前登录人对本任务的有效能力（列表接口随行下发；导出等内部用途可不带）" }),
 }).openapi("TaskListItem");
 
 /** 任务详情（抽屉全字段，A7）：含变更关联（多条）与文件清单；列表走 TaskListItem，抽屉打开时按需请求。 */
 export const TaskDetailSchema = TaskSchema.extend({
   ownerNames: z.array(z.string().nullable()).openapi({ description: "负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组" }),
+  managerNames: z.array(z.string().nullable()).openapi({ description: "当前项目的项目经理姓名数组：与 managerIds 同下标一一对应，同项目所有任务一致" }),
   files: z.array(TaskFileBriefSchema),
+  capabilities: TaskCapabilitiesSchema.optional().openapi({ description: "当前登录人对本任务的有效能力" }),
 }).openapi("TaskDetail", { description: "任务详情（M3-01；列表 → 详情不再依赖列表随行数据）" });
 
 /** 任务排序白名单（A8）：字段白名单 + asc / desc，多项逗号分隔；白名单外字段返回 400（不静默降级）。 */
@@ -315,6 +354,14 @@ export const TaskUpdateBodySchema = z
     ownerIds: z.array(UuidSchema).max(TASK_OWNER_IDS_LIMIT).optional().openapi({
       description: "任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换（≤ 200 位）、顺序 = 展示顺序",
     }),
+    managerIds: z
+      .array(UuidSchema)
+      .min(1)
+      .max(TASK_MANAGER_IDS_LIMIT)
+      .optional()
+      .openapi({
+        description: "项目级项目经理：不传 = 不改；传数组 = 整体替换（至少一位），仅项目编辑者可修改。任务表行内 / 抽屉与项目弹窗共用此名单，修改会同步同项目全部任务；任务负责人只能浏览",
+      }),
     sortIndex: z.number().int().min(0).optional().openapi({
       description:
         "组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序",

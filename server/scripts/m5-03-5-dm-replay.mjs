@@ -3,7 +3,8 @@
  * M5-03-5-3 · 单聊 aibot（实现段）· 本地回放（无网络 / 无 PG）：
  *   ① 帧形锁帧（P4 复核落地）：假 socket 驱动 server/dist 的 `wecom.aibot.js` —— `sendUserMarkdown` 帧 =
  *      { chatid: userid, chat_type: 1, msgtype: markdown, markdown: { content } }（官方 SDK 语义核对
- *      sendMessage：单聊填 userid + 探针 T5-1b 真机 errcode=0）；群帧 chat_type=2 不动（对拍）。
+ *      sendMessage：单聊填 userid + 探针 T5-1b 真机 errcode=0）；群帧 chat_type=2 不动（对拍）；
+ *      `sendUserImage` 帧 = { chatid: userid, chat_type: 1, msgtype: image, image: { media_id } }（日报查询 S2）。
  *   ② 846607 双语义分流：dmActivated=false（未命中激活表）→ permanent；true / 缺省 → rate_limited（超频）；
  *      群侧 groupActivated 分流对拍。
  *   ③ 限速 kind `single`：本地双窗口拒绝（不发帧 / attempts=0 / retryAt = 被拒窗口下一窗口起点）；群 / 单聊桶隔离。
@@ -94,9 +95,11 @@ function makeFakeSocket() {
       return JSON.parse(socket.sent[socket.sent.length - 1]);
     },
     /** 以回执应答最近一帧（订阅 / 推送同形：errcode 在帧顶层）。 */
-    ackLast(errcode = 0, errmsg = "ok") {
+    ackLast(errcode = 0, errmsg = "ok", body) {
       const headers = socket.lastFrame().headers ?? {};
-      socket.deliver({ headers: { req_id: headers.req_id }, errcode, errmsg });
+      const frame = { headers: { req_id: headers.req_id }, errcode, errmsg };
+      if (body !== undefined) frame.body = body;
+      socket.deliver(frame);
     },
   };
   return socket;
@@ -206,6 +209,83 @@ async function main() {
     socket.ackLast(0);
     const sent = await pending;
     check("S2 群发送：errcode=0 → ok", sent.ok === true, JSON.stringify(sent));
+    await aibot.stop();
+  }
+
+  // S2b 单聊图片帧形（日报查询 S2）
+  {
+    const { aibot, sockets } = makeRuntime();
+    const socket = await connect(aibot, sockets);
+    const content = Buffer.from("fake-daily-report-png-content");
+    const pending = aibot.sendUserImage({
+      userid: OPEN_USERID,
+      content,
+      fileName: "日报.png",
+      dmActivated: true,
+    });
+
+    await sleep(0);
+    const init = socket.lastFrame();
+    check(
+      "S2b 单聊图片上传初始化：type=image / filename / total_chunks=1",
+      init.cmd === "aibot_upload_media_init" &&
+        init.body?.type === "image" &&
+        init.body?.filename === "日报.png" &&
+        init.body?.total_chunks === 1,
+      JSON.stringify(init),
+    );
+    socket.ackLast(0, "ok", { upload_id: "upload-dm-1" });
+
+    await sleep(0);
+    check(
+      "S2b 单聊图片分片：upload_id / chunk_index=0 / base64_data",
+      socket.lastFrame().cmd === "aibot_upload_media_chunk" &&
+        socket.lastFrame().body?.upload_id === "upload-dm-1" &&
+        socket.lastFrame().body?.chunk_index === "0" &&
+        typeof socket.lastFrame().body?.base64_data === "string",
+      JSON.stringify(socket.lastFrame()),
+    );
+    socket.ackLast();
+
+    await sleep(0);
+    check(
+      "S2b 单聊图片上传合并：upload_id",
+      socket.lastFrame().cmd === "aibot_upload_media_finish" && socket.lastFrame().body?.upload_id === "upload-dm-1",
+      JSON.stringify(socket.lastFrame()),
+    );
+    socket.ackLast(0, "ok", { type: "image", media_id: "media-dm-1" });
+
+    await sleep(0);
+    const send = socket.lastFrame();
+    const body = send.body ?? {};
+    check(
+      "S2b 单聊图片锁帧：chatid=userid / chat_type=1 / msgtype=image / media_id",
+      send.cmd === "aibot_send_msg" &&
+        body.chatid === OPEN_USERID &&
+        body.chat_type === 1 &&
+        body.msgtype === "image" &&
+        body.image?.media_id === "media-dm-1" &&
+        Object.keys(body).length === 4,
+      JSON.stringify(send),
+    );
+    socket.ackLast();
+    const sent = await pending;
+    check("S2b 单聊图片发送：errcode=0 → ok / attempts=1", sent.ok === true && sent.attempts === 1, JSON.stringify(sent));
+
+    const unactivated = aibot.sendUserImage({
+      userid: OPEN_USERID,
+      content: Buffer.from("fake-upload-846607-content"),
+      fileName: "图.png",
+      dmActivated: false,
+    });
+    await sleep(0);
+    socket.ackLast(846607, "aibot send msg frequency limit exceeded");
+    const unactivatedResult = await unactivated;
+    check(
+      "S2b 单聊图片上传 846607 + dmActivated=false → permanent（渠道路由不串群分类）",
+      unactivatedResult.ok === false && unactivatedResult.kind === "permanent" && unactivatedResult.errcode === 846607,
+      JSON.stringify(unactivatedResult),
+    );
     await aibot.stop();
   }
 

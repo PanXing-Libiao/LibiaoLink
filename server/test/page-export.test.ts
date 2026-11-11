@@ -116,15 +116,30 @@ type HarnessOptions = {
   issues?: readonly Issue[];
   stakeholders?: readonly Stakeholder[];
   reportList?: ReturnType<typeof vi.fn>;
+  reportListForExport?: ReturnType<typeof vi.fn>;
+  reportTotal?: number;
 };
 
 function harness(options: HarnessOptions = {}) {
   const permissions = new Set(options.permissions ?? ["project.view", "project.export", "report.view", "issue.view", "stakeholder.view", "stakeholder.contact.view"]);
   const projectAccess = options.projectAccess ?? PROJECT_ACCESS;
-  const reportsList = options.reportList ?? vi.fn().mockResolvedValue(page(options.reports ?? [report]));
-  const issuesList = vi.fn().mockResolvedValue(page(options.issues ?? [issue]));
-  const stakeholdersList = vi.fn().mockResolvedValue(page(options.stakeholders ?? [stakeholder]));
-  const usersList = vi.fn().mockResolvedValue(page([{ id: USER_ID, username: "lan", displayName: "刘安安", email: null, status: "active" }]));
+  const reportRows = options.reports ?? [report];
+  const issueRows = options.issues ?? [issue];
+  const stakeholderRows = options.stakeholders ?? [stakeholder];
+  const userRows = [{ id: USER_ID, username: "lan", displayName: "刘安安", email: null, status: "active" as const }];
+  const reportsList = options.reportList ?? vi.fn().mockResolvedValue(page(reportRows));
+  const reportsListForExport = options.reportListForExport ?? vi.fn(async (_projectId: string, query: { page: number; limit: number }) =>
+    reportRows.slice((query.page - 1) * query.limit, query.page * query.limit));
+  const reportCount = options.reportTotal ?? reportRows.length;
+  const issuesList = vi.fn().mockResolvedValue(page(issueRows));
+  const issuesListForExport = vi.fn(async (_projectId: string, query: { page: number; limit: number }) =>
+    issueRows.slice((query.page - 1) * query.limit, query.page * query.limit));
+  const stakeholdersList = vi.fn().mockResolvedValue(page(stakeholderRows));
+  const stakeholdersListForExport = vi.fn(async (query: { page: number; limit: number }) =>
+    stakeholderRows.slice((query.page - 1) * query.limit, query.page * query.limit));
+  const usersList = vi.fn().mockResolvedValue(page(userRows));
+  const usersListForExport = vi.fn(async (query: { page: number; limit: number }) =>
+    userRows.slice((query.page - 1) * query.limit, query.page * query.limit));
   const fileRefs = new Map([
     [IMAGE_ID, { id: IMAGE_ID, name: "现场.png", mime: "image/png", sizeBytes: PNG.length, objectKey: "projects/image.png" }],
   ]);
@@ -138,23 +153,46 @@ function harness(options: HarnessOptions = {}) {
   };
   const service = new ProjectExportService(
     { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "英国项目", managerIds: [], managerNames: [] }) } as never,
-    { list: vi.fn().mockResolvedValue(page([])) } as never,
-    { list: reportsList } as never,
-    { list: issuesList } as never,
-    { listProjectChanges: vi.fn().mockResolvedValue(page([])) } as never,
-    { list: stakeholdersList } as never,
+    { countForExport: vi.fn().mockResolvedValue(0), listForExport: vi.fn().mockResolvedValue([]) } as never,
+    { list: reportsList, listForExport: reportsListForExport, countForExport: vi.fn().mockResolvedValue(reportCount) } as never,
+    { list: issuesList, listForExport: issuesListForExport, countForExport: vi.fn().mockResolvedValue(issueRows.length) } as never,
+    {
+      countProjectChangesForExport: vi.fn().mockResolvedValue(0),
+      listProjectChangesForExport: vi.fn().mockResolvedValue([]),
+      listProjectChanges: vi.fn().mockResolvedValue(page([])),
+    } as never,
+    {
+      list: stakeholdersList,
+      listForExport: stakeholdersListForExport,
+      countForExport: vi.fn().mockResolvedValue(stakeholderRows.length),
+      prepareExportContext: vi.fn().mockResolvedValue({}),
+    } as never,
     {
       listExportFileRefs: vi.fn().mockResolvedValue(fileRefs),
       listProjectFiles: vi.fn().mockResolvedValue(page([])),
+      listProjectFilesForExport: vi.fn().mockResolvedValue([]),
+      countProjectFilesForExport: vi.fn().mockResolvedValue(0),
     } as never,
-    { listUsers: usersList } as never,
+    { listUsers: usersList, listForExport: usersListForExport, countForExport: vi.fn().mockResolvedValue(userRows.length) } as never,
     permission as never,
     audit as never,
     { db: {} } as never,
     storage as never,
     { env: { PROJECT_EXPORT_MODE: options.mode ?? "legacy" } } as never,
   );
-  return { service, reportsList, issuesList, stakeholdersList, usersList, audit, permission, storage, fileRefs, projectAccess };
+  return {
+    service,
+    reportsList,
+    reportsListForExport,
+    issuesList,
+    stakeholdersList,
+    usersList,
+    audit,
+    permission,
+    storage,
+    fileRefs,
+    projectAccess,
+  };
 }
 
 async function workbookOf(buffer: Buffer): Promise<ExcelJS.Workbook> {
@@ -274,7 +312,7 @@ describe("页面级 Excel 导出契约", () => {
     expect(permission.can).toHaveBeenCalledWith(USER_ID, "stakeholder.contact.view", projectAccess);
   });
 
-  it("仅靠项目成员 / 项目经理隐含权限时，目录与导出均按项目上下文放行", async () => {
+  it("仅靠项目经理隐含权限时，目录与导出均按项目上下文放行", async () => {
     const managerAccess: ProjectAccessContext = { ...PROJECT_ACCESS, projectManager: true };
     const { service, projectAccess } = harness({
       permissions: ["project.view", "project.export"],
@@ -334,7 +372,7 @@ describe("页面级 Excel 导出契约", () => {
     expect(issuesList).not.toHaveBeenCalled();
     expect(stakeholdersList).not.toHaveBeenCalled();
 
-    const tooLarge = harness({ reportList: vi.fn().mockResolvedValue({ items: [], page: 1, limit: 200, total: 20_001 }) });
+    const tooLarge = harness({ reportTotal: 20_001 });
     await expect(tooLarge.service.exportPages(PROJECT_ID, USER_ID, "https://pm.example", [
       { sheet: "reports", columns: ["date"] },
     ], tooLarge.projectAccess)).rejects.toThrow(/超过导出上限/);
@@ -390,13 +428,12 @@ describe("页面级 Excel 导出契约", () => {
     let dataStarted: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const started = new Promise<void>((resolve) => { dataStarted = resolve; });
-    const reportList = vi.fn(async (_projectId: string, query?: { limit?: number }) => {
-      if (query?.limit === 1) return page([report]);
+    const reportListForExport = vi.fn(async () => {
       dataStarted?.();
       await gate;
-      return page([report]);
+      return [report];
     });
-    const { service, projectAccess } = harness({ mode: "stream", reportList });
+    const { service, projectAccess } = harness({ mode: "stream", reportListForExport });
     const first = service.exportPages(PROJECT_ID, USER_ID, "https://pm.example", [{ sheet: "reports", columns: ["date"] }], projectAccess);
     await started;
     await expect(service.exportPages(PROJECT_ID, USER_ID, "https://pm.example", [{ sheet: "reports", columns: ["date"] }], projectAccess))

@@ -10,7 +10,7 @@ import math
 import re
 import struct
 from pathlib import Path
-from .canonical import canonical_sha256
+from .canonical import canonical_sha256, _small
 
 SCHEMA = json.loads((Path(__file__).parent/'schema/ucd-1.0.schema.json').read_text())
 SCHEMA_V2 = json.loads((Path(__file__).parent/'schema/ucd-2.0.schema.json').read_text())
@@ -225,7 +225,20 @@ def validate_envelope(envelope,max_decoded=256*1024*1024):
     _envelope_shape(envelope,schema)
     return _validate_core(envelope,version,schema,max_decoded)
 
-def validate_binary_envelope(document,snapshot,presentation,reader,max_decoded=256*1024*1024):
+def validate_binary_envelope(document,snapshot,presentation,reader,max_decoded=256*1024*1024,*,on_phase=None):
+    return _binary_envelope(document,snapshot,presentation,reader,max_decoded,on_phase,False)
+
+
+def seal_binary_envelope(document,snapshot,presentation,reader,max_decoded=256*1024*1024,*,on_phase=None):
+    """Seal trusted adapter output after complete structure/reference/geometry checks.
+
+    Incoming artifacts must use validate_binary_envelope, which independently
+    recomputes and compares both identities. No wire-level validation flag exists.
+    """
+    return _binary_envelope(document,snapshot,presentation,reader,max_decoded,on_phase,True)
+
+
+def _binary_envelope(document,snapshot,presentation,reader,max_decoded,on_phase,seal):
     """Validate a document/snapshot whose buffer bytes live outside the envelope.
 
     reader(bufferId) must return the exact bytes recorded in document.buffers.
@@ -237,6 +250,7 @@ def validate_binary_envelope(document,snapshot,presentation,reader,max_decoded=2
     schema=SCHEMA if version=='1.0.0' else SCHEMA_V2
     wrapper={'transportProfile':'ucd-base64-envelope/1','document':document,'snapshot':snapshot,'bufferPayloads':{},'presentation':presentation}
     _envelope_shape(wrapper,schema)
+    if on_phase:on_phase('shape checked')
     raw={}
     for key,b in document['buffers'].items():
         blob=reader(key)
@@ -244,10 +258,21 @@ def validate_binary_envelope(document,snapshot,presentation,reader,max_decoded=2
         require(b['id']==key and len(blob)==b['byteLength'] and hashlib.sha256(blob).hexdigest()==b['sha256'] and b['storage']['resourceId']==key,'invalid-buffer',key,'Buffer identity/length/hash mismatch')
         raw[key]=bytes(blob)
     require(sum(b['byteLength'] for b in document['buffers'].values())<=max_decoded,'limit-exceeded','buffers','Decoded buffer budget')
-    return _validate_core(wrapper,version,schema,max_decoded,raw)
+    if on_phase:on_phase('binary payload checked')
+    return _validate_core(wrapper,version,schema,max_decoded,raw,on_phase,seal)
 
-def _validate_core(envelope,version,schema,max_decoded,raw=None):
+def _small_validated_entity(row):
+    # The v2 Entity schema bounds its IDs, transform and these fixed-size
+    # geometries. Only style facts and source references can still be large.
+    if row['geometry']['type'] in ('line','arc','ellipse','point'):
+        return _small((row['style'],row['sourceRefs']))
+    return _small(row)
+
+
+def _validate_core(envelope,version,schema,max_decoded,raw=None,on_phase=None,seal=False):
+    binary_transport = raw is not None
     if version=='2.0.0':validate_v2(envelope)
+    if on_phase:on_phase('v2 references checked')
     d,s=envelope['document'],envelope['snapshot']
     if 'drawingProjection' in s:validate_drawing_projection(d,s['drawingProjection'])
     require(d['serializationProfile']=='ucd-json-python-sorted/1','unsupported-feature','serializationProfile','This bridge validator has not implemented RFC8785')
@@ -293,12 +318,14 @@ def _validate_core(envelope,version,schema,max_decoded,raw=None):
             raw[key]=blob
     else:
         require(set(raw)==expected_buffers,'invalid-buffer','buffers','Missing or extra payload')
+    if on_phase:on_phase('core references checked')
     for key,a in d['accessors'].items():
         require(a['bufferId'] in raw,'invalid-buffer',key,'Missing buffer')
         _,width=COMPONENTS[a['component']];element=width*a['components'];stride=a.get('byteStride',element)
         required=0 if a['count']==0 else (a['count']-1)*stride+element
         require(stride>=element and stride%width==0 and a['byteOffset']%width==0 and required<=a['byteLength'] and a['byteOffset']+a['byteLength']<=len(raw[a['bufferId']]),'invalid-buffer',key,'Accessor alignment/stride/window overflow')
         require(not(a['component'].startswith('f') and a['normalized']),'invalid-buffer',key,'Float normalization')
+    if on_phase:on_phase('accessors checked')
     for key,g in d['geometries'].items():
         require(g['id']==key and 'POSITION' in g['attributes'],'invalid-geometry',key,'Missing POSITION or wrong identity')
         require(all(aid in d['accessors'] for aid in g['attributes'].values()),'invalid-reference',key,'Missing attribute accessor')
@@ -334,6 +361,7 @@ def _validate_core(envelope,version,schema,max_decoded,raw=None):
                 blob=raw[a['bufferId']];code,width=COMPONENTS[a['component']];start=a['byteOffset']+first*width
                 window=memoryview(blob)[start:start+count*width].cast(code)
                 require(len(window)==count and (not window or max(window)<position['count']),'invalid-geometry',key,'Index exceeds vertex count')
+    if on_phase:on_phase('geometry checked')
     for key,r in d['representations'].items():
         require(r['id']==key and len({b['id'] for b in r['bindings']})==len(r['bindings']),'invalid-reference',key,'Representation identity/binding collision')
         for b in r['bindings']:
@@ -372,9 +400,24 @@ def _validate_core(envelope,version,schema,max_decoded,raw=None):
             anchors=set(d['productOccurrences'][owner]['sceneAnchorIds']);node=s['draws'][did]['occurrenceId'];chain=set()
             while node is not None:chain.add(node);node=d['sceneOccurrences'][node]['parentId']
             require(bool(anchors & chain),'invalid-reference','ownership','Draw must descend from an owner scene anchor')
+    if on_phase:on_phase('scene references checked')
     validate_drawing(d)
-    require(d['revision']==canonical_sha256({k:v for k,v in d.items() if k!='revision'}),'invalid-revision','document','Revision does not bind content')
-    require(s['id']=='snapshot-'+canonical_sha256({k:v for k,v in s.items() if k!='id'}),'invalid-revision','snapshot','Snapshot identity does not bind content')
+    if on_phase:on_phase('drawing references checked')
+    content={k:v for k,v in d.items() if k!='revision'}
+    if binary_transport and version=='2.0.0' and d['adapter']['id']=='libiaolink-acadsharp-dwg':
+        revision=canonical_sha256(content,small_rows=(d['drawing']['entities'],_small_validated_entity))
+    else:
+        revision=canonical_sha256(content)
+    if seal:
+        d['revision']=revision
+        s['documentRevision']=revision
+    else:
+        require(d['revision']==revision,'invalid-revision','document','Revision does not bind content')
+    if on_phase:on_phase('document digest checked')
+    snapshot_id='snapshot-'+canonical_sha256({k:v for k,v in s.items() if k!='id'})
+    if seal:s['id']=snapshot_id
+    else:require(s['id']==snapshot_id,'invalid-revision','snapshot','Snapshot identity does not bind content')
+    if on_phase:on_phase('snapshot digest checked')
     return raw
 
 def validate_drawing_projection(d,projection):

@@ -22,7 +22,7 @@ import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
-import { canEditTaskTemplates, hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
+import { canEditTaskNodes, canEditTaskTemplate, canEditTaskTemplates, hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
 import { firstAllowedHref } from "./accessRoutes";
 import {
   createDictItem,
@@ -36,6 +36,8 @@ import {
   type Dicts,
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
+import { memberOptionsWithExisting } from "./data/members";
+import { loadProjectManagerCandidates, type ProjectManagerCandidate } from "./projectManagerCandidates";
 import { archiveProject, createProject, deleteProject, downloadProjectWorkbook, fetchProject, recordProjectVisit, toUiProject, updateProject, type ProjectExportFormat } from "./projectApi";
 import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveHubDashProject, saveHubDashView, saveHubView, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
@@ -220,6 +222,8 @@ export default function App() {
   // 参考数据：字典（地区 / 项目类型 + 主题色）、用户目录（项目经理）与本人偏好（常用筛选）；失败不阻塞登录，页面用兜底值
   const [dicts, setDicts] = useState<Dicts>(EMPTY_DICTS);
   const [directory, setDirectory] = useState<DirectoryUser[]>([]);
+  /** 项目经理候选（有效项目部成员 ∪ 系统管理员）：只用于项目经理选择器。 */
+  const [managerCandidates, setManagerCandidates] = useState<ProjectManagerCandidate[]>([]);
   // 常用筛选（A24 · Push 169 落库）：按账号存服务端，换设备同账号可见（契约 users.ts homeSavedFilters）
   const filterRevision = useRef(0);
   const archiveAttempt = useRef<{ id: string; version: number; fields: string } | null>(null);
@@ -277,9 +281,12 @@ export default function App() {
     const next = await loadDicts();
     return () => setDicts(next);
   }, "dicts", signedIn);
-  useLiveRefresh(["users"], async () => {
-    const next = await loadDirectory();
-    return () => setDirectory(next);
+  useLiveRefresh(["users", "permissions"], async () => {
+    const [nextDirectory, nextManagers] = await Promise.allSettled([loadDirectory(), loadProjectManagerCandidates()]);
+    return () => {
+      if (nextDirectory.status === "fulfilled") setDirectory(nextDirectory.value);
+      if (nextManagers.status === "fulfilled") setManagerCandidates(nextManagers.value);
+    };
   }, "directory", signedIn);
 
   useLiveRefresh(["permissions", "users"], async () => {
@@ -325,11 +332,12 @@ export default function App() {
         }
         rememberCsrfToken(me.csrfToken);
         setState({ kind: "signed-in", me });
-        const [dictResult, directoryResult, prefsResult] = await Promise.allSettled([
+        const [dictResult, directoryResult, prefsResult, , managerResult] = await Promise.allSettled([
           loadDicts(),
           loadDirectory(),
           loadMyPreferencesWithLegacyMigration(),
           loadMyPermissions(),
+          loadProjectManagerCandidates(),
         ]);
         if (cancelled) {
           return;
@@ -340,6 +348,9 @@ export default function App() {
         }
         if (directoryResult.status === "fulfilled") {
           setDirectory(directoryResult.value);
+        }
+        if (managerResult.status === "fulfilled") {
+          setManagerCandidates(managerResult.value);
         }
         if (prefsResult.status === "fulfilled") {
           setSavedFilters(prefsResult.value.homeSavedFilters);
@@ -703,33 +714,6 @@ export default function App() {
     }
   };
 
-  /** 任务抽屉 / 任务表里改「项目经理」：项目级字段，走 PATCH（乐观锁 version）。 */
-  const handleChangeManagers = async (id: string, managerIds: string[]): Promise<boolean> => {
-    if (detail === null || detail.id !== id) {
-      return false;
-    }
-    const current = detail;
-    try {
-      const view = await updateProject(
-        id,
-        {
-          code: current.code,
-          name: current.description,
-          region: current.region,
-          projectType: current.projectType,
-          managerIds,
-        },
-        current.version,
-      );
-      setDetail(toUiProject(view));
-      setDataVersion((value) => value + 1);
-      return true;
-    } catch (error: unknown) {
-      setNotice(errorMessageOf(error, t("app.fail.saveManagers")));
-      return false;
-    }
-  };
-
   /**
    * 验收交付完成后把项目设为已完成（2026-10-22 · 业务口径「当验收交付完成后 弹出一个弹出显示是否需要将项目设为已完成」）：
    * 只改 status（project.update），保留其余字段；成功更新详情并触发列表刷新，失败沿用全局顶部 Toast。
@@ -793,7 +777,7 @@ export default function App() {
   };
 
   /**
-   * 功能权限 = 角色能力位；项目级写入口再叠加当前项目的 groupAccessLevel === "edit"。
+   * 功能权限 = 角色能力位；项目级写入口再叠加当前项目的 accessLevel === "edit"。
    * 全局写入（字典）要求全部项目编辑；项目内写入由项目卡 / 详情按项目逐项收敛（服务端逐请求仍是最终裁决）。
    */
   const canManageDicts = permissions !== null && permissions.groupAllEdit && hasPermission(permissions, "dict.manage");
@@ -809,10 +793,12 @@ export default function App() {
   /** 归档权（Push 262 · M7-04 前端接线一部分）：决定编辑弹窗「已归档」选项是否可选（服务端逐请求仍是最终裁决）。 */
   const canArchiveProject = permissions === null || hasPermission(permissions, "project.archive");
   /**
-   * 任务模板页维护权（节点库 + 模板写操作）= 系统管理员或部门编辑规则。
-   * 所有登录账号都能查看模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN。
+   * 任务模板页拆成两档写权限：节点库 = 系统管理员或有效项目经理；公共模板新建同左，单份模板维护仅创建人或管理员。
+   * 任务负责人 / 普通成员只读；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN。
    */
-  const canManageBlueprint = canEditTaskTemplates(permissions);
+  const canManageNodes = canEditTaskNodes(permissions);
+  const canManageTemplates = canEditTaskTemplates(permissions);
+  const canManageTemplate = (createdBy: string | null): boolean => canEditTaskTemplate(permissions, createdBy);
   /**
    * 干系人写入口（Push 221 · A27）：新建 / 编辑 / 删除 = stakeholder.manage。与 project.create / project.update
    * 同一口径：画像未到时乐观放行（服务端逐请求仍是最终裁决），已知缺位才收起写入口 —— 读列表 = stakeholder.view
@@ -926,8 +912,12 @@ export default function App() {
         dicts={dicts}
         dictTools={dictTools}
         canManageDicts={canManageDicts}
-        canArchive={canArchiveProject && editingProject.groupAccessLevel === "edit"}
-        managerOptions={directoryMemberOptions(directory)}
+        canArchive={canArchiveProject && editingProject.accessLevel === "edit"}
+        managerOptions={memberOptionsWithExisting(
+          directoryMemberOptions(managerCandidates),
+          editingProject.managerIds,
+          directoryMemberOptions(directory),
+        )}
         onClose={() => {
           setEditingProject(null);
         }}
@@ -972,6 +962,7 @@ export default function App() {
           customDeliverableTypes={dicts.deliverableType.map((item) => item.name)}
           onCreateDeliverableType={handleCreateDeliverableType}
           members={directoryMemberOptions(directory)}
+          managerMembers={directoryMemberOptions(managerCandidates)}
           tab={route.tab}
           onChangeTab={replaceWorkspaceTab}
           sub={route.sub}
@@ -987,7 +978,14 @@ export default function App() {
   if (route.kind === "placeholder") {
     return (
       <>
-        <PlaceholderPage me={state.me} page={route.page} section={route.section} canManageBlueprint={canManageBlueprint} />
+        <PlaceholderPage
+          me={state.me}
+          page={route.page}
+          section={route.section}
+          canManageNodes={canManageNodes}
+          canManageTemplates={canManageTemplates}
+          canManageTemplate={canManageTemplate}
+        />
         {bottomBars}
       </>
     );
@@ -1021,13 +1019,12 @@ export default function App() {
           customDeliverableTypes={dicts.deliverableType.map((item) => item.name)}
           onCreateDeliverableType={handleCreateDeliverableType}
           members={directoryMemberOptions(directory)}
-          onChangeManagers={handleChangeManagers}
+          managerMembers={directoryMemberOptions(managerCandidates)}
           onTaskEdited={handleTaskEdited}
           taskHiddenColumns={taskTableHiddenColumns}
           onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
           canManageStakeholders={canManageStakeholders}
-          readOnly={detail?.groupAccessLevel !== "edit"}
-          onSetProjectDone={canUpdateProject && detail?.groupAccessLevel === "edit" ? handleSetProjectDone : undefined}
+          onSetProjectDone={canUpdateProject && detail?.accessLevel === "edit" ? handleSetProjectDone : undefined}
         />
         {editModal}
         {bottomBars}
@@ -1083,6 +1080,7 @@ export default function App() {
         me={state.me}
         dicts={dicts}
         directory={directory}
+        managerCandidates={managerCandidates}
         dictTools={dictTools}
         canManageDicts={canManageDicts}
         canDeleteProject={canDeleteProject}

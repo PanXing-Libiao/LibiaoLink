@@ -11,7 +11,7 @@
  */
 import { apiRequest, apiSend, readAllPages } from "./api";
 import { textOf, type Locale } from "./i18n";
-import { daysBetweenInclusive, type ProjectTask, type TaskChange, type TaskFileSummary, type TaskPriority, type TaskStatus } from "./data/tasks";
+import { daysBetweenInclusive, type ProjectTask, type TaskCapabilities, type TaskChange, type TaskFileSummary, type TaskPriority, type TaskStatus } from "./data/tasks";
 
 /** 契约 Task / TaskListItem / TaskDetail（本文件只需用到的字段；服务端可能多给，忽略即可）。 */
 export type ApiTask = {
@@ -24,6 +24,7 @@ export type ApiTask = {
   title: string;
   titleEn: string | null;
   ownerIds: string[];
+  managerIds: string[];
   status: string;
   displayStatus: string;
   progress: number;
@@ -43,11 +44,14 @@ export type ApiTask = {
   version: number;
   createdAt: string;
   updatedAt: string;
+  capabilities?: TaskCapabilities;
 };
 
 export type ApiTaskListItem = ApiTask & {
   ownerNames: Array<string | null>;
+  managerNames: Array<string | null>;
   fileSummary: { total: number; draft: number; final: number };
+  capabilities?: TaskCapabilities;
 };
 
 /** 随行文件清单（详情接口 GET /projects/{id}/tasks/{taskId}）：文件名 / 状态 / 文档类型 —— 抽屉里的文件清单随「文件」那一刀接线。 */
@@ -55,7 +59,9 @@ export type TaskFileBrief = { id: string; name: string; status: string; docType:
 
 export type ApiTaskDetail = ApiTask & {
   ownerNames: Array<string | null>;
+  managerNames: Array<string | null>;
   files: TaskFileBrief[];
+  capabilities?: TaskCapabilities;
 };
 
 export type ApiTaskListResult = { items: ApiTaskListItem[]; page: number; limit: number; total: number };
@@ -160,6 +166,7 @@ export function toUiTask(
   const dueDate = view.plannedEnd ?? "";
   const derivedDays = startDate !== "" && dueDate !== "" ? daysBetweenInclusive(startDate, dueDate) : 0;
   const ownerNames = "ownerNames" in view ? view.ownerNames : undefined;
+  const managerNames = "managerNames" in view ? view.managerNames : undefined;
   /** 写回响应不带姓名时：先查用户目录（调用方传 resolveName），查不到再按 id 对回旧行的姓名，最后才「—」。 */
   const previousIds = previous?.ownerIds ?? [];
   const owners =
@@ -173,6 +180,16 @@ export function toUiTask(
           return at < 0 ? "—" : (previous?.owners[at] ?? "—");
         })
       : ownerNames.map((name) => (name === null || name === "" ? "—" : name));
+  const previousManagerIds = previous?.managerIds ?? [];
+  const managers =
+    managerNames === undefined
+      ? view.managerIds.map((id) => {
+          const resolved = resolveName?.(id);
+          if (resolved !== undefined && resolved !== "") return resolved;
+          const at = previousManagerIds.indexOf(id);
+          return at < 0 ? "—" : (previous?.managers[at] ?? "—");
+        })
+      : managerNames.map((name) => (name === null || name === "" ? "—" : name));
   return {
     id: view.id,
     nodeId: view.nodeId,
@@ -184,6 +201,8 @@ export function toUiTask(
     titleEn: view.titleEn ?? "",
     ownerIds: [...view.ownerIds],
     owners,
+    managerIds: [...view.managerIds],
+    managers,
     status: displayStatusLabel(view.displayStatus),
     progress: view.progress,
     startDate,
@@ -199,6 +218,7 @@ export function toUiTask(
     priority: priorityOf(view.priority),
     finalizedAt: view.finalizedAt ?? null,
     version: view.version,
+    capabilities: "capabilities" in view ? view.capabilities : previous?.capabilities,
   };
 }
 
@@ -277,6 +297,8 @@ export type TaskUpdateInput = {
   /** 任务描述（英文；Push 196）：同 title；null = 清空。 */
   titleEn?: string | null;
   ownerIds?: string[];
+  /** 当前项目的项目经理 id：修改即项目级经理变更，同步全部任务。 */
+  managerIds?: string[];
   sortIndex?: number;
   status?: string;
   plannedStart?: string | null;

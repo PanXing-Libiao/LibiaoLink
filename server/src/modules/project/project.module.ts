@@ -18,6 +18,7 @@ import { ProjectGroupService } from "./project-group.service.js";
 import { ProjectMemberRepository } from "./project-member.repository.js";
 import { ProjectMemberService } from "./project-member.service.js";
 import { ProjectRepository } from "./project.repository.js";
+import { ProjectQueryService } from "./project-query.service.js";
 import { ProjectService } from "./project.service.js";
 
 /**
@@ -33,6 +34,7 @@ import { ProjectService } from "./project.service.js";
   controllers: [ProjectsController, FlowController, NodesController, ArchiveController],
   providers: [
     ProjectRepository,
+    ProjectQueryService,
     ProjectService,
     ProjectMemberRepository,
     ProjectMemberService,
@@ -44,6 +46,6 @@ import { ProjectService } from "./project.service.js";
     ArchiveService,
   ],
   // Push 316：project-import（导入表导入）复用项目插入 / 成员名册写口 —— 两个仓库随本模块导出（同事务建项目 + upsert 项目经理）。
-  exports: [ProjectService, ProjectMemberService, ProjectRepository, ProjectMemberRepository, ProjectGroupService, FlowService],
+  exports: [ProjectService, ProjectQueryService, ProjectMemberService, ProjectRepository, ProjectMemberRepository, ProjectGroupService, FlowService],
 })
 export class ProjectModule {}

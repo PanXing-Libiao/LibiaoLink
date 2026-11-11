@@ -188,6 +188,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/manager-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 项目经理候选（有效项目部成员 ∪ 系统管理员；仅启用且未离职） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 候选名单 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectManagerCandidateList"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}": {
         parameters: {
             query?: never;
@@ -407,7 +443,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 新增全站自定义成果文件类型（仅当前项目项目经理；写入 deliverableType 全局字典，所有项目共享） */
+        /** 新增全站自定义成果文件类型（仅当前项目编辑者；写入 deliverableType 全局字典，所有项目共享） */
         post: {
             parameters: {
                 query?: never;
@@ -7210,117 +7246,6 @@ export interface paths {
         };
         trace?: never;
     };
-    "/api/v1/stakeholders/{stakeholderId}/projects": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 关联项目（A5-03；幂等：已关联返回同一结果）；写审计留痕 */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description UUID（主键与关联 ID） */
-                    stakeholderId: components["schemas"]["Uuid"];
-                };
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    "application/json": components["schemas"]["StakeholderProjectLinkBody"];
-                };
-            };
-            responses: {
-                /** @description 关联后的干系人 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Stakeholder"];
-                    };
-                };
-                /** @description 契约校验失败（VALIDATION_FAILED） */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiError"];
-                    };
-                };
-                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiError"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/stakeholders/{stakeholderId}/projects/{projectId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** 解除项目关联（A5-03）：未关联 404；写审计留痕 */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description UUID（主键与关联 ID） */
-                    stakeholderId: components["schemas"]["Uuid"];
-                    /** @description UUID（主键与关联 ID） */
-                    projectId: components["schemas"]["Uuid"];
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description 解除后的干系人 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Stakeholder"];
-                    };
-                };
-                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiError"];
-                    };
-                };
-            };
-        };
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/projects/{id}/reports": {
         parameters: {
             query?: never;
@@ -10186,7 +10111,7 @@ export interface components {
             roleCodes: string[];
             /** @description 固定全量数据范围基线；实际项目范围由部门规则收窄 */
             dataScopes: components["schemas"]["DataScope"][];
-            /** @description 全量功能权限位基线；业务写能力另由部门编辑范围 / 项目 groupAccessLevel 裁决 */
+            /** @description 全量功能权限位基线；业务写能力另由部门编辑范围 / Project.accessLevel 裁决 */
             permissionKeys: components["schemas"]["PermissionKey"][];
             /** @description 当前账号的 Casdoor 群组键（owner/name；按登录或目录同步落地） */
             groupKeys?: string[];
@@ -10196,14 +10121,14 @@ export interface components {
             groupAccessEnforced?: boolean;
             /** @description 当前账号是否可进入群组权限管理页 */
             groupAccessAdmin?: boolean;
-            /** @description 兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以项目 groupAccessLevel 为准，全局写能力以 groupAllEdit 为准 */
+            /** @description 兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以Project.accessLevel 为准，全局写能力以 groupAllEdit 为准 */
             groupReadOnly?: boolean;
             groupProjectAccess?: components["schemas"]["GroupProjectAccess"];
             /** @description 当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限 */
             groupProjectScopes?: components["schemas"]["GroupAccessProjectScope"][];
             groupAccessLevel?: components["schemas"]["GroupAccessAccessLevel"] & unknown;
             groupScopePermissions?: components["schemas"]["GroupAccessScopePermissions"];
-            /** @description 当前账号是否至少在一个项目范围拥有编辑权限（任务模板 / 节点库写入口） */
+            /** @description 当前账号是否至少在一个项目范围拥有编辑权限（兼容摘要；节点库 / 任务模板分别看 taskNodeManage / taskTemplateManage） */
             groupAnyEdit?: boolean;
             /** @description 当前账号是否拥有全部项目编辑权限（字典 / 日历 / 自动化等全局写入口） */
             groupAllEdit?: boolean;
@@ -10211,6 +10136,12 @@ export interface components {
             groupOwnEdit?: boolean;
             /** @description 当前账号是否拥有指定项目编辑权限 */
             groupSelectedEdit?: boolean;
+            /** @description 是否可新增 / 编辑 / 删除公共任务节点库：管理员，或至少管理一个未删除项目的项目经理；部门编辑范围不授予 */
+            taskNodeManage?: boolean;
+            /** @description 是否可浏览公共任务模板：管理员、有项目数据范围的账号，或至少有一个可浏览有效项目关系（项目经理 / 项目成员 / 任务负责人） */
+            taskTemplateRead?: boolean;
+            /** @description 是否可新建公共任务模板：管理员，或至少管理一个未删除项目的项目经理；具体模板的编辑 / 删除还要求当前账号是创建人或管理员 */
+            taskTemplateManage?: boolean;
             auditScope?: components["schemas"]["AuditScope"];
         };
         /** @description 统一错误信封（技术设计v0.2 §7.2） */
@@ -10612,6 +10543,11 @@ export interface components {
             createdAt: number;
             updatedAt: number;
             artifactBytes?: number;
+            /** @description 已校验 DWG 的可选曲线参数列，与归档缓冲共用资源租约 */
+            dwgCurveColumnsV1?: {
+                sha256: string;
+                byteLength: number;
+            };
             resources?: {
                 lease: string;
                 buffers: {
@@ -11138,7 +11074,7 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description 新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；deliverableType 的自定义成果由项目经理走 POST /projects/{id}/deliverable-types（本通用端点仍仅 dict.manage）；变更写审计留痕（C9-02）；响应为更新后的整个字典 */
+        /** @description 新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；deliverableType 的自定义成果由项目编辑者走 POST /projects/{id}/deliverable-types（本通用端点仍仅 dict.manage）；变更写审计留痕（C9-02）；响应为更新后的整个字典 */
         DictItemCreateBody: {
             /** @description 字典码：同类型内唯一；重复返回 409 DICT_ITEM_EXISTS */
             code: string;
@@ -11416,7 +11352,7 @@ export interface components {
          */
         FollowObjectType: "project" | "task";
         /**
-         * @description 当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发
+         * @description 当前登录账号对该项目的最终有效访问级别：edit = 可执行项目级写操作 / view = 仅浏览。管理员、所管本项目的项目经理或部门 / 个人规则命中 edit 时为 edit；项目成员、任务负责人关系仅保证浏览，且项目经理身份不外溢到其他项目
          * @enum {string}
          */
         GroupAccessAccessLevel: "edit" | "view";
@@ -11444,6 +11380,18 @@ export interface components {
          * @enum {string}
          */
         GroupAccessAdminSource: "configured" | "manual";
+        /** @description 自动项目角色：由项目和任务数据实时生成，随人员关系与任务分配自动变化 */
+        GroupAccessAutomaticRole: {
+            userId: components["schemas"]["Uuid"];
+            /** @description 项目经理项目：projects.manager_ids 或 project_members.role_in_project=project_manager */
+            projectManagerProjectIds: components["schemas"]["Uuid"][];
+            /** @description 项目名册成员项目（不含项目经理记录） */
+            projectMemberProjectIds: components["schemas"]["Uuid"][];
+            /** @description 至少负责一条未删除任务的项目 */
+            taskOwnerProjectIds: components["schemas"]["Uuid"][];
+            /** @description 负责的未删除任务总数 */
+            taskOwnerTaskCount: number;
+        };
         /**
          * @description 可授予数据权限的项目范围：all 全部项目 / own 仅自己的项目 / selected 仅指定项目
          * @enum {string}
@@ -11517,7 +11465,7 @@ export interface components {
          * @enum {string}
          */
         GroupAccessMemberScope: "all" | "selected";
-        /** @description 权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目；无部门账号汇总在虚拟未分组节点 */
+        /** @description 权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树、项目与自动项目角色；无部门账号汇总在虚拟未分组节点 */
         GroupAccessOverview: {
             enforced: boolean;
             admin: boolean;
@@ -11526,6 +11474,8 @@ export interface components {
             admins: components["schemas"]["GroupAccessAdmin"][];
             groups: components["schemas"]["GroupAccessGroup"][];
             projects: components["schemas"]["GroupAccessProject"][];
+            /** @description 自动项目角色（项目经理 / 项目成员 / 任务负责人）；按用户聚合，项目或任务关系变化后随接口实时更新 */
+            automaticRoles: components["schemas"]["GroupAccessAutomaticRole"][];
         };
         /**
          * @description 页面键（旧客户端兼容）：dashboard / projects / templates / workspace / files / audit；群组规则恒放行全部页面
@@ -12313,9 +12263,10 @@ export interface components {
             managerIds: components["schemas"]["Uuid"][];
             /** @description 项目经理姓名数组：服务端按 managerIds 解析后随行下发，与 managerIds 同下标一一对应（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时该位为 null（前端显示「—」） */
             managerNames: (string | null)[];
+            accessLevel: components["schemas"]["GroupAccessAccessLevel"];
             stageKey: components["schemas"]["StageKey"];
             status: components["schemas"]["ProjectStatus"];
-            groupAccessLevel: components["schemas"]["GroupAccessAccessLevel"];
+            groupAccessLevel: components["schemas"]["GroupAccessAccessLevel"] & unknown;
             description: string | null;
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
@@ -12445,7 +12396,7 @@ export interface components {
             /** @description 导入的蓝图版本；缺省 = 当前已发布版本 */
             blueprintVersion?: number;
         };
-        /** @description 仅当前项目的项目经理 / 名册项目经理可新增；条目进入全站 deliverableType 字典，所有账号与项目可见 */
+        /** @description 仅当前项目的项目编辑者（管理员、所管本项目的项目经理或部门 / 个人规则 edit）可新增；条目进入全站 deliverableType 字典，所有账号与项目可见 */
         ProjectDeliverableTypeCreateBody: {
             name: components["schemas"]["DeliverableType"];
         };
@@ -12518,6 +12469,18 @@ export interface components {
             items: components["schemas"]["Project"][];
             page: number;
             limit: number;
+            total: number;
+        };
+        /** @description 项目经理候选（仅启用、未离职；项目部成员与系统管理员取并集并按用户去重） */
+        ProjectManagerCandidate: components["schemas"]["UserSummary"] & {
+            /** @description 是否为配置部门（默认 Project Dept / 项目部，含子部门）的直属有效成员 */
+            inProjectDepartment: boolean;
+            /** @description 是否属于系统管理员（环境配置 / 管理员部门 / 手工授权） */
+            isSystemAdmin: boolean;
+        };
+        /** @description 项目经理候选名单（GET /projects/manager-candidates） */
+        ProjectManagerCandidateList: {
+            items: components["schemas"]["ProjectManagerCandidate"][];
             total: number;
         };
         /** @description 项目成员（名册行） */
@@ -12775,7 +12738,7 @@ export interface components {
             createdBy: components["schemas"]["Uuid"] & (string | null);
             /** @description 录入人显示名（清单「填写者」列） */
             createdByName: string | null;
-            /** @description 关联项目（A5-03）；按干系人反查 */
+            /** @description 所属项目（一期单项目归属；数组为前端兼容，最多 1 项） */
             projects: components["schemas"]["StakeholderProjectRef"][];
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"] & unknown;
@@ -12799,8 +12762,8 @@ export interface components {
             remark?: string;
             /** @description 干系人角色；不传则空 */
             role?: string;
-            /** @description 建台账时一并关联的项目（A5-03）；项目不存在 404 */
-            projectIds?: components["schemas"]["Uuid"][];
+            /** @description 所属项目：每条干系人记录必须且只能归属一个项目；项目不存在 404 */
+            projectIds: components["schemas"]["Uuid"][];
         };
         /** @description 干系人删除结果（软删，不物理删行） */
         StakeholderDeleteResponse: {
@@ -12819,10 +12782,6 @@ export interface components {
          * @enum {string}
          */
         StakeholderPageExportColumn: "name" | "phone" | "wechat" | "email" | "title" | "company" | "createdBy" | "role";
-        /** @description 把干系人关联到项目（幂等）；需 stakeholder.manage 且干系人可见 */
-        StakeholderProjectLinkBody: {
-            projectId: components["schemas"]["Uuid"] & unknown;
-        };
         /** @description 干系人关联的项目（按干系人反查参与项目） */
         StakeholderProjectRef: {
             id: components["schemas"]["Uuid"];
@@ -12856,6 +12815,8 @@ export interface components {
             titleEn: string | null;
             /** @description 任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应 */
             ownerIds: components["schemas"]["Uuid"][];
+            /** @description 项目级项目经理快照（至少一位、可多位）：唯一可编辑来源是 projects.manager_ids，同项目所有任务一致；任务表行内 / 抽屉与项目弹窗修改都按项目级替换，并同步全部任务，不产生任务级经理身份 */
+            managerIds: components["schemas"]["Uuid"][];
             status: components["schemas"]["TaskBaseStatus"];
             displayStatus: components["schemas"]["TaskDisplayStatus"];
             progress: components["schemas"]["TaskProgress"];
@@ -12878,6 +12839,11 @@ export interface components {
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
         };
+        /**
+         * @description 任务有效权限来源：project_edit 项目编辑者 / task_owner 当前任务负责人 / view 仅浏览
+         * @enum {string}
+         */
+        TaskAccessSource: "project_edit" | "task_owner" | "view";
         /**
          * @description 任务存储基础态（不写回派生结果）
          * @enum {string}
@@ -12939,6 +12905,25 @@ export interface components {
             canComplete: boolean;
             missing: components["schemas"]["TaskGateMissing"][];
             warnings: components["schemas"]["TaskGateWarning"][];
+        };
+        /** @description 当前登录人对本任务的有效能力（列表接口随行下发；导出等内部用途可不带） */
+        TaskCapabilities: {
+            level: components["schemas"]["GroupAccessAccessLevel"] & unknown;
+            source: components["schemas"]["TaskAccessSource"];
+            /** @description 可编辑任务普通字段（状态、计划、人数、重要度、成果类型、进展描述等） */
+            canEditFields: boolean;
+            /** @description 可更新进度 / 实际完成日期 / 提交完成 */
+            canUpdateProgress: boolean;
+            /** @description 可提交任务完成（仍受完成门禁约束） */
+            canComplete: boolean;
+            /** @description 可定档 / 取消定档（任务负责人或项目编辑者） */
+            canFinalize: boolean;
+            /** @description 可上传 / 追加版本 / 对本人任务文件发起变更 */
+            canUpload: boolean;
+            /** @description 可修改任务负责人（仅项目编辑者；任务负责人不可改自己的负责人） */
+            canAssignOwners: boolean;
+            /** @description 可删除 / 排序 / 批量操作任务（仅项目编辑者） */
+            canDelete: boolean;
         };
         /** @description 任务 ↔ 变更关联项（多条；列表 / 详情同形） */
         TaskChangeLink: {
@@ -13025,7 +13010,10 @@ export interface components {
         TaskDetail: components["schemas"]["Task"] & {
             /** @description 负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组 */
             ownerNames: (string | null)[];
+            /** @description 当前项目的项目经理姓名数组：与 managerIds 同下标一一对应，同项目所有任务一致 */
+            managerNames: (string | null)[];
             files: components["schemas"]["TaskFileBrief"][];
+            capabilities?: components["schemas"]["TaskCapabilities"] & unknown;
         };
         /**
          * @description 任务展示五态（服务端读时派生 + 显式覆盖，A12 / A14 · Push 70；2026-09-24 起五态可写）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；有显式覆盖（tasks.status_override，仅 overdue / early_done 两值）时优先取覆盖值，否则派生 —— 未完成且已过预计完成日期一律「已延期」；「逾期未交付 / 逾期已交付」不进状态列，落在「是否按时交付」（Task.onTime + 本字段）
@@ -13066,7 +13054,10 @@ export interface components {
         TaskListItem: components["schemas"]["Task"] & {
             /** @description 负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」） */
             ownerNames: (string | null)[];
+            /** @description 当前项目的项目经理姓名数组（与 managerIds 同下标一一对应；同项目所有任务一致；取不到姓名时该位为 null） */
+            managerNames: (string | null)[];
             fileSummary: components["schemas"]["TaskFileSummary"];
+            capabilities?: components["schemas"]["TaskCapabilities"];
         };
         /** @description 任务列表（items 为 TaskListItem：表格直接渲染 + 内联摘要） */
         TaskListResponse: {
@@ -13220,6 +13211,8 @@ export interface components {
             titleEn?: string | null;
             /** @description 任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换（≤ 200 位）、顺序 = 展示顺序 */
             ownerIds?: components["schemas"]["Uuid"][];
+            /** @description 项目级项目经理：不传 = 不改；传数组 = 整体替换（至少一位），仅项目编辑者可修改。任务表行内 / 抽屉与项目弹窗共用此名单，修改会同步同项目全部任务；任务负责人只能浏览 */
+            managerIds?: components["schemas"]["Uuid"][];
             /** @description 组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序 */
             sortIndex?: number;
             status?: components["schemas"]["TaskStatusWrite"] & unknown;

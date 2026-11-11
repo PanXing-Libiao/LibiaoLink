@@ -56,8 +56,8 @@ type CardProps = {
   watermark?: string;
   /** 水印排版口径（Push 301 追订「之前的中文不要改」）：true / 不传 = Push 289 原出血口径（右 20px / 下 46px，右侧与底部各裁一截；max-w = 卡片内宽 − 8px）；false = 完整显示口径（右内缩 28px + 贴底；max-w = 卡片内宽 − 56px，字形全高不裁）。 */
   watermarkBleed?: boolean;
-  /** 项目经理展示文本（多位时按「、」连接；Push 136）。 */
-  managerNames: string;
+  /** 项目经理姓名（项目级 managerIds 对应姓名；空值过滤后仅逐个展示姓名）。 */
+  managerNames: ReadonlyArray<string | null>;
   time: string;
   /** 编辑入口（隐式：悬停 / 聚焦才显示）。 */
   onEdit?: () => void;
@@ -103,6 +103,8 @@ export function Card({
 }: CardProps) {
   const t = useT();
   const exportMenu = usePopover(248, 116);
+  const uniqueManagerNames = Array.from(new Set(managerNames.map((name) => (name ?? "").trim()).filter((name) => name !== "")));
+  const managerLabel = uniqueManagerNames.length === 0 ? "—" : uniqueManagerNames.join("、");
   /** 手打内容（项目名）机翻显示：英文界面显示译文（到位后自动切换），悬停看原文。 */
   const localizedDescription = useLocalizedText(description);
   /** 序号文案：不足两位补零（7 → "07"）；**三位数之后不再有位置问题** —— 数字锚在圆点右内侧（right-6，不再用 left-6），
@@ -152,8 +154,9 @@ export function Card({
       </div>
       <div className="flex w-full items-center gap-3">
         {icon ?? <span style={{ backgroundColor: accentColor }} className="car-icon block h-9 w-12 shrink-0" />}
-        <p className="min-w-0 truncate text-sm text-zinc-400">
-          {t("card.manager")}<span className="font-medium text-zinc-600" title={managerNames}>{managerNames}</span>
+        <p className="flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-400">
+          <span className="shrink-0">{t("card.manager")}</span>
+          <span className="min-w-0 truncate font-medium text-zinc-600" title={managerLabel}>{managerLabel}</span>
         </p>
       </div>
       <h1 className="font-mono text-xl font-bold tracking-tight">{code}</h1>

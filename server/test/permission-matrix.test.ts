@@ -19,6 +19,8 @@ import {
   exitsConsistent,
   hiddenFields,
   isProjectVisible,
+  isProjectEditor,
+  taskCapabilitiesOf,
   planExit,
   projectFields,
   projectScopeSpec,
@@ -142,8 +144,13 @@ describe("功能权限：can（全局位 ∪ 项目内角色隐含位 · ADR-011
     expect(can(owner, "member.manage")).toBe(false);
   });
 
-  it("项目内项目经理：节点增删 / 名册 / 阶段推进放行；蓝图维护不放行", () => {
+  it("项目内项目经理：项目 / 任务 / 节点 / 日报 / 问题 / 文件写能力显式保留；蓝图维护不放行", () => {
     const plain = actor();
+    expect(can(plain, "task.progress", managerContext)).toBe(true);
+    expect(can(plain, "report.fill", managerContext)).toBe(true);
+    expect(can(plain, "issue.manage", managerContext)).toBe(true);
+    expect(can(plain, "file.upload", managerContext)).toBe(true);
+    expect(can(plain, "node.complete", managerContext)).toBe(true);
     expect(can(plain, "node.create", managerContext)).toBe(true);
     expect(can(plain, "node.delete", managerContext)).toBe(true);
     expect(can(plain, "member.manage", managerContext)).toBe(true);
@@ -151,11 +158,25 @@ describe("功能权限：can（全局位 ∪ 项目内角色隐含位 · ADR-011
     expect(can(plain, "blueprint.manage", managerContext)).toBe(false);
   });
 
-  it("项目内成员：任务进度与完成节点平权；名册 / 项目编辑 / 节点增删不放行", () => {
+  it("项目内成员：仅保留只读隐含位；任务 / 节点 / 日报 / 问题 / 文件写能力不随成员关系放行", () => {
     const plain = actor();
-    expect(can(plain, "task.progress", memberContext)).toBe(true);
-    expect(can(plain, "node.complete", memberContext)).toBe(true);
+    expect([...PROJECT_MEMBER_IMPLIED_KEYS]).toEqual([
+      "project.view",
+      "member.view",
+      "task.view",
+      "report.view",
+      "issue.view",
+      "node.view",
+      "file.download",
+      "stakeholder.view",
+    ]);
     expect(can(plain, "project.view", memberContext)).toBe(true);
+    expect(can(plain, "task.view", memberContext)).toBe(true);
+    expect(can(plain, "task.progress", memberContext)).toBe(false);
+    expect(can(plain, "node.complete", memberContext)).toBe(false);
+    expect(can(plain, "report.fill", memberContext)).toBe(false);
+    expect(can(plain, "issue.manage", memberContext)).toBe(false);
+    expect(can(plain, "file.upload", memberContext)).toBe(false);
     expect(can(plain, "member.manage", memberContext)).toBe(false);
     expect(can(plain, "project.update", memberContext)).toBe(false);
     expect(can(plain, "node.create", memberContext)).toBe(false);
@@ -327,6 +348,7 @@ class FakePermissionRepository {
   memberIds: string[] = [];
   ownedIds: string[] = [];
   managedRosterIds: string[] = [];
+  taskOwnerProjectIds: string[] = [];
   refs = new Map<string, { managerIds: string[]; deletedAt: Date | null }>();
   memberships = new Map<string, string>();
   groupKeys: string[] = [];
@@ -344,6 +366,18 @@ class FakePermissionRepository {
 
   async listManagedRosterProjectIds(): Promise<string[]> {
     return [...this.managedRosterIds];
+  }
+
+  async listTaskOwnerProjectIds(): Promise<string[]> {
+    return [...this.taskOwnerProjectIds];
+  }
+
+  async listRelatedProjectIds(): Promise<string[]> {
+    return [...new Set([...this.memberIds, ...this.ownedIds, ...this.managedRosterIds, ...this.taskOwnerProjectIds])];
+  }
+
+  async hasTaskOwnership(_actorId: string, projectId: string): Promise<boolean> {
+    return this.taskOwnerProjectIds.includes(projectId);
   }
 
   async listActiveProjectIds(projectIds: readonly string[]): Promise<string[]> {
@@ -444,7 +478,9 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      taskOwner: false,
       groupAccessLevel: "edit",
+      accessLevel: "edit",
     });
 
     const rosterOnly = new FakePermissionRepository();
@@ -455,7 +491,9 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: false,
+      taskOwner: false,
       groupAccessLevel: "edit",
+      accessLevel: "edit",
     });
 
     const owner = new FakePermissionRepository();
@@ -465,7 +503,9 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      taskOwner: false,
       groupAccessLevel: "edit",
+      accessLevel: "edit",
     });
     // A22 · Push 136：multi-manager —— 责任人是第二位经理同样命中（任意一位）。
     const secondManager = new FakePermissionRepository();
@@ -475,7 +515,9 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      taskOwner: false,
       groupAccessLevel: "edit",
+      accessLevel: "edit",
     });
   });
 
@@ -487,11 +529,42 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
     expect(await service.resolveProjectAccess(ACTOR_ID, OTHER_PROJECT)).toBeNull();
   });
 
-  it("assertCan：无权限键 → 403 FORBIDDEN；项目内角色隐含位参与判定", async () => {
+  it("assertCan：无权限键 → 403 FORBIDDEN；成员只读位放行，写位仅项目经理上下文放行", async () => {
     const repository = new FakePermissionRepository();
     const { service } = makeService([member], repository);
     await expectAppError(() => service.assertCan(ACTOR_ID, "member.manage"), "FORBIDDEN");
-    await service.assertCan(ACTOR_ID, "task.progress", { member: true, projectManager: false });
+    await service.assertCan(ACTOR_ID, "task.view", { member: true, projectManager: false });
+    await expectAppError(() => service.assertCan(ACTOR_ID, "task.progress", { member: true, projectManager: false }), "FORBIDDEN");
+    await service.assertCan(ACTOR_ID, "task.progress", { member: true, projectManager: true });
+  });
+
+  it("流程蓝图仅管理员；节点库与模板新建由有效项目经理自动获得；模板编辑仅创建人或管理员", async () => {
+    const managerRepo = new FakePermissionRepository();
+    managerRepo.ownedIds = [PROJECT_ID];
+    managerRepo.refs.set(PROJECT_ID, { managerIds: [ACTOR_ID], deletedAt: null });
+    const managerService = makeService([actor({ permissionKeys: [...PERMISSION_KEYS] })], managerRepo).service;
+    expect(await managerService.canManageBlueprint(ACTOR_ID)).toBe(false);
+    expect(await managerService.can(ACTOR_ID, "blueprint.manage")).toBe(false);
+    expect(await managerService.canManageTaskNodes(ACTOR_ID)).toBe(true);
+    expect(await managerService.canManageTaskTemplates(ACTOR_ID)).toBe(true);
+    expect(await managerService.canManageTaskTemplate(ACTOR_ID, ACTOR_ID)).toBe(true);
+    expect(await managerService.canManageTaskTemplate(ACTOR_ID, MANAGER_ID)).toBe(false);
+
+    const ordinary = makeService([actor()], new FakePermissionRepository()).service;
+    expect(await ordinary.canManageTaskNodes(ACTOR_ID)).toBe(false);
+    expect(await ordinary.canManageTaskTemplates(ACTOR_ID)).toBe(false);
+    expect(await ordinary.canManageTaskTemplate(ACTOR_ID, ACTOR_ID)).toBe(false);
+
+    const adminRepo = new FakePermissionRepository();
+    adminRepo.manualAdmin = true;
+    const adminService = makeService(
+      [actor({ permissionKeys: [...PERMISSION_KEYS] })],
+      adminRepo,
+      new AppConfig({ GROUP_ACCESS_ENFORCED: "false" } as Env),
+    ).service;
+    expect(await adminService.canManageBlueprint(ACTOR_ID)).toBe(true);
+    expect(await adminService.canManageTaskNodes(ACTOR_ID)).toBe(true);
+    expect(await adminService.canManageTaskTemplate(ACTOR_ID, MANAGER_ID)).toBe(true);
   });
 
   it("授权画像缓存：同一用户两次判定只查一次库", async () => {
@@ -572,5 +645,133 @@ describe("策略服务：M5-06 管理面仅系统管理员", () => {
       expect(await service.can(ACTOR_ID, key)).toBe(true);
     }
     expect((await service.permissionsOf(ACTOR_ID)).permissionKeys).toEqual([...PERMISSION_KEYS]);
+  });
+});
+
+// ---------- Pro 逐人权限：关系可见 / 任务级编辑 ----------
+
+describe("Pro 逐人权限：所管项目经理可编辑、成员只读、本人任务可编辑", () => {
+  const config = new AppConfig({
+    GROUP_ACCESS_ENFORCED: "true",
+    GROUP_ACCESS_ADMIN_GROUP_KEYS: "",
+    GROUP_ACCESS_ADMIN_USER_IDS: "",
+  } as Env);
+
+  it("任务负责人关系把项目并入可见集，但部门规则为 none 时仍是 view", async () => {
+    const repository = new FakePermissionRepository();
+    repository.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID], deletedAt: null });
+    repository.taskOwnerProjectIds = [PROJECT_ID];
+    const { service } = makeService([actor({ permissionKeys: ["project.view", "task.view", "task.update"] })], repository, config);
+
+    expect(await service.projectScope(ACTOR_ID)).toEqual({ kind: "ids", ids: [PROJECT_ID] });
+    expect((await service.permissionsOf(ACTOR_ID)).groupProjectAccess).toBe("allowed");
+    expect(await service.resolveProjectAccess(ACTOR_ID, PROJECT_ID)).toEqual({
+      projectId: PROJECT_ID,
+      member: false,
+      projectManager: false,
+      taskOwner: true,
+      groupAccessLevel: null,
+      accessLevel: "view",
+    });
+  });
+
+  it("本项目项目经理即使没有部门编辑规则，也获得本项目编辑权", async () => {
+    const repository = new FakePermissionRepository();
+    repository.refs.set(PROJECT_ID, { managerIds: [ACTOR_ID], deletedAt: null });
+    const { service } = makeService([fullCapabilityAuthorization(ACTOR_ID)], repository, config);
+    const access = await service.assertProjectVisible(ACTOR_ID, PROJECT_ID);
+
+    expect(access).toMatchObject({ projectManager: true, groupAccessLevel: null, accessLevel: "edit" });
+    await service.assertCan(ACTOR_ID, "project.update", access);
+    await service.assertCan(ACTOR_ID, "project.export", access);
+  });
+
+  it("项目经理编辑权只限所管项目：非所管项目仍按规则只读", async () => {
+    const repository = new FakePermissionRepository();
+    repository.refs.set(PROJECT_ID, { managerIds: [ACTOR_ID], deletedAt: null });
+    repository.refs.set(OTHER_PROJECT, { managerIds: [MANAGER_ID], deletedAt: null });
+    repository.groupKeys = ["libiaorobot.com/项目部"];
+    repository.groupRules = [{
+      groupKey: "libiaorobot.com/项目部",
+      allowedPages: [],
+      scopePermissions: [{ projectScope: "all", accessLevel: "view" }],
+      projectScope: "all",
+      accessLevel: "view",
+      projectIds: [],
+      memberScope: "all",
+      memberUserIds: [],
+    }];
+    const { service } = makeService([fullCapabilityAuthorization(ACTOR_ID)], repository, config);
+
+    const managed = await service.assertProjectVisible(ACTOR_ID, PROJECT_ID);
+    const other = await service.assertProjectVisible(ACTOR_ID, OTHER_PROJECT);
+    expect(managed).toMatchObject({ projectManager: true, groupAccessLevel: "view", accessLevel: "edit" });
+    expect(other).toMatchObject({ projectManager: false, groupAccessLevel: "view", accessLevel: "view" });
+    await service.assertCan(ACTOR_ID, "project.update", managed);
+    await expectAppError(
+      () => service.assertCan(ACTOR_ID, "project.update", other, "非所管项目经理不能改项目"),
+      "FORBIDDEN",
+    );
+  });
+
+  it("名册 project_manager 同样获得本项目编辑；普通项目成员仍只读", async () => {
+    const managerRepository = new FakePermissionRepository();
+    managerRepository.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID], deletedAt: null });
+    managerRepository.memberships.set(PROJECT_ID, "project_manager");
+    const managerService = makeService([fullCapabilityAuthorization(ACTOR_ID)], managerRepository, config).service;
+    expect(await managerService.assertProjectVisible(ACTOR_ID, PROJECT_ID)).toMatchObject({
+      projectManager: true,
+      groupAccessLevel: null,
+      accessLevel: "edit",
+    });
+
+    const memberRepository = new FakePermissionRepository();
+    memberRepository.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID], deletedAt: null });
+    memberRepository.memberships.set(PROJECT_ID, "project_member");
+    const memberService = makeService([fullCapabilityAuthorization(ACTOR_ID)], memberRepository, config).service;
+    expect(await memberService.assertProjectVisible(ACTOR_ID, PROJECT_ID)).toMatchObject({
+      member: true,
+      projectManager: false,
+      groupAccessLevel: null,
+      accessLevel: "view",
+    });
+  });
+
+  it("任务能力：项目编辑者全开；任务负责人只开本人任务普通写口；旁观者只读", () => {
+    const editor = taskCapabilitiesOf(ACTOR_ID, { accessLevel: "edit" }, []);
+    expect(editor).toMatchObject({
+      level: "edit",
+      source: "project_edit",
+      canEditFields: true,
+      canAssignOwners: true,
+      canDelete: true,
+      canFinalize: true,
+    });
+
+    const owner = taskCapabilitiesOf(ACTOR_ID, { accessLevel: "view", groupAccessLevel: null }, [ACTOR_ID]);
+    expect(owner).toEqual({
+      level: "edit",
+      source: "task_owner",
+      canEditFields: true,
+      canUpdateProgress: true,
+      canComplete: true,
+      canFinalize: true,
+      canUpload: true,
+      canAssignOwners: false,
+      canDelete: false,
+    });
+
+    const viewer = taskCapabilitiesOf(ACTOR_ID, { accessLevel: "view", groupAccessLevel: null }, [MANAGER_ID]);
+    expect(viewer.level).toBe("view");
+    expect(viewer.source).toBe("view");
+    expect(viewer.canEditFields).toBe(false);
+    expect(viewer.canUpload).toBe(false);
+  });
+
+  it("isProjectEditor：accessLevel 优先，兼容旧 groupAccessLevel；关系本身永不提升", () => {
+    expect(isProjectEditor({ accessLevel: "edit" })).toBe(true);
+    expect(isProjectEditor({ groupAccessLevel: "edit" })).toBe(true);
+    expect(isProjectEditor({ accessLevel: "view", groupAccessLevel: "edit" })).toBe(false);
+    expect(isProjectEditor({ accessLevel: "view" })).toBe(false);
   });
 });

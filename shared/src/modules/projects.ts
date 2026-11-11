@@ -2,6 +2,7 @@ import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { DeliverableTypeSchema, ProjectStatusSchema, StageKeySchema } from "../common/dicts.ts";
 import { GroupAccessAccessLevelSchema } from "./group-access.ts";
+import { UserSummarySchema } from "./users.ts";
 
 const PROJECT_MANAGER_IDS_LIMIT = 200;
 
@@ -21,9 +22,12 @@ export const ProjectSchema = z
     managerNames: z.array(z.string().nullable()).openapi({
       description: "项目经理姓名数组：服务端按 managerIds 解析后随行下发，与 managerIds 同下标一一对应（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时该位为 null（前端显示「—」）",
     }),
+    accessLevel: GroupAccessAccessLevelSchema.openapi({
+      description: "当前登录账号对该项目的最终有效访问级别：edit = 可执行项目级写操作 / view = 仅浏览。管理员、所管本项目的项目经理或部门 / 个人规则命中 edit 时为 edit；项目成员、任务负责人关系仅保证浏览，且项目经理身份不外溢到其他项目",
+    }),
     stageKey: StageKeySchema,
     status: ProjectStatusSchema,
-    groupAccessLevel: GroupAccessAccessLevelSchema.openapi({ description: "当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发" }),
+    groupAccessLevel: GroupAccessAccessLevelSchema.openapi({ description: "旧客户端兼容字段：当前与 accessLevel 同值下发；项目级写入口统一以 accessLevel 为准" }),
     description: z.string().nullable(),
     version: VersionSchema,
     createdAt: DateTimeSchema,
@@ -42,6 +46,27 @@ export const ProjectSchema = z
     }),
   })
   .openapi("Project", { description: "项目（v0.2 §2.3 projects）" });
+
+/**
+ * 项目经理候选：有效项目部成员 ∪ 有效系统管理员。
+ * 两个来源标记用于前端说明 / 排查；C 端选择器只消费 id / username / displayName。
+ */
+export const ProjectManagerCandidateSchema = UserSummarySchema.extend({
+  inProjectDepartment: z.boolean().openapi({ description: "是否为配置部门（默认 Project Dept / 项目部，含子部门）的直属有效成员" }),
+  isSystemAdmin: z.boolean().openapi({ description: "是否属于系统管理员（环境配置 / 管理员部门 / 手工授权）" }),
+}).openapi("ProjectManagerCandidate", {
+  description: "项目经理候选（仅启用、未离职；项目部成员与系统管理员取并集并按用户去重）",
+});
+
+export const ProjectManagerCandidateListSchema = z
+  .object({
+    items: z.array(ProjectManagerCandidateSchema),
+    total: z.number().int().min(0),
+  })
+  .openapi("ProjectManagerCandidateList", { description: "项目经理候选名单（GET /projects/manager-candidates）" });
+
+export type ProjectManagerCandidate = z.infer<typeof ProjectManagerCandidateSchema>;
+export type ProjectManagerCandidateList = z.infer<typeof ProjectManagerCandidateListSchema>;
 
 /**
  * 项目总览汇总卡：最慢阶段 / 最新阶段 / 逾期 / 已完成 / 总数。
@@ -168,13 +193,13 @@ export const ProjectUpdateBodySchema = z
   .openapi("ProjectUpdateBody");
 
 
-/** 项目经理新增全站自定义成果文件类型：名称同时作为字典 code / name；新增后所有项目与任务均可选用。 */
+/** 项目编辑者新增全站自定义成果文件类型：名称同时作为字典 code / name；新增后所有项目与任务均可选用。 */
 export const ProjectDeliverableTypeCreateBodySchema = z
   .object({
     name: DeliverableTypeSchema.openapi({ description: "自定义成果文件类型名称（1–50 字，不含英文逗号 / 换行；新增后全站共享）" }),
   })
   .openapi("ProjectDeliverableTypeCreateBody", {
-    description: "仅当前项目的项目经理 / 名册项目经理可新增；条目进入全站 deliverableType 字典，所有账号与项目可见",
+    description: "仅当前项目的项目编辑者（管理员、所管本项目的项目经理或部门 / 个人规则 edit）可新增；条目进入全站 deliverableType 字典，所有账号与项目可见",
   });
 
 const ZeroOrMore = z.number().int().min(0);
@@ -354,7 +379,7 @@ export const ProjectPurgeResponseSchema = z
  * 读面恒 200：`bound=false` = 未绑定（chatidMasked / name / updatedAt = null）；`chatidMasked` 只回末 4 位
  *   （最小暴露口径，沿用 S8-1 §三-4 只写不读形态）；`activated` = 会话已激活（群内有人给机器人发过
  *   消息 —— 主动推送前置条件；未激活推送命中 846607 未激活分支，投递层不重试 + 降级留痕）。
- * 写面：`project.update` 权限档（B3 定案：项目经理维护）；项目归档后拒绝（409 PROJECT_ARCHIVED）。
+ * 写面：`project.update` 权限档（项目编辑者维护）；项目归档后拒绝（409 PROJECT_ARCHIVED）。
  */
 export const ProjectGroupBindingSchema = z
   .object({

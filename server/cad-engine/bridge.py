@@ -79,7 +79,7 @@ class Gateway:
 
     def public(self, row):
         result = {key: row[key] for key in ('id', 'state', 'phase', 'sourceSHA256', 'sourceByteLength',
-                  'artifactBytes', 'createdAt', 'updatedAt', 'workerPeakRSSBytes', 'workerWallSeconds', 'nameCodepage') if key in row}
+                  'artifactBytes', 'dwgCurveColumnsV1', 'createdAt', 'updatedAt', 'workerPeakRSSBytes', 'workerWallSeconds', 'nameCodepage') if key in row}
         result['format']=row.get('sourceFormat','STEP')
         error = row.get('error')
         if error:
@@ -202,7 +202,15 @@ class Gateway:
                 raise ValueError('Source hash mismatch')
             self.results.remember(request, row)
             return {'job': self.public(row), 'reused': reused}
+        if action in ('manifest','buffer') and request.get('displayOnly') is True:
+            result = self.jobs.display(request.get('namespace'), buffer=action=='buffer',
+                                       lease=request.get('lease'), sha256=request.get('sha256'))
+            if result is None:raise KeyError('Temporary display is no longer available')
+            return result
         row = self.owned(request)
+        if action == 'status' and row['state']=='running' and row.get('sourceFormat')=='DWG':
+            if self.jobs.display(request['namespace'], row['id']) is not None:
+                return {**self.public(row), 'phase':'vector-available'}
         if action == 'status':
             return self.public(row)
         if action == 'cancel':
@@ -243,6 +251,9 @@ class Gateway:
                                                for bid, b in definitions.items()})
                 with path.open('x') as output:
                     json.dump(packet, output, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+            columns = row.get('dwgCurveColumnsV1')
+            if columns:
+                paths[columns['sha256']] = self.jobs._buffer_path(columns)
             self.leases[token] = {'namespace': request['namespace'], 'jobId': row['id'], 'paths': paths,
                                   'expires': time.monotonic() + 300, 'path': path}
             return {'path': str(path), 'bytes': path.stat().st_size, 'artifactBytes': row.get('artifactBytes', 0)}

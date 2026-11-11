@@ -110,6 +110,35 @@ export class ReportRepository {
     return { rows: rows as DailyReportRow[], total: counted[0]?.total ?? 0 };
   }
 
+  /** 导出专用行读取：保持列表口径，不重复查询 total。 */
+  async listForExport(
+    projectId: string,
+    filter: DailyReportFilter,
+    page: number,
+    limit: number,
+    client: DbClient = this.database.db,
+  ): Promise<DailyReportRow[]> {
+    const where = this.buildWhere(projectId, filter);
+    const rows = await client
+      .select(REPORT_COLUMNS)
+      .from(dailyReports)
+      .leftJoin(users, eq(users.id, dailyReports.authorId))
+      .where(where)
+      .orderBy(desc(dailyReports.reportDate), desc(dailyReports.createdAt))
+      .limit(limit)
+      .offset((page - 1) * limit);
+    return rows as DailyReportRow[];
+  }
+
+  /** 导出专用总数：只读 count，不加载日报正文或提交人信息。 */
+  async countForExport(projectId: string, client: DbClient = this.database.db): Promise<number> {
+    const counted = await client
+      .select({ total: sql<number>`count(*)::int` })
+      .from(dailyReports)
+      .where(eq(dailyReports.projectId, projectId));
+    return counted[0]?.total ?? 0;
+  }
+
   async findById(projectId: string, reportId: string, client: DbClient = this.database.db): Promise<DailyReportRow | null> {
     const rows = await client
       .select(REPORT_COLUMNS)
@@ -120,7 +149,7 @@ export class ReportRepository {
     return (rows[0] ?? null) as DailyReportRow | null;
   }
 
-  /** 当日全量行（A7-01 汇总 / A7-05 应填未填）：项目 × 日期单日；提交时刻升序（草稿 submittedAt 为空，PG 默认排最后）。 */
+  /** 当日全量行（A7-01 汇总 / A7-05 应填未填）：项目 × 日期单日；提交时刻 → 创建时间 → id 升序（草稿 submittedAt 为空排最后）。 */
   async listByDate(
     projectId: string,
     reportDate: string,
@@ -131,7 +160,7 @@ export class ReportRepository {
       .from(dailyReports)
       .leftJoin(users, eq(users.id, dailyReports.authorId))
       .where(and(eq(dailyReports.projectId, projectId), eq(dailyReports.reportDate, reportDate)))
-      .orderBy(asc(dailyReports.submittedAt), asc(dailyReports.authorId));
+      .orderBy(asc(dailyReports.submittedAt), asc(dailyReports.createdAt), asc(dailyReports.id));
     return rows as DailyReportRow[];
   }
   async insert(input: DailyReportInsertInput, at: Date, client: DbClient): Promise<DailyReportRow> {
@@ -172,17 +201,34 @@ export class ReportRepository {
     return rows.length > 0;
   }
 
-  /** 项目上下文（写路径用）：软删 / 不存在 = null（记录级 404）；status 供归档写保护判定（ADR-027），name 供群播报深链文案。 */
+  /** 项目上下文：软删 / 不存在 = null（记录级 404）；status 供归档写保护判定，code / name 供查询快照与群播报文案。 */
   async findProject(
     projectId: string,
     client: DbClient = this.database.db,
-  ): Promise<{ id: string; status: string; name: string } | null> {
+  ): Promise<{ id: string; code: string; status: string; name: string; managerIds: string[] } | null> {
     const rows = await client
-      .select({ id: projects.id, status: projects.status, name: projects.name })
+      .select({
+        id: projects.id,
+        code: projects.code,
+        status: projects.status,
+        name: projects.name,
+        managerIds: projects.managerIds,
+      })
       .from(projects)
       .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
       .limit(1);
     return rows[0] ?? null;
+  }
+
+  /** 批量取显示名（查询海报项目经理位）；缺失用户由调用方过滤。 */
+  async listDisplayNames(userIds: readonly string[], client: DbClient = this.database.db): Promise<Map<string, string>> {
+    const unique = [...new Set(userIds)];
+    if (unique.length === 0) return new Map();
+    const rows = await client
+      .select({ id: users.id, displayName: users.displayName })
+      .from(users)
+      .where(inArray(users.id, unique));
+    return new Map(rows.map((row) => [row.id, row.displayName.replace(/-test$/i, "").trim()]));
   }
 
   private buildWhere(projectId: string, filter: DailyReportFilter) {

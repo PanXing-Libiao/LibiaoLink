@@ -3,7 +3,7 @@ import type { CadNameCodepage } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import type { DbClient } from "../../db/db-client.js";
 import { ObjectStorage } from "../../storage/index.js";
-import { CadEngineClient, type CadJob, type CadResource } from "./cad-engine.client.js";
+import { cadArchiveNamespace, CadEngineClient, type CadJob, type CadResource } from "./cad-engine.client.js";
 import { CadArchiveRepository, type CadArchiveSource, type CadArtifactRow, type CadViewRow } from "./cad-archive.repository.js";
 import { checkedCadStream } from "./cad-archive.integrity.js";
 import { CadInputService, cadAutoCacheFormat, cadInputs, CAD_DXF_INPUT_BYTES } from "./cad-inputs.js";
@@ -60,6 +60,12 @@ export class CadArchiveService {
   async resource(action: "manifest" | "buffer", source: CadArchiveSource, actorId: string, viewId: string,
     jobId: string, lease?: string, sha256?: string, precompressed?: CadPrecompressedEncoding): Promise<CadResource> {
     const { artifact, view } = await this.bound(source, actorId, viewId, jobId);
+    if (!view.cancelled && artifact.sourceFormat === "DWG" && artifact.state === "running" && artifact.phase === "vector-available") {
+      if (action === "manifest") await this.repository.lease(view.id);
+      else if (!view.leaseExpiresAt || view.leaseExpiresAt <= new Date()) throw new AppError("NOT_FOUND", "模型资源不存在或不可访问");
+      return this.engine.file(action, { namespace: cadArchiveNamespace(artifact.id), displayOnly: true,
+        ...(lease ? { lease } : {}), ...(sha256 ? { sha256 } : {}) });
+    }
     if (view.cancelled || !["completed", "partial"].includes(artifact.state) || !artifact.objectPrefix || !artifact.manifestSHA256 || !artifact.manifestBytes) {
       throw new ServiceUnavailableException("模型尚未就绪或当前窗口已取消，请重新打开");
     }
@@ -72,7 +78,7 @@ export class CadArchiveService {
     const digest = buffer?.sha256 ?? artifact.manifestSHA256;
     if (!objectKey.startsWith(artifact.objectPrefix)) throw new AppError("NOT_FOUND", "模型资源不存在或不可访问");
     if (action === "manifest") await this.repository.lease(view.id);
-    if (precompressed === "br") {
+    if (precompressed === "br" && !buffer?.kind) {
       const compressed = await this.storage.getObjectStream(cadPrecompressedObjectKey(objectKey)).catch(() => null);
       if (compressed && compressed.sizeBytes > 0) {
         return { stream: compressed.stream, bytes: compressed.sizeBytes, artifactBytes: artifact.artifactBytes, encoding: "br" };
@@ -82,10 +88,12 @@ export class CadArchiveService {
     const object = await this.storage.getObjectStream(objectKey).catch(() => {
       throw new ServiceUnavailableException("模型资源暂时无法读取，请稍后重试");
     });
-    const invalidate = () => { void this.repository.retry(artifact.id, artifact.state, artifact.objectPrefix).catch(() => {}); };
+    const invalidate = buffer?.kind === "dwg-curve-columns-v1" ? undefined : () => {
+      void this.repository.retry(artifact.id, artifact.state, artifact.objectPrefix).catch(() => {});
+    };
     if (!object || object.sizeBytes !== bytes) {
-      object?.stream.destroy(); invalidate();
-      throw new ServiceUnavailableException("模型缓存缺失或损坏，已排队重新生成，请重新打开");
+      object?.stream.destroy(); invalidate?.();
+      throw new ServiceUnavailableException(invalidate ? "模型缓存缺失或损坏，已排队重新生成，请重新打开" : "曲线参数暂不可用，可从正式归档恢复");
     }
     return { stream: checkedCadStream(object.stream, bytes, digest, invalidate), bytes, artifactBytes: artifact.artifactBytes };
   }
@@ -112,13 +120,15 @@ export class CadArchiveService {
 
   private public(row: CadArtifactRow, view: CadViewRow): CadJob {
     const state = view.cancelled ? "cancelled" : row.state as CadJob["state"];
+    const columns = row.buffers?.find((item) => item.kind === "dwg-curve-columns-v1");
     const resources = row.resourceLease && row.buffers
-      ? { lease: row.resourceLease, buffers: row.buffers.slice(0, 256).map(({ sha256, byteLength }) => ({ sha256, byteLength })) }
+      ? { lease: row.resourceLease, buffers: row.buffers.filter((item) => !item.kind).slice(0, 256).map(({ sha256, byteLength }) => ({ sha256, byteLength })) }
       : undefined;
     return { id: view.id.replaceAll("-", ""), state, format: row.sourceFormat, phase: view.cancelled ? "cancelled" : row.phase,
       sourceSHA256: row.sourceSHA256, sourceByteLength: row.sourceBytes, nameCodepage: row.nameCodepage as CadNameCodepage,
       createdAt: row.createdAt.getTime() / 1000, updatedAt: row.updatedAt.getTime() / 1000,
-      ...(["completed", "partial"].includes(row.state) && !view.cancelled ? { artifactBytes: row.artifactBytes, ...(resources ? { resources } : {}) } : {}),
+      ...(["completed", "partial"].includes(row.state) && !view.cancelled ? { artifactBytes: row.artifactBytes, ...(resources ? { resources } : {}),
+        ...(columns ? { dwgCurveColumnsV1: { sha256: columns.sha256, byteLength: columns.byteLength } } : {}) } : {}),
       ...(row.error && state === "failed" ? { error: { code: row.errorCode ?? "conversion-failed", error: row.error } } : {}) };
   }
 }

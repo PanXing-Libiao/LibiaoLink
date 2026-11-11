@@ -4,7 +4,7 @@ import { files, fileVersions } from "./files.js";
 import type { CadCompanion } from "@libiaolink/contracts";
 type CadBoundCompanion = CadCompanion & { sourceSHA256: string; sourceBytes: number };
 
-export type CadStoredBuffer = { sha256: string; byteLength: number; objectKey: string };
+export type CadStoredBuffer = { sha256: string; byteLength: number; objectKey: string; kind?: "dwg-curve-columns-v1" };
 
 export const cadArtifacts = pgTable("cad_artifacts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -43,7 +43,7 @@ export const cadArtifacts = pgTable("cad_artifacts", {
   index("ix_cad_artifacts_access").on(t.lastAccessedAt),
   index("ix_cad_artifacts_file").on(t.fileId),
   check("ck_cad_artifacts_state", sql`${t.state} in ('queued','running','completed','partial','failed','timed-out')`),
-  check("ck_cad_artifacts_input_set", sql`${t.sourceFormat} in ('STEP','DXF','DWG') and ${t.resourceSetHash} ~ '^[a-f0-9]{64}$' and length(coalesce(${t.mainPath},${t.sourceName})) between 1 and 1024 and jsonb_typeof(${t.companions}) = 'array' and jsonb_array_length(${t.companions}) <= 127 and ((${t.sourceFormat} in ('DXF','DWG') and ${t.mainPath} is not null and (${t.sourceFormat} <> 'DWG' or (${t.companions} = '[]'::jsonb and ${t.resourceSetHash} = repeat('0',64)))) or (${t.sourceFormat} = 'STEP' and ${t.state} <> 'partial' and ${t.companions} = '[]'::jsonb and ${t.resourceSetHash} = repeat('0',64)))`),
+  check("ck_cad_artifacts_input_set", sql`${t.sourceFormat} in ('STEP','DXF','DWG') and ${t.resourceSetHash} ~ '^[a-f0-9]{64}$' and length(coalesce(${t.mainPath},${t.sourceName})) between 1 and 1024 and jsonb_typeof(${t.companions}) = 'array' and jsonb_array_length(${t.companions}) <= 127 and ((${t.sourceFormat} in ('DXF','DWG') and ${t.mainPath} is not null) or (${t.sourceFormat} = 'STEP' and ${t.state} <> 'partial' and ${t.companions} = '[]'::jsonb and ${t.resourceSetHash} = repeat('0',64)))`),
   check("ck_cad_artifacts_encoding", sql`${t.nameCodepage} in ('GB','UTF8')`),
   check("ck_cad_artifacts_format_version", sql`length(${t.formatVersion}) between 1 and 512`),
   check("ck_cad_artifacts_source", sql`${t.sourceSHA256} ~ '^[a-f0-9]{64}$' and ${t.sourceBytes} > 0`),

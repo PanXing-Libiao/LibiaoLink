@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import type { Member } from "../data/members";
 import type { TintedTier } from "../backgroundTier";
 import { PROJECT_STAGES } from "../data/projects";
-import { PROGRESS_STEPS, TEMP_TASK_STAGE, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, TEMP_TASK_STAGE, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, taskCapabilitiesOf, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
 import { fieldText, isLocalizedLocale, mdText, monthShortText, monthYearText, stageText, statusText, textOf, useLocale, useLocalizedTranslator, useT, yearText } from "../i18n";
 import type { Locale } from "../i18n";
@@ -72,7 +72,6 @@ const FALLBACK_TASK_COLUMNS = resolveColumns({});
 const FALLBACK_TASK_GRID = tableGridTemplate(FALLBACK_TASK_COLUMNS);
 const FALLBACK_TASK_MIN_W = tableMinWidth(FALLBACK_TASK_COLUMNS);
 /** 任务列表不带「项目经理」行内编辑（只读文本）：managerIds 占位同一份空数组（免得每行新建一个）。 */
-const NO_MANAGER_IDS: string[] = [];
 
 /**
  * 左表列宽 / 行高：左表与时间轴靠这一组常量逐行对齐。**列宽固定、不随可见宽度变** ——
@@ -590,7 +589,7 @@ function GanttLockIcon({ locked }: { locked: boolean }) {
  * 传了 onPatchTask / onSetProgress 就能拖动改期 / 改进度（不传 = 拖动照常预览、松手不写回）。
  * members = 人员目录（负责人筛选项的成员行渲染）。
  */
-export function GanttChart({ tasks, members, managers = "", tierTint = false, onPatchTask, onSetProgress }: { tasks: readonly ProjectTask[]; members: readonly Member[]; /** 项目经理展示文本（项目级；空态兜底列表的「项目经理」列用，同项目页任务表）。 */ managers?: string; /** 背景档位（适中 / 炫彩；空态兜底列表的行色与项目页任务行的铺色同口径，Push 294）。 */ tierTint?: TintedTier | false; onPatchTask?: (taskId: string, patch: TaskPatch) => void; onSetProgress?: (taskId: string, progress: number) => void }) {
+export function GanttChart({ tasks, members, tierTint = false, onPatchTask, onSetProgress }: { tasks: readonly ProjectTask[]; members: readonly Member[]; /** 背景档位（适中 / 炫彩；空态兜底列表的行色与项目页任务行的铺色同口径，Push 294）。 */ tierTint?: TintedTier | false; onPatchTask?: (taskId: string, patch: TaskPatch) => void; onSetProgress?: (taskId: string, progress: number) => void }) {
   const locale = useLocale();
   const localize = useLocalizedTranslator();
   /** 手打内容（任务名）机翻显示：英文界面 titleEn 优先 → 机翻 → 原文；中文界面照旧。 */
@@ -844,10 +843,13 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
   };
 
   /** 任务条提示：锁定时去掉拖动说明，换成解锁提示；解锁时沿用完整操作说明。 */
-  const barTitleOf = (bar: GanttBar): string =>
-    barsLocked
+  const barTitleOf = (bar: GanttBar): string => {
+    const capabilities = taskCapabilitiesOf(bar.task);
+    const permitted = bar.task.finalizedAt === null && capabilities.canEditFields;
+    return barsLocked || !permitted
       ? bar.label.split("\n").filter((line) => line !== t("gantt.tip.dragBar")).concat(t("gantt.lock.lockedTip")).join("\n")
       : bar.label;
+  };
 
   /**
    * 按下任务条（官方 taskBar.moveable / resizable / 进度圆点）：按按下的是哪一块决定这一拖改什么 ——
@@ -855,7 +857,10 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
    * 三种都只先改预览值，松手才写回；指针捕获失败也不影响（move / up 挂在条自己身上）。
    */
   const beginDrag = (event: ReactPointerEvent<HTMLElement>, bar: GanttBar, mode: GanttDragMode) => {
-    if (barsLocked) {
+    const capabilities = taskCapabilitiesOf(bar.task);
+    const permitted = bar.task.finalizedAt === null &&
+      (mode === "progress" ? capabilities.canUpdateProgress : capabilities.canEditFields);
+    if (barsLocked || !permitted) {
       event.stopPropagation();
       return;
     }
@@ -1292,8 +1297,6 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                         columns={FALLBACK_TASK_COLUMNS}
                         selected={false}
                         tierTint={tierTint}
-                        managers={managers}
-                        managerIds={NO_MANAGER_IDS}
                         members={members}
                         onProgress={
                           onSetProgress === undefined
@@ -1618,8 +1621,12 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
     const dragging = live.dragging;
     const barHovered = hoveredBar === bar.task.id;
     const barTitle = barTitleOf(bar);
-    const barCursor = barsLocked ? "cursor-default" : dragging ? "cursor-grabbing" : "cursor-grab";
-    const showHandles = !barsLocked && (barHovered || dragging);
+    const capabilities = taskCapabilitiesOf(bar.task);
+    const canEditDates = !barsLocked && capabilities.canEditFields && bar.task.finalizedAt === null;
+    const canEditProgress = !barsLocked && capabilities.canUpdateProgress && bar.task.finalizedAt === null;
+    const barCursor = !canEditDates ? "cursor-default" : dragging ? "cursor-grabbing" : "cursor-grab";
+    const showHandles = canEditDates && (barHovered || dragging);
+    const showProgressHandle = canEditProgress && (barHovered || dragging);
     const percent = Math.round(live.percent);
     // 条内标签对齐官方 labelText「{title} {progress}%」：条够宽写全，窄条只写百分比、再窄就不写。
     const barLabel = box.width >= 84 ? ganttTitle(bar.task) + " " + String(percent) + "%" : String(percent) + "%";
@@ -1729,7 +1736,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
               />
             </>
           ) : null}
-          {showHandles && box.width >= 60 ? (
+          {showProgressHandle && box.width >= 60 ? (
             // 进度圆点 = 改进度（四档吸附）；左右各让开 6px，免得压住两端的改工期热区。
             <span
               className="absolute z-30 cursor-ew-resize rounded-full border border-zinc-400 bg-white shadow"

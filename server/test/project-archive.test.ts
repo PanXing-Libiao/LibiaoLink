@@ -157,9 +157,9 @@ class FakeProjectRepository {
 class FakeFlowService {
   calls: string[] = [];
   reject = false;
-  async assertProjectManager(_projectId: string, _managerIds: readonly string[], _actorId: string, action: string): Promise<void> {
+  async assertProjectEditor(_projectId: string, _actorId: string, action: string): Promise<void> {
     this.calls.push(action);
-    if (this.reject) throw new AppError("FORBIDDEN", "仅项目经理可执行" + action);
+    if (this.reject) throw new AppError("FORBIDDEN", "仅项目编辑者可执行" + action);
   }
 }
 

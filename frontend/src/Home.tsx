@@ -25,7 +25,7 @@ import { newSavedFilterId, sameCriteria } from "./savedFilters";
 import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
-import { PROJECT_STATUS_VALUES, projectManagerText } from "./types";
+import { PROJECT_STATUS_VALUES } from "./types";
 import { isLocalizedLocale, projectStatusTextOf, projectTypeText, prefetchLocalizedText, useLocale, useT } from "./i18n";
 import type { Locale } from "./i18n";
 import { regionNameEn } from "./data/regionPicker";
@@ -36,19 +36,21 @@ type HomeProps = {
   me: MeResponse;
   /** 字典（地区 / 项目类型：下拉项与主题色）。 */
   dicts: Dicts;
-  /** 用户目录（项目经理姓名与候选）。 */
+  /** 完整用户目录（项目经理姓名筛选、任务负责人等人员字段）。 */
   directory: DirectoryUser[];
+  /** 项目经理候选（有效项目部成员 ∪ 系统管理员）：只用于新建 / 编辑项目的项目经理选择。 */
+  managerCandidates: readonly DirectoryUser[];
   /** 字典（地区 / 项目类型）的「＋ 添加」与行内删除能力，与新建 / 编辑弹窗共用同一份。 */
   dictTools: DictTools;
   /** 是否持有 dict.manage（Push 172）：决定「＋ 添加项目类型」与两类条目删除入口的呈现。 */
   canManageDicts: boolean;
-  /** 是否持有 project.delete：功能位门槛；卡片再叠加当前项目的 groupAccessLevel === "edit"（服务端仍是最终裁决）。 */
+  /** 是否持有 project.delete：功能位门槛；卡片再叠加当前项目的 accessLevel === "edit"（服务端仍是最终裁决）。 */
   canDeleteProject: boolean;
   /** 是否具备新建项目能力（功能位 + 全部 / 自己的项目编辑）：无权限时「新建项目」出禁用观感、点击给提示条。 */
   canCreateProject: boolean;
-  /** 是否持有 project.update：功能位门槛；卡片再叠加当前项目的 groupAccessLevel === "edit"（服务端仍是最终裁决）。 */
+  /** 是否持有 project.update：功能位门槛；卡片再叠加当前项目的 accessLevel === "edit"（服务端仍是最终裁决）。 */
   canUpdateProject: boolean;
-  /** 是否持有 project.export：无权限时卡片导出入口不渲染（服务端仍是最终裁决）。 */
+  /** 是否持有 project.export：无权限时卡片导出入口不渲染；卡片再叠加当前项目的 accessLevel === "edit"（服务端仍是最终裁决）。 */
   canExportProject: boolean;
   /** 导出项目数据（xlsx / Excel+附件 zip；App 层调下载接口、持忙碌态并在失败时出全局提示）。 */
   onExportProject: (project: Project, format: ProjectExportFormat) => void;
@@ -113,7 +115,7 @@ type LoadError =
   | { kind: "network" }
   | { kind: "api"; message: string; code: string };
 
-export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, canExportProject, onExportProject, exportingProjectId, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
+export default function Home({ me, dicts, directory, managerCandidates, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, canExportProject, onExportProject, exportingProjectId, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const t = useT();
   const locale = useLocale();
   const permissions = useMyPermissions();
@@ -398,7 +400,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
     () => items.reduce((latest, project) => (project.updatedAt > latest ? project.updatedAt : latest), "").slice(0, 10),
     [items],
   );
-  const managerChoices = useMemo(() => directoryMemberOptions(directory), [directory]);
+  const managerChoices = useMemo(() => directoryMemberOptions(managerCandidates), [managerCandidates]);
 
   const resetFilters = () => {
     updateFilters({ regions: [], projectTypes: [], managerIds: [], statuses: [], timeFrom: null, timeTo: null });
@@ -810,17 +812,17 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 statusText={projectStatusTextOf(locale, project.status)}
                 accentColor={typeAccent(dicts, project.projectType).color}
                 accentText={typeAccent(dicts, project.projectType).text}
-                managerNames={projectManagerText(project)}
+                managerNames={project.managerNames}
                 time={project.createdAt}
                 onEdit={
-                  canUpdateProject && project.groupAccessLevel === "edit"
+                  canUpdateProject && project.accessLevel === "edit"
                     ? () => {
                         onEdit(project);
                       }
                     : undefined
                 }
                 onExport={
-                  canExportProject
+                  canExportProject && project.accessLevel === "edit"
                     ? (format) => {
                         onExportProject(project, format);
                       }
@@ -828,7 +830,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 }
                 exporting={exportingProjectId === project.id}
                 onDelete={
-                  canDeleteProject && project.groupAccessLevel === "edit"
+                  canDeleteProject && project.accessLevel === "edit"
                     ? () => {
                         onDeleteProject(project);
                       }
