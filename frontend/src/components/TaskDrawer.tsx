@@ -3,7 +3,7 @@ import { keepLiveOrder } from "../liveSync";
 import { ApiError } from "../api";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { memberNameOf, type Member } from "../data/members";
+import { memberNameOf, memberOptionsWithExisting, type Member } from "../data/members";
 import type { ReportPhoto } from "../data/reports";
 import {
   TEMP_TASK_STAGE,
@@ -162,13 +162,13 @@ const CAPTION_CLASS = "mt-1 block text-[11px] leading-4 text-zinc-400";
 const NOTE_BOX_CLASS =
   "rounded-lg border border-zinc-200 bg-white px-3 py-2 transition focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-900/10";
 
-/** 任务编辑保存值：可编辑字段 = 项目经理（项目级，多位）/ 任务负责人（多位）/ 开始与预计完成日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述。 */
+/** 任务编辑保存值：可编辑字段 = 项目级项目经理（多位，修改同步整个项目）/ 任务负责人（多位）/ 开始与预计完成日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述。 */
 export type TaskEditSubmit = {
   taskId: string;
   version: number;
-  /** 项目经理 id 名单（项目级字段，Push 136）：至少一位，回写项目。 */
+  /** 项目级项目经理 id（至少一位）：仅当该项变化时随任务 PATCH 写入，服务端同步整个项目。 */
   managerIds: string[];
-  /** Only an explicit manager edit may write this project-level field. */
+  /** 是否显式改过项目级项目经理名单。 */
   managerChanged: boolean;
   /** 任务负责人 id（多位，契约 ownerIds）：空数组 = 待分配。 */
   ownerIds: string[];
@@ -203,11 +203,11 @@ function rangeOf(task: ProjectTask): DateRange | null {
   return from === "" || to === "" ? null : { from, to };
 }
 
-function draftOf(task: ProjectTask | null, managerIds: string[]): Draft {
+function draftOf(task: ProjectTask | null): Draft {
   return {
     title: task === null ? "" : task.title,
     titleEn: task === null ? "" : task.titleEn,
-    managerIds,
+    managerIds: task === null ? [] : [...task.managerIds],
     ownerIds: task === null ? [] : [...task.ownerIds],
     range: task === null ? null : rangeOf(task),
     headcount: task !== null && task.headcount > 0 ? String(task.headcount) : "",
@@ -218,13 +218,9 @@ function draftOf(task: ProjectTask | null, managerIds: string[]): Draft {
 }
 
 type TaskDrawerProps = {
-  /** 项目经理展示文本（项目级字段：多位按「、」连接；不传时回落常量占位）。 */
-  managers?: string;
-  /** 当前项目经理 id 名单（项目级字段，人员多选下拉的选中项，Push 136）。 */
-  managerIds?: string[];
   /** 当前账号是否可对该任务定档 / 取消定档（服务端投影 canFinalize）。 */
   canFinalize?: boolean;
-  /** 项目经理是项目级字段：仅当前项目编辑者可改；任务负责人不得改。 */
+  /** 项目经理是项目级字段：仅当前项目编辑者可改并同步全项目；任务负责人不得改。 */
   canEditManagers?: boolean;
   task: ProjectTask | null;
   /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */
@@ -282,8 +278,10 @@ type TaskDrawerProps = {
   customDeliverableTypes?: readonly string[];
   /** 仅当前项目项目经理可新增；不传 = 成果选择器底部入口置灰。 */
   onCreateDeliverableType?: (name: string) => Promise<string | null>;
-  /** 人员候选（GET /api/v1/users 目录）：项目经理 / 任务负责人两个多选共用。 */
+  /** 完整人员目录（GET /api/v1/users 目录）：任务负责人等非项目经理字段使用。 */
   members: readonly Member[];
+  /** 项目经理候选（有效项目部成员 ∪ 系统管理员）：项目经理多选专用。 */
+  managerMembers: readonly Member[];
   onClose: () => void;
 };
 
@@ -303,11 +301,11 @@ type TaskDrawerProps = {
  * 任务描述（中文 / 英文）自 Push 196 起对「临时任务」开放（**Push 197 收窄：仅未归入阶段的临时任务** —— 业务口径 2026-09-28「这个不是临时任务 不能修改」；失焦即存，中文名必填），
  * 阶段任务与节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
-export function TaskDrawer({ task, managers, managerIds = [], canFinalize: canFinalizeProp = false, canEditManagers = false, members, customDeliverableTypes = [], onCreateDeliverableType, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEditManagers = false, members, managerMembers, customDeliverableTypes = [], onCreateDeliverableType, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
-  const [draft, setDraft] = useState<Draft>(() => draftOf(task, managerIds));
+  const [draft, setDraft] = useState<Draft>(() => draftOf(task));
   const baseDraft = useRef(draft);
   const baseVersion = useRef(task?.version ?? 0);
   const [unavailable, setUnavailable] = useState(false);
@@ -468,7 +466,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize: canFi
     setChangeDetailId(null);
     setChangeEntries({});
     setChangeDetailTick(0);
-    const initial = draftOf(task, managerIds);
+    const initial = draftOf(task);
     baseDraft.current = initial;
     baseVersion.current = task?.version ?? 0;
     setUnavailable(false);
@@ -484,11 +482,11 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize: canFi
   const protectingDraft = draftDirty || saveNote !== null || changeContent !== "" || changeCause !== "" || changeBefore !== "" || changeAfter !== "" || changeBeforePhotos.length > 0 || changeAfterPhotos.length > 0 || changeFile !== null || renamingId !== null || pendingDelete !== null || finalizeConfirm || unfinalizeConfirm;
   useEffect(() => {
     if (task === null || protectingDraft || (document.activeElement instanceof HTMLElement && drawerRef.current?.contains(document.activeElement) && document.activeElement.matches('input:not([type="checkbox"]):not([type="radio"]), textarea, select, [contenteditable="true"]'))) return;
-    const next = draftOf(task, managerIds);
+    const next = draftOf(task);
     baseDraft.current = next;
     baseVersion.current = task.version;
     setDraft(next);
-  }, [task?.version, managerIds.join(","), protectingDraft]);
+  }, [task?.version, task?.managerIds.join(","), protectingDraft]);
 
   useLiveRefresh(["files", "tasks", "permissions"], async () => {
     if (projectId === undefined || taskId === null) return () => {};
@@ -697,7 +695,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize: canFi
           taskId: current.id,
           version: baseVersion.current,
           managerIds: next.managerIds,
-          managerChanged: next.managerIds.length !== baseDraft.current.managerIds.length || next.managerIds.some((id) => !baseDraft.current.managerIds.includes(id)),
+          managerChanged: next.managerIds.length !== baseDraft.current.managerIds.length || next.managerIds.some((id, index) => id !== baseDraft.current.managerIds[index]),
           ownerIds: next.ownerIds,
           startDate: next.range === null ? "" : next.range.from,
           dueDate: next.range === null ? "" : next.range.to,
@@ -746,6 +744,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize: canFi
   const canEditActualEnd = onSetActualEnd !== undefined && capabilities.canComplete && !taskFinalized && !unavailable;
   const canEditProgress = onProgress !== undefined && capabilities.canUpdateProgress && !taskFinalized && !unavailable;
   const managerEditable = editable && canEditManagers;
+  const managerChoices = memberOptionsWithExisting(managerMembers, draft.managerIds, members);
   const ownerEditable = editable && capabilities.canAssignOwners;
   const canFinalize = canFinalizeProp && capabilities.canFinalize;
   const visibleTabs = filesWritable ? DRAWER_TABS : DRAWER_TABS.filter((item) => item.key !== "change");
@@ -1156,9 +1155,9 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize: canFi
         <>
           <MemberMultiSelect
             values={draft.managerIds}
-            options={members}
+            options={managerChoices}
             onChange={(memberIds) => {
-              // 至少留一位（对齐契约 projects.manager_ids 非空）：全取消时不写
+              // 至少留一位（对齐契约 tasks.manager_ids 非空）：全取消时不写
               if (memberIds.length === 0) {
                 return;
               }
@@ -1168,10 +1167,11 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize: canFi
             ariaLabel={t("drawer.manager.aria")}
           />
           <span className={CAPTION_CLASS}>{t("drawer.manager.caption")}</span>
+          <span className={CAPTION_CLASS}>{t("manager.candidateHint")}</span>
         </>
       ) : (
         <>
-          <span className="font-medium text-zinc-800">{managers ?? ""}</span>
+          <span className="font-medium text-zinc-800">{task.managers.length === 0 ? "—" : task.managers.join("、")}</span>
           {canEditManagers && taskFinalized ? (
             <span className={CAPTION_CLASS}>{t("drawer.locked.caption")}</span>
           ) : null}
@@ -2247,7 +2247,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize: canFi
                 if (projectId === undefined) return;
                 void fetchTaskDetail(projectId, task.id).then((latest) => {
                   if (identityRef.current !== latest.id) return;
-                  setLatestDraft({ version: latest.version, draft: draftOf(toUiTask(latest, task, (id) => memberNameOf(members, id) ?? id), managerIds) });
+                  setLatestDraft({ version: latest.version, draft: draftOf(toUiTask(latest, task, (id) => memberNameOf(members, id) ?? id)) });
                 }).catch((error: unknown) => {
                   if (error instanceof ApiError && (error.status === 403 || error.status === 404)) setUnavailable(true);
                   setSaveNote(t("drawer.save.unreadable"));

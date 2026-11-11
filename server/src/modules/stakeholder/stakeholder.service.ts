@@ -15,12 +15,22 @@ import type { ActorAuthorization } from "../identity/index.js";
 import { PermissionService, projectFields } from "../permission/index.js";
 import { StakeholderRepository } from "./stakeholder.repository.js";
 import type { StakeholderProjectRow, StakeholderRow } from "./stakeholder.repository.js";
-import { buildStakeholderFilter, parseStakeholderSort, stakeholderVisibility } from "./stakeholder.rules.js";
+import { buildStakeholderFilter, isStakeholderProjectFilterVisible, parseStakeholderSort, stakeholderVisibility } from "./stakeholder.rules.js";
 import type { StakeholderVisibility } from "./stakeholder.rules.js";
 
 export interface StakeholderExportContext {
   authorization: ActorAuthorization;
   visibility: StakeholderVisibility;
+}
+
+/** 响应中的关联项目只投影当前账号可见范围；写权限仍用 listProjects 的完整关联集合。 */
+function visibleProjectLinks(
+  visibility: StakeholderVisibility,
+  links: readonly StakeholderProjectRow[],
+): StakeholderProjectRow[] {
+  if (visibility.kind === "all") return [...links];
+  const visibleProjectIds = new Set(visibility.projectIds);
+  return links.filter((link) => visibleProjectIds.has(link.projectId));
 }
 
 /** 台账快照（字段级留痕口径：九个业务字段可改 —— role 为 Push 225 增列）。 */
@@ -39,13 +49,14 @@ function stakeholderSnapshot(row: StakeholderRow): Record<string, unknown> {
 }
 
 /**
- * 干系人用例（j6 · S8·stakeholder）：台账 CRUD（A5-01）、项目关联（A5-03）、字段级脱敏（A5-07 / C3-08）。
- * 1) 记录级：可见集 = 「我录入的」∪「关联项目落在我的可见项目内」（stakeholder.rules.stakeholderVisibility）；
+ * 干系人用例（j6 · S8·stakeholder）：项目干系人 CRUD（A5-01）、项目独立归属（A5-03）、字段级脱敏（A5-07 / C3-08）。
+ * 1) 记录级：每条记录归属一个项目，可见性只由该项目决定（stakeholder.rules.stakeholderVisibility）；
  *    不可见 / 已软删一律 404（防 IDOR），与项目域同一口径。
  * 2) 字段级：联系方式（phone / wechat / email）、company / title、remark 按 h6 字段策略表裁剪 —— **无权字段不返回**（不做打码）。
  *    页面出口即本层输出；导出 / 搜索 / 消息出口（lan 线）复用同一策略表，五出口同源（C3-08）。
- * 3) 写权限：stakeholder.manage 叠加目标项目 edit；有关联项目时逐个项目裁决，未关联任何项目时要求全部项目编辑。
- * 4) 留痕：建 / 改 / 删 / 关联 / 解除全部写审计（对象 = stakeholder；项目关联经 metadata.projectId 定位）。
+ * 3) 项目独立：每条记录必须且只能归属一个项目；同名联系人在不同项目是独立记录，不提供跨项目共享 / 追加关联 / 解除关联能力。
+ * 4) 写权限：stakeholder.manage 叠加所属项目 edit。
+ * 5) 留痕：建 / 改 / 删全部写审计（对象 = stakeholder）。
  */
 @Injectable()
 export class StakeholderService {
@@ -60,9 +71,15 @@ export class StakeholderService {
   async list(query: StakeholderListQuery, actorId: string): Promise<StakeholderListResponse> {
     const context = await this.prepareExportContext(actorId);
     const filter = buildStakeholderFilter(query);
+    if (!isStakeholderProjectFilterVisible(filter, context.visibility)) {
+      return { items: [], page: query.page, limit: query.limit, total: 0 };
+    }
     const sort = parseStakeholderSort(query.sort);
     const { rows, total } = await this.stakeholders.list(filter, context.visibility, sort, query.page, query.limit);
-    const links = await this.stakeholders.listProjects(rows.map((row) => row.id));
+    const links = visibleProjectLinks(
+      context.visibility,
+      await this.stakeholders.listProjects(rows.map((row) => row.id)),
+    );
     return {
       items: rows.map((row) => this.toStakeholder(context.authorization, row, links)),
       page: query.page,
@@ -77,13 +94,14 @@ export class StakeholderService {
    */
   async prepareExportContext(actorId: string): Promise<StakeholderExportContext> {
     const authorization = await this.permission.getAuthorization(actorId);
-    const visibility = stakeholderVisibility(authorization, await this.permission.projectScope(actorId));
+    const visibility = stakeholderVisibility(await this.permission.projectScope(actorId));
     return { authorization, visibility };
   }
 
   /** 导出专用总数：使用已解析的授权上下文，只查询一次 total。 */
   async countForExport(query: StakeholderListQuery, context: StakeholderExportContext): Promise<number> {
     const filter = buildStakeholderFilter(query);
+    if (!isStakeholderProjectFilterVisible(filter, context.visibility)) return 0;
     return this.stakeholders.countForExport(filter, context.visibility);
   }
 
@@ -93,28 +111,35 @@ export class StakeholderService {
     context: StakeholderExportContext,
   ): Promise<StakeholderListResponse["items"]> {
     const filter = buildStakeholderFilter(query);
+    if (!isStakeholderProjectFilterVisible(filter, context.visibility)) return [];
     const sort = parseStakeholderSort(query.sort);
     const rows = await this.stakeholders.listForExport(filter, context.visibility, sort, query.page, query.limit);
-    const links = await this.stakeholders.listProjects(rows.map((row) => row.id));
+    const links = visibleProjectLinks(
+      context.visibility,
+      await this.stakeholders.listProjects(rows.map((row) => row.id)),
+    );
     return rows.map((row) => this.toStakeholder(context.authorization, row, links));
   }
 
   /** GET /api/v1/stakeholders/{id}：不可见 / 已删除 404。 */
   async get(stakeholderId: string, actorId: string): Promise<Stakeholder> {
     const authorization = await this.permission.getAuthorization(actorId);
-    const visibility = stakeholderVisibility(authorization, await this.permission.projectScope(actorId));
+    const visibility = stakeholderVisibility(await this.permission.projectScope(actorId));
     const row = await this.requireVisible(stakeholderId, visibility, this.database.db);
-    const links = await this.stakeholders.listProjects([row.id]);
+    const links = visibleProjectLinks(visibility, await this.stakeholders.listProjects([row.id]));
     return this.toStakeholder(authorization, row, links);
   }
 
-  /** POST /api/v1/stakeholders（stakeholder.manage）：目标项目均须可编辑；同事务写审计 create。 */
+  /** POST /api/v1/stakeholders（stakeholder.manage）：所属项目须可编辑；同事务写审计 create。 */
   async create(body: StakeholderCreateBody, actorId: string): Promise<Stakeholder> {
     const projectIds = [...new Set(body.projectIds ?? [])];
+    if (projectIds.length !== 1) {
+      throw new AppError("VALIDATION_FAILED", "每条干系人记录必须且只能归属一个项目");
+    }
     await this.assertStakeholderWritable(
       actorId,
       projectIds,
-      "新增干系人需要关联项目的编辑权限；未关联项目时需要全部项目编辑权限",
+      "新增干系人需要所属项目的编辑权限",
     );
     const at = new Date();
     let createdId = "";
@@ -155,16 +180,16 @@ export class StakeholderService {
     return this.get(createdId, actorId);
   }
 
-  /** PATCH /api/v1/stakeholders/{id}（stakeholder.manage）：全部关联项目均须可编辑；字段级留痕。 */
+  /** PATCH /api/v1/stakeholders/{id}（stakeholder.manage）：所属项目须可编辑；字段级留痕。 */
   async update(stakeholderId: string, body: StakeholderUpdateBody, actorId: string): Promise<Stakeholder> {
     const authorization = await this.permission.getAuthorization(actorId);
-    const visibility = stakeholderVisibility(authorization, await this.permission.projectScope(actorId));
+    const visibility = stakeholderVisibility(await this.permission.projectScope(actorId));
     const current = await this.requireVisible(stakeholderId, visibility, this.database.db);
     const linkedProjectIds = (await this.stakeholders.listProjects([current.id])).map((link) => link.projectId);
     await this.assertStakeholderWritable(
       actorId,
       linkedProjectIds,
-      "更新干系人需要全部关联项目的编辑权限；未关联项目时需要全部项目编辑权限",
+      "更新干系人需要所属项目的编辑权限",
     );
     const at = new Date();
     await this.database.db.transaction(async (tx) => {
@@ -185,16 +210,16 @@ export class StakeholderService {
     return this.get(stakeholderId, actorId);
   }
 
-  /** DELETE /api/v1/stakeholders/{id}（stakeholder.manage）：全部关联项目均须可编辑；软删后关联保留。 */
+  /** DELETE /api/v1/stakeholders/{id}（stakeholder.manage）：所属项目须可编辑；软删后关联保留。 */
   async remove(stakeholderId: string, actorId: string): Promise<StakeholderDeleteResponse> {
     const authorization = await this.permission.getAuthorization(actorId);
-    const visibility = stakeholderVisibility(authorization, await this.permission.projectScope(actorId));
+    const visibility = stakeholderVisibility(await this.permission.projectScope(actorId));
     const current = await this.requireVisible(stakeholderId, visibility, this.database.db);
     const linkedProjectIds = (await this.stakeholders.listProjects([current.id])).map((link) => link.projectId);
     await this.assertStakeholderWritable(
       actorId,
       linkedProjectIds,
-      "删除干系人需要全部关联项目的编辑权限；未关联项目时需要全部项目编辑权限",
+      "删除干系人需要所属项目的编辑权限",
     );
     const at = new Date();
     await this.database.db.transaction(async (tx) => {
@@ -214,59 +239,7 @@ export class StakeholderService {
     return { id: stakeholderId, deleted: true };
   }
 
-  /** POST /api/v1/stakeholders/{id}/projects（A5-03）：目标项目须可编辑；幂等关联（已关联不重复写审计）。 */
-  async linkProject(stakeholderId: string, projectId: string, actorId: string): Promise<Stakeholder> {
-    const authorization = await this.permission.getAuthorization(actorId);
-    const visibility = stakeholderVisibility(authorization, await this.permission.projectScope(actorId));
-    await this.requireVisible(stakeholderId, visibility, this.database.db);
-    await this.assertStakeholderWritable(actorId, [projectId], "关联项目需要目标项目的编辑权限");
-    const at = new Date();
-    await this.database.db.transaction(async (tx) => {
-      const row = await this.requireVisible(stakeholderId, visibility, tx);
-      if (!(await this.stakeholders.projectExists(projectId, tx))) {
-        throw new AppError("NOT_FOUND", "项目不存在或已删除：" + projectId);
-      }
-      const inserted = await this.stakeholders.insertLink(stakeholderId, projectId, actorId, at, tx);
-      if (!inserted) return;
-      await this.audit.record(tx, {
-        actorId,
-        action: "update",
-        objectType: "stakeholder",
-        objectId: stakeholderId,
-        projectId,
-        summary: "关联项目：" + row.name + " → " + projectId,
-        changes: [{ field: "projects", from: null, to: projectId }],
-        metadata: { projectId, link: "added" },
-      });
-    });
-    return this.get(stakeholderId, actorId);
-  }
-
-  /** DELETE /api/v1/stakeholders/{id}/projects/{projectId}（A5-03）：目标项目须可编辑；未关联 404。 */
-  async unlinkProject(stakeholderId: string, projectId: string, actorId: string): Promise<Stakeholder> {
-    const authorization = await this.permission.getAuthorization(actorId);
-    const visibility = stakeholderVisibility(authorization, await this.permission.projectScope(actorId));
-    await this.requireVisible(stakeholderId, visibility, this.database.db);
-    await this.assertStakeholderWritable(actorId, [projectId], "解除项目关联需要该项目的编辑权限");
-    await this.database.db.transaction(async (tx) => {
-      const row = await this.requireVisible(stakeholderId, visibility, tx);
-      const removed = await this.stakeholders.deleteLink(stakeholderId, projectId, tx);
-      if (!removed) throw new AppError("NOT_FOUND", "该干系人未关联此项目：" + projectId);
-      await this.audit.record(tx, {
-        actorId,
-        action: "update",
-        objectType: "stakeholder",
-        objectId: stakeholderId,
-        projectId,
-        summary: "解除项目关联：" + row.name + " → " + projectId,
-        changes: [{ field: "projects", from: projectId, to: null }],
-        metadata: { projectId, link: "removed" },
-      });
-    });
-    return this.get(stakeholderId, actorId);
-  }
-
-  /** 干系人写权限：有关联项目时逐个项目要求 edit；无关联项目时要求全部项目编辑 + stakeholder.manage。 */
+  /** 干系人写权限：有项目归属时要求该项目 edit；无项目归属时要求全部项目编辑 + stakeholder.manage。 */
   private async assertStakeholderWritable(actorId: string, projectIds: readonly string[], message: string): Promise<void> {
     const uniqueProjectIds = [...new Set(projectIds)];
     if (uniqueProjectIds.length === 0) {
@@ -286,7 +259,12 @@ export class StakeholderService {
       await this.permission.assertCan(
         actorId,
         "stakeholder.manage",
-        { member: access.member, projectManager: access.projectManager, groupAccessLevel: access.groupAccessLevel },
+        {
+          member: access.member,
+          projectManager: access.projectManager,
+          groupAccessLevel: access.groupAccessLevel,
+          accessLevel: access.accessLevel,
+        },
         message,
       );
     }
@@ -297,7 +275,6 @@ export class StakeholderService {
     const row = await this.stakeholders.findById(stakeholderId, client);
     if (row === null) throw new AppError("NOT_FOUND", "干系人不存在：" + stakeholderId);
     if (visibility.kind === "all") return row;
-    if (row.createdBy !== null && row.createdBy === visibility.ownId) return row;
     if (visibility.projectIds.length > 0) {
       const links = await this.stakeholders.listProjects([row.id], client);
       if (links.some((link) => visibility.projectIds.includes(link.projectId))) return row;

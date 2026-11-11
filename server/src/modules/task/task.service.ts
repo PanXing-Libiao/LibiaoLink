@@ -39,7 +39,7 @@ import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
-import { PermissionService, taskCapabilitiesOf, type ProjectAccessContext } from "../permission/index.js";
+import { PermissionService, ProjectManagerEligibilityService, taskCapabilitiesOf, type ProjectAccessContext } from "../permission/index.js";
 import { TaskNodeRepository, TemplateService } from "../template/index.js";
 import { clampSortIndex } from "./task.order.js";
 import { parseTaskListFilter, parseTaskSort, type TaskListQueryInput } from "./task.query.js";
@@ -99,7 +99,7 @@ type TaskLockedFieldsAdjustBody = z.infer<typeof TaskLockedFieldsAdjustBodySchem
  */
 type TaskWriteRequest = Pick<
   TaskUpdateBody,
-  "title" | "titleEn" | "ownerIds" | "status" | "plannedStart" | "plannedEnd" | "estimatedDays" | "headcount" | "priority" | "deliverableTypes" | "note" | "sortIndex"
+  "title" | "titleEn" | "ownerIds" | "managerIds" | "status" | "plannedStart" | "plannedEnd" | "estimatedDays" | "headcount" | "priority" | "deliverableTypes" | "note" | "sortIndex"
 > & { expectedVersion: number | null };
 
 const EMPTY_FILE_SUMMARY: TaskFileSummaryCounts = { total: 0, draft: 0, final: 0 };
@@ -131,6 +131,7 @@ export class TaskService {
     private readonly audit: AuditService,
     private readonly nodes: TaskNodeRepository,
     private readonly templates: TemplateService,
+    private readonly managerEligibility: ProjectManagerEligibilityService,
   ) {}
 
   /**
@@ -223,6 +224,7 @@ export class TaskService {
     return {
       ...toTaskView(row.task, today, toChangeLinks(row.changeLinks)),
       ownerNames: row.ownerNames ?? [],
+      managerNames: row.managerNames ?? [],
       files: files.map((file) => ({
         id: file.id,
         name: file.name,
@@ -274,6 +276,8 @@ export class TaskService {
     }
     // 负责人缺省 = 「待分配」空数组（2026-09-24 业务口径：任务添加后负责人默认为空 —— 不再兜底项目经理；A23 的兜底口径据此修订）
     const ownerIds = body.ownerIds !== undefined ? body.ownerIds : [];
+    // 项目经理是项目级字段：创建任务始终沿用项目当前经理，不再接受任务级独立改派。
+    const managerIds = project.managerIds;
     const at = new Date();
     const row = await this.database.db.transaction(async (tx) => {
       if (nodeId !== null) {
@@ -303,6 +307,7 @@ export class TaskService {
           title,
           titleEn,
           ownerIds,
+          managerIds,
           sortIndex,
           plannedStart: body.plannedStart ?? null,
           plannedEnd: body.plannedEnd ?? null,
@@ -341,6 +346,7 @@ export class TaskService {
           { field: "stageKey", from: null, to: created.stageKey },
           { field: "title", from: null, to: created.title },
           { field: "ownerIds", from: null, to: created.ownerIds },
+          { field: "managerIds", from: null, to: created.managerIds },
           { field: "plannedEnd", from: null, to: created.plannedEnd },
         ].filter((change) => change.to !== null),
         metadata: sourceNodeId === null ? undefined : { sourceNodeId, source: "task_node" },
@@ -377,8 +383,9 @@ export class TaskService {
     if (picked.length === 0) {
       return { created: [], skipped: [] };
     }
-    // 同 create()：缺省 = 「待分配」（2026-09-24 业务口径）
+    // 同 create()：缺省 = 「待分配」（2026-09-24 业务口径）；项目经理缺省继承项目当前经理。
     const ownerIds = body.ownerIds !== undefined ? body.ownerIds : [];
+    const managerIds = project.managerIds;
     const stageKey = template.stageKey as string;
     const at = new Date();
     const today = shanghaiToday(at);
@@ -411,6 +418,7 @@ export class TaskService {
             title: node.title,
             titleEn: node.titleEn,
             ownerIds,
+            managerIds,
             sortIndex: base + index,
             plannedStart: null,
             plannedEnd: null,
@@ -448,6 +456,7 @@ export class TaskService {
             { field: "stageKey", from: null, to: row.stageKey },
             { field: "title", from: null, to: row.title },
             { field: "ownerIds", from: null, to: row.ownerIds },
+            { field: "managerIds", from: null, to: row.managerIds },
           ].filter((change) => change.to !== null),
           metadata: { sourceNodeId: node.nodeId, templateId: template.id, templateName: template.name, kind: "from_template" },
         });
@@ -464,13 +473,19 @@ export class TaskService {
    * 乐观锁 + 字段留痕。ownerIds 显式 [] = 「待分配」；sortIndex = 移到该组第 N 位（越界 = 组尾）。
    */
   async update(projectId: string, taskId: string, body: TaskUpdateBody, actorId: string): Promise<Task> {
-    await this.loadProjectForWrite(projectId);
+    const project = await this.loadProjectForWrite(projectId);
     const access = await this.permission.assertProjectVisible(actorId, projectId);
+    // 项目经理不是单条任务的独立字段：任务表 / 抽屉入口传入 managerIds 时，按项目级名单整体替换，
+    // 成功后再把项目名单同步到同项目全部任务（当前任务由 applyUpdate 在同一事务写快照）。
+    const nextManagerIds = body.managerIds;
+    if (nextManagerIds !== undefined) {
+      await this.managerEligibility.assertAssignable(nextManagerIds, { existingUserIds: project.managerIds });
+    }
     const at = new Date();
     const today = shanghaiToday(at);
     const row = await this.runCompletionGuarded(actorId, taskId, () =>
-      this.database.db.transaction((tx) =>
-        this.applyUpdate(
+      this.database.db.transaction(async (tx) => {
+        const updated = await this.applyUpdate(
           tx,
           projectId,
           taskId,
@@ -480,6 +495,7 @@ export class TaskService {
             titleEn: body.titleEn,
             sortIndex: body.sortIndex,
             ownerIds: body.ownerIds,
+            managerIds: body.managerIds,
             status: body.status,
             plannedStart: body.plannedStart,
             plannedEnd: body.plannedEnd,
@@ -495,8 +511,24 @@ export class TaskService {
           null,
           access,
           true,
-        ),
-      ),
+        );
+        if (nextManagerIds !== undefined) {
+          await this.repository.replaceProjectManagersExceptTask(projectId, taskId, nextManagerIds, at, tx);
+          if (nextManagerIds.join("\u0000") !== project.managerIds.join("\u0000")) {
+            await this.audit.record(tx, {
+              actorId,
+              action: "update",
+              objectType: "project",
+              objectId: projectId,
+              projectId,
+              summary: "修改项目级项目经理（任务表入口）",
+              changes: [{ field: "managerIds", from: project.managerIds, to: nextManagerIds }],
+              metadata: { entry: "task_managers", scope: "project" },
+            });
+          }
+        }
+        return updated;
+      }),
     );
     return toTaskView(row, today, await this.changeLinksOf(row));
   }
@@ -788,9 +820,13 @@ export class TaskService {
       const capabilities = this.assertTaskWriteAllowed(actorId, projectAccess, before, allowTaskOwner);
       const ownersChanged =
         request.ownerIds !== undefined && request.ownerIds.join("\u0000") !== before.ownerIds.join("\u0000");
+      const managersTouched = request.managerIds !== undefined;
       const sortChanged = request.sortIndex !== undefined && request.sortIndex !== before.sortIndex;
-      if (capabilities.source === "task_owner" && (ownersChanged || sortChanged)) {
-        throw new AppError("FORBIDDEN", "任务负责人不能修改负责人或任务排序");
+      if (capabilities.source === "task_owner" && (ownersChanged || managersTouched || sortChanged)) {
+        throw new AppError("FORBIDDEN", "任务负责人不能修改负责人、项目经理或任务排序");
+      }
+      if (managersTouched) {
+        await this.managerEligibility.assertAssignable(request.managerIds!, { existingUserIds: before.managerIds });
       }
     }
     this.assertTaskMutable(before);
@@ -825,6 +861,7 @@ export class TaskService {
       title: request.title !== undefined ? request.title : before.title,
       titleEn: request.titleEn !== undefined ? request.titleEn : before.titleEn,
       ownerIds: request.ownerIds !== undefined ? request.ownerIds : before.ownerIds,
+      managerIds: request.managerIds !== undefined ? request.managerIds : before.managerIds,
       status: linked === null ? before.status : linked.status,
       statusOverride: linked === null ? before.statusOverride : linked.statusOverride,
       progress: String(linked === null ? current.progress : linked.progress),
@@ -1434,6 +1471,7 @@ function taskAuditSnapshot(row: {
   title: string;
   titleEn: string | null;
   ownerIds: string[];
+  managerIds: string[];
   status: string;
   statusOverride: string | null;
   progress: string | number;
@@ -1451,6 +1489,7 @@ function taskAuditSnapshot(row: {
     title: row.title,
     titleEn: row.titleEn,
     ownerIds: row.ownerIds,
+    managerIds: row.managerIds,
     status: row.status,
     statusOverride: row.statusOverride,
     progress: Number(row.progress),
@@ -1486,6 +1525,7 @@ function toTaskView(row: TaskRow, today: string, changeLinks: Task["changeLinks"
     title: row.title,
     titleEn: row.titleEn,
     ownerIds: row.ownerIds,
+    managerIds: row.managerIds,
     status: row.status as Task["status"],
     displayStatus: deriveDisplayStatus(input),
     progress: normalizeProgress(Number(row.progress)),
@@ -1512,6 +1552,7 @@ function toListItem(row: TaskListRow, fileSummary: TaskFileSummaryCounts, today:
   return {
     ...toTaskView(row.task, today, toChangeLinks(row.changeLinks)),
     ownerNames: row.ownerNames ?? [],
+    managerNames: row.managerNames ?? [],
     fileSummary,
   };
 }

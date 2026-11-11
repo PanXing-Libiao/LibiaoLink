@@ -47,7 +47,7 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
  * 日报接口（M6-01 / M6-02 · S6·report-issue）：契约 shared/src/modules/reports.ts。
  * 路径为**项目嵌套**（/projects/{id}/reports）—— ProjectAccessGuard 以 :id 解析项目上下文（记录级 404 + 权限位），
  * 契约提案 A21 的扁平路径（/reports/{id}）在守卫下拿不到项目上下文，差异已登记（前端功能需求.md §3.8 A21）。
- * 权限：读 report.view、写 report.fill（均项目成员平权，见 permission.rules PROJECT_MEMBER_IMPLIED_KEYS）。
+ * 权限：读 report.view 由项目成员关系放行；写 report.fill 要求当前项目 accessLevel=edit。
  */
 @Controller("api/v1/projects")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
@@ -147,7 +147,7 @@ export class ReportController {
 
 /**
  * 问题接口（M6-02 / M6-03 · A3-10 ~ A3-13）：契约 shared/src/modules/issues.ts。
- * 路径同为项目嵌套；读 issue.view、写 issue.manage（成员平权）；三态（Push 215）允许回退且留痕，一次更新写一条事件。
+ * 路径同为项目嵌套；读 issue.view 由项目成员关系放行，写 issue.manage 要求当前项目 accessLevel=edit；三态（Push 215）允许回退且留痕，一次更新写一条事件。
  */
 @Controller("api/v1/projects")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)

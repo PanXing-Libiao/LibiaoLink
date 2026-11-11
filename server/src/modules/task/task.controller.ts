@@ -45,7 +45,7 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 /**
  * 任务接口（h4 · S6·task）：契约 shared/src/modules/tasks.ts。
  * summary 挂 /projects/{id}/summary（项目总览四格，数据来源为任务派生；M3 契约已入、随本卡落地）。
- * 读要求登录 + 记录级可见（非成员 404，h6）；写接口按矩阵键判定（成员平权项在 PROJECT_MEMBER_IMPLIED_KEYS）；
+ * 读要求登录 + 记录级可见（非成员 404，h6）；单任务写能力由 taskCapabilitiesOf 逐任务裁决，成员关系只读；
  * 「手工创建仅管理员」仍是 TaskService 内的业务口径。
  */
 @Controller("api/v1/projects")

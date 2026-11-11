@@ -223,13 +223,9 @@ type TaskKanbanProps = {
   focusTaskId?: string | null;
   /** 关闭深链抽屉后回写地址，去掉 `?task=`。 */
   onFocusClosed?: () => void;
-  /** 项目经理展示文本（项目级字段，多位按「、」连接；任务详情抽屉展示用）。 */
-  managers: string;
-  /** 项目经理 id 名单（任务详情抽屉里「项目经理」字段的当前选中项，Push 136）。 */
-  managerIds: string[];
   /** 当前账号是否可对指定任务定档 / 取消定档：吃服务端逐任务能力。 */
   canFinalizeTask?: (task: ProjectTask) => boolean;
-  /** 项目经理是项目级字段：仅项目编辑者可改。 */
+  /** 项目经理是项目级字段：仅项目编辑者可改，修改后同步整个项目。 */
   canEditManagers?: boolean;
   /** 卡片拖拽会改负责人 / 状态 / 排序，仅项目编辑者启用。 */
   canDragTasks?: boolean;
@@ -257,8 +253,10 @@ type TaskKanbanProps = {
   onSetStatus?: (taskId: string, status: TaskStatus) => void;
   /** 卡片 / 抽屉里改实际完成日期（填 = 完成、清 = 退回进行中）。 */
   onSetActualEnd?: (taskId: string, iso: string) => void;
-  /** 人员目录（负责人列头 / 卡片头像 / 两个多选共用）。 */
+  /** 完整人员目录（负责人列头 / 卡片头像 / 任务负责人多选）。 */
   members: readonly Member[];
+  /** 项目经理候选（有效项目部成员 ∪ 系统管理员）：抽屉项目经理多选专用。 */
+  managerMembers: readonly Member[];
   /**
    * 看板列内顺序（Push 105）：卡片被放到某两格之间时回调 —— `beforeTaskId` = 插到这张任务前面；
    * 落在列尾时 `beforeTaskId` 为 null、改用 `afterTaskId`（这一列的最后一张）；两个都为 null = 目标列本来就没有别的卡片，
@@ -824,7 +822,7 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, managers, managerIds, canFinalizeTask, canEditManagers = false, canDragTasks = false, customDeliverableTypes = [], onCreateDeliverableType, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, canFinalizeTask, canEditManagers = false, canDragTasks = false, customDeliverableTypes = [], onCreateDeliverableType, members, managerMembers, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
   const t = useT();
   /**
    * 任务详情抽屉选中的任务 id（Push 196 由对象改存 id）：点卡片与「建完临时任务」都先落 id，抽屉按 id 从最新列表取行 ——
@@ -1234,11 +1232,10 @@ export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, man
       )}
       <TaskDrawer
         task={drawerTask}
-        managers={managers}
-        managerIds={managerIds}
         canFinalize={drawerTask !== null && canFinalizeTask?.(drawerTask) === true}
         canEditManagers={canEditManagers}
         members={members}
+        managerMembers={managerMembers}
         customDeliverableTypes={customDeliverableTypes}
         onCreateDeliverableType={onCreateDeliverableType}
         onSubmit={onSubmitTaskEdit}

@@ -54,7 +54,7 @@ export const StakeholderSchema = z
     role: z.string().nullable().openapi({ description: "干系人角色（A5-01 · Push 225 增列）；自由文本，未登记字段级策略 —— 与姓名 / 公司分类同档：登录且可见即返回，空为 null" }),
     createdBy: UuidSchema.nullable().openapi({ description: "录入人 users.id（A5-04 销售端口）；系统导入为空" }),
     createdByName: z.string().nullable().openapi({ description: "录入人显示名（清单「填写者」列）" }),
-    projects: z.array(StakeholderProjectRefSchema).openapi({ description: "关联项目（A5-03）；按干系人反查" }),
+    projects: z.array(StakeholderProjectRefSchema).max(1).openapi({ description: "所属项目（一期单项目归属；数组为前端兼容，最多 1 项）" }),
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema.openapi({ description: "最近更新时间（A5-01「最近更新时间」）" }),
   })
@@ -72,7 +72,7 @@ export const StakeholderCreateBodySchema = z
     email: z.string().max(120).optional().openapi({ description: "邮箱（格式校验在服务端软校验，避免历史数据误拦）" }),
     remark: z.string().min(1).max(500).optional(),
     role: z.string().min(1).max(80).optional().openapi({ description: "干系人角色；不传则空" }),
-    projectIds: z.array(UuidSchema).max(50).optional().openapi({ description: "建台账时一并关联的项目（A5-03）；项目不存在 404" }),
+    projectIds: z.array(UuidSchema).min(1).max(1).openapi({ description: "所属项目：每条干系人记录必须且只能归属一个项目；项目不存在 404" }),
   })
   .openapi("StakeholderCreateBody", { description: "新增干系人：变更写审计留痕（对象 = stakeholder）；判重提示（姓名 + 手机号）随批量导入（A5-05，lan 线 M8-01）落地，本切片不阻断" });
 
@@ -101,11 +101,6 @@ export const StakeholderListQuerySchema = PageQuerySchema.extend({
 
 export const StakeholderListResponseSchema = paginated(StakeholderSchema).openapi("StakeholderListResponse");
 
-/** 关联项目（A5-03）：幂等 —— 已关联再关返回同一结果，不重复写审计。 */
-export const StakeholderProjectLinkBodySchema = z
-  .object({ projectId: UuidSchema.openapi({ description: "目标项目 projects.id；不存在或已软删 404" }) })
-  .openapi("StakeholderProjectLinkBody", { description: "把干系人关联到项目（幂等）；需 stakeholder.manage 且干系人可见" });
-
 export type StakeholderProjectRef = z.infer<typeof StakeholderProjectRefSchema>;
 
 /** 删除响应：软删只回标记，不回整行（前端列表本地移除即可）。 */
@@ -117,5 +112,4 @@ export type StakeholderCreateBody = z.infer<typeof StakeholderCreateBodySchema>;
 export type StakeholderUpdateBody = z.infer<typeof StakeholderUpdateBodySchema>;
 export type StakeholderListQuery = z.infer<typeof StakeholderListQuerySchema>;
 export type StakeholderListResponse = z.infer<typeof StakeholderListResponseSchema>;
-export type StakeholderProjectLinkBody = z.infer<typeof StakeholderProjectLinkBodySchema>;
 export type StakeholderDeleteResponse = z.infer<typeof StakeholderDeleteResponseSchema>;

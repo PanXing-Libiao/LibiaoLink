@@ -95,6 +95,19 @@ export const GroupAccessMemberSchema = z
 
 export type GroupAccessMember = z.infer<typeof GroupAccessMemberSchema>;
 
+/** 自动项目角色（实时由项目 / 任务关系计算；页面只读，不能手工撤销）。 */
+export const GroupAccessAutomaticRoleSchema = z
+  .object({
+    userId: UuidSchema,
+    projectManagerProjectIds: z.array(UuidSchema).openapi({ description: "项目经理项目：projects.manager_ids 或 project_members.role_in_project=project_manager" }),
+    projectMemberProjectIds: z.array(UuidSchema).openapi({ description: "项目名册成员项目（不含项目经理记录）" }),
+    taskOwnerProjectIds: z.array(UuidSchema).openapi({ description: "至少负责一条未删除任务的项目" }),
+    taskOwnerTaskCount: z.number().int().min(0).openapi({ description: "负责的未删除任务总数" }),
+  })
+  .openapi("GroupAccessAutomaticRole", { description: "自动项目角色：由项目和任务数据实时生成，随人员关系与任务分配自动变化" });
+
+export type GroupAccessAutomaticRole = z.infer<typeof GroupAccessAutomaticRoleSchema>;
+
 export const GroupAccessRuleInputSchema = z
   .object({
     groupKey: z.string().trim().min(1).max(200).openapi({ example: "libiaorobot.com/项目部" }),
@@ -256,8 +269,9 @@ export const GroupAccessOverviewSchema = z
     admins: z.array(GroupAccessAdminSchema).openapi({ description: "当前生效的系统管理员名单（环境配置 / 手工添加）" }),
     groups: z.array(GroupAccessGroupSchema),
     projects: z.array(GroupAccessProjectSchema),
+    automaticRoles: z.array(GroupAccessAutomaticRoleSchema).openapi({ description: "自动项目角色（项目经理 / 项目成员 / 任务负责人）；按用户聚合，项目或任务关系变化后随接口实时更新" }),
   })
-  .openapi("GroupAccessOverview", { description: "权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目；无部门账号汇总在虚拟未分组节点" });
+  .openapi("GroupAccessOverview", { description: "权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树、项目与自动项目角色；无部门账号汇总在虚拟未分组节点" });
 
 export type GroupAccessOverview = z.infer<typeof GroupAccessOverviewSchema>;
 

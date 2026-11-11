@@ -8,6 +8,7 @@ import { PermissionController } from "./permission.controller.js";
 import { PermissionRepository } from "./permission.repository.js";
 import { PermissionService } from "./permission.service.js";
 import { ProjectAccessGuard } from "./project-access.guard.js";
+import { ProjectManagerEligibilityService } from "./project-manager-eligibility.service.js";
 
 /**
  * permission 模块（领域 · h6 · PoC-6）：ADR-011 策略服务落地形态 ——
@@ -24,7 +25,8 @@ import { ProjectAccessGuard } from "./project-access.guard.js";
     GroupAccessGuard,
     GroupAccessAdminGuard,
     GroupAccessService,
+    ProjectManagerEligibilityService,
   ],
-  exports: [PermissionService, ProjectAccessGuard, GroupAccessGuard, GroupAccessAdminGuard],
+  exports: [PermissionService, ProjectAccessGuard, GroupAccessGuard, GroupAccessAdminGuard, ProjectManagerEligibilityService],
 })
 export class PermissionModule {}

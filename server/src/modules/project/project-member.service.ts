@@ -4,6 +4,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { AuditService } from "../admin/index.js";
 import { UserService } from "../identity/index.js";
+import { ProjectManagerEligibilityService } from "../permission/index.js";
 import { ProjectMemberRepository, type ProjectMemberViewRow } from "./project-member.repository.js";
 import { ProjectRepository } from "./project.repository.js";
 
@@ -36,6 +37,7 @@ export class ProjectMemberService {
     private readonly database: DatabaseService,
     private readonly members: ProjectMemberRepository,
     private readonly projects: ProjectRepository,
+    private readonly managerEligibility: ProjectManagerEligibilityService,
     private readonly users: UserService,
     private readonly audit: AuditService,
   ) {}
@@ -52,6 +54,16 @@ export class ProjectMemberService {
     this.assertWritable(project.project.status);
     const user = await this.users.getUser(body.userId);
     const roleInProject = body.roleInProject ?? "project_member";
+    if (roleInProject === "project_manager") {
+      const existing = await this.members.findByProjectAndUser(projectId, body.userId);
+      const existingManagerIds = [
+        ...project.project.managerIds,
+        ...(existing?.member.roleInProject === "project_manager" ? [body.userId] : []),
+      ];
+      await this.managerEligibility.assertAssignable([body.userId], {
+        existingUserIds: existingManagerIds,
+      });
+    }
     const at = new Date();
     await this.database.db.transaction(async (tx) => {
       await this.members.upsert(projectId, body.userId, roleInProject, at, tx);

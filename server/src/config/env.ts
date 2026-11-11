@@ -36,6 +36,11 @@ export const EnvSchema = z
     GROUP_ACCESS_ADMIN_GROUP_KEYS: z.string().default(""),
     /** 权限管理员用户 ID 白名单（逗号分隔；用于不属于管理员部门的指定账号，如 panxing）。 */
     GROUP_ACCESS_ADMIN_USER_IDS: z.string().default(""),
+    /**
+     * 可担任项目经理的部门名称（逗号 / 中文逗号分隔）：默认同时识别正式机 Project Dept 与测试机项目部；
+     * 匹配部门及其全部子部门，最终校验仍按部门同步得到的 Casdoor group_key。
+     */
+    PROJECT_MANAGER_DEPARTMENT_NAMES: z.string().default("Project Dept,项目部"),
     // ---- 对象存储（ADR-006：S3 协议抽象 + 一期 MinIO 单节点；本地沙箱见 deploy/minio/） ----
     S3_ENDPOINT: z.string().min(1).default("http://127.0.0.1:9000"),
     S3_REGION: z.string().min(1).default("us-east-1"),

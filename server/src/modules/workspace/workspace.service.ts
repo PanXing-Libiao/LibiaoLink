@@ -110,6 +110,8 @@ function toTaskItem(
     titleEn: row.titleEn,
     ownerIds: row.ownerIds,
     ownerNames: row.ownerNames ?? [],
+    managerIds: row.managerIds,
+    managerNames: row.managerNames ?? [],
     status: row.status as WorkspaceTaskItem["status"],
     displayStatus: deriveDisplayStatus(input),
     progress: normalizeProgress(Number(row.progress)),

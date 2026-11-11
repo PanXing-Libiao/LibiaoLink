@@ -58,6 +58,10 @@ export type ProjectTask = {
   ownerIds: string[];
   /** 负责人姓名（契约 ownerNames；与 ownerIds 同下标，服务端取不到姓名的那位回落「—」）。 */
   owners: string[];
+  /** 当前项目的项目经理 id（项目级字段：任务行与项目卡一致，同项目所有任务相同）。 */
+  managerIds: string[];
+  /** 当前项目的项目经理姓名（与 managerIds 同下标；取不到姓名回落「—」）。 */
+  managers: string[];
   /** 服务端展示态（契约 displayStatus）—— 前端直接渲染，不再本地派生。 */
   status: TaskStatus;
   progress: number;

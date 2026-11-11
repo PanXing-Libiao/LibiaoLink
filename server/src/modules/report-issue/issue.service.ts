@@ -44,7 +44,7 @@ function issueSnapshot(row: IssueRow): Record<string, unknown> {
  * 3) 关闭 = state=done 且 closed_at / closed_by 同写；回退（done → 其它态）一并清空（ck_issues_closed_pairs）；
  * 4) 空更新（无任何字段变化）= 400，防刷留痕；乐观锁 version 冲突 409；归档项目 409 PROJECT_ARCHIVED；
  * 5) 附图（file_links(object_type=issue)）整体替换；删除为成对删除（删问题 = 连它来源的那篇日报及其全部问题）。
- * 权限：读 = issue.view（成员平权）；写 = issue.manage（成员平权，见 permission.rules 平权例外）。
+ * 权限：读 = issue.view；写 = issue.manage，且要求当前项目 accessLevel=edit。
  */
 @Injectable()
 export class IssueService {

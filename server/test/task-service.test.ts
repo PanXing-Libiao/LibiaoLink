@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
-import type { PermissionService } from "../src/modules/permission/index.js";
+import type { PermissionService, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type {
   TaskChangeLinkRow,
@@ -38,6 +38,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     title: "货架组装",
     titleEn: null,
     ownerIds: [MANAGER],
+    managerIds: [MANAGER],
     status: "pending",
     statusOverride: null,
     progress: "0",
@@ -103,6 +104,7 @@ class FakeTaskRepository {
       : {
           task: this.task,
           ownerNames: ["张三"],
+          managerNames: ["经理"],
           changeLinks: this.changeLinks,
         };
   }
@@ -146,7 +148,7 @@ class FakeTaskRepository {
   shifted: { from: number; to: number | null; delta: number }[] = [];
 
   async insert(input: TaskInsertInput): Promise<TaskRow> {
-    const row = makeRow({ id: TASK, status: "pending", progress: "0", version: 0, title: input.title, stageKey: input.stageKey, nodeId: input.nodeId, ownerIds: input.ownerIds, sortIndex: input.sortIndex });
+    const row = makeRow({ id: TASK, status: "pending", progress: "0", version: 0, title: input.title, stageKey: input.stageKey, nodeId: input.nodeId, ownerIds: input.ownerIds, managerIds: input.managerIds, sortIndex: input.sortIndex });
     this.inserted = row;
     return row;
   }
@@ -158,6 +160,7 @@ class FakeTaskRepository {
       title: patch.title !== undefined ? patch.title : current.title,
       titleEn: patch.titleEn !== undefined ? patch.titleEn : current.titleEn,
       ownerIds: patch.ownerIds !== undefined ? patch.ownerIds : current.ownerIds,
+      managerIds: patch.managerIds !== undefined ? patch.managerIds : current.managerIds,
       status: patch.status ?? current.status,
       statusOverride: patch.statusOverride !== undefined ? patch.statusOverride : current.statusOverride,
       progress: patch.progress ?? current.progress,
@@ -181,6 +184,7 @@ class FakeTaskRepository {
   async insertEvents(_tx: DbClient, events: readonly TaskEventInput[]): Promise<void> {
     this.events.push(...events);
   }
+  async syncProjectManagerIdsFromTasks(_projectId: string, _at: Date): Promise<void> {}
   async touchProject(projectId: string): Promise<void> {
     this.touched.push(projectId);
   }
@@ -312,6 +316,7 @@ function makeService(
     audit as unknown as AuditService,
     {} as unknown as TaskNodeRepository,
     {} as unknown as TemplateService,
+    { assertAssignable: async () => {} } as unknown as ProjectManagerEligibilityService,
   );
 }
 
@@ -1010,7 +1015,7 @@ describe("任务定档角色权限（Pro 逐人权限）", () => {
 describe("任务导出专用读取（P3）", () => {
   it("不查询 total，也不补附件摘要；总数查询单独且只走导出接口", async () => {
     const repo = new FakeTaskRepository();
-    repo.listRowsForExport = [{ task: makeRow(), ownerNames: ["张三"], changeLinks: [] }];
+    repo.listRowsForExport = [{ task: makeRow(), ownerNames: ["张三"], managerNames: ["经理"], changeLinks: [] }];
     const service = makeService(repo);
 
     const items = await service.listForExport(PROJECT, { page: 1, limit: 1_000 });
@@ -1043,6 +1048,9 @@ describe("Pro 逐人权限：任务负责人只能编辑本人任务", () => {
 
     await expect(
       service.update(PROJECT, TASK, { ownerIds: [MANAGER_2], version: updated.version }, ACTOR),
+    ).rejects.toMatchObject({ code: "FORBIDDEN", httpStatus: 403 });
+    await expect(
+      service.update(PROJECT, TASK, { managerIds: [MANAGER_2], version: updated.version }, ACTOR),
     ).rejects.toMatchObject({ code: "FORBIDDEN", httpStatus: 403 });
     await expect(
       service.update(PROJECT, TASK, { sortIndex: 2, version: updated.version }, ACTOR),

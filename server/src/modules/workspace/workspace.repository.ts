@@ -48,6 +48,9 @@ export interface WorkspaceTaskRow {
   updatedAt: Date;
   ownerIds: string[];
   ownerNames: (string | null)[] | null;
+  /** 项目级项目经理展示快照（任务行只读；工作台与项目页共用同一名单）。 */
+  managerIds: string[];
+  managerNames: (string | null)[] | null;
   /** 变更关联（A1-07 / R01 多条；口径与 task 模块 CHANGE_LINKS_SQL 同源，本模块为只读副本）。 */
   changeLinks: TaskChangeLinkRow[];
   /** 随行文件摘要（口径与 task 模块 fileSummaries 同源：排除回收站；final 计 final + changed）。 */
@@ -110,6 +113,13 @@ const OWNER_NAMES_SQL = sql<(string | null)[] | null>`(
   select array_agg(u.display_name order by o.ord)
   from unnest(${tasks.ownerIds}) with ordinality as o(uid, ord)
   left join ${users} u on u.id = o.uid
+)`;
+
+/** 项目级项目经理姓名快照数组（与 tasks.manager_ids 同下标；缺失用户该位为 null）。 */
+const TASK_MANAGER_NAMES_SQL = sql<(string | null)[] | null>`(
+  select array_agg(u.display_name order by m.ord)
+  from unnest(${tasks.managerIds}) with ordinality as m(uid, ord)
+  left join ${users} u on u.id = m.uid
 )`;
 
 /** 变更关联（口径与 task 模块 CHANGE_LINKS_SQL 同源，本模块为只读副本）。 */
@@ -205,6 +215,8 @@ export class WorkspaceRepository {
         updatedAt: tasks.updatedAt,
         ownerIds: tasks.ownerIds,
         ownerNames: OWNER_NAMES_SQL,
+        managerIds: tasks.managerIds,
+        managerNames: TASK_MANAGER_NAMES_SQL,
         changeLinks: CHANGE_LINKS_SQL,
       })
       .from(tasks)

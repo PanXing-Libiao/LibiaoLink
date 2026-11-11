@@ -15,3 +15,21 @@ export type Member = {
   /** 副标题（用户目录接线口径 = 工号 username）。 */
   handle: string;
 };
+
+/**
+ * 候选名单 + 当前已有关联人员：用于历史项目经理兼容。
+ * 新选仍只能落在 candidates；existingIds 只负责让存量经理保留姓名、选中态和可移除入口。
+ */
+export function memberOptionsWithExisting(
+  candidates: readonly Member[],
+  existingIds: readonly string[],
+  directory: readonly Member[],
+): Member[] {
+  const byId = new Map(candidates.map((member) => [member.id, member]));
+  for (const id of existingIds) {
+    if (byId.has(id)) continue;
+    const historical = directory.find((member) => member.id === id);
+    if (historical !== undefined) byId.set(id, historical);
+  }
+  return Array.from(byId.values());
+}

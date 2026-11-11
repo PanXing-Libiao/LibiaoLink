@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { AuditService } from "../src/modules/admin/index.js";
 import { AppError } from "../src/common/errors/app-error.js";
 import type { DatabaseService } from "../src/db/database.service.js";
-import type { PermissionService } from "../src/modules/permission/index.js";
+import type { PermissionService, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
 import type { TaskInsertInput, TaskProjectRow, TaskRepository, TaskRow } from "../src/modules/task/task.repository.js";
 import { TaskService } from "../src/modules/task/task.service.js";
@@ -46,6 +46,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     title: "货架组装",
     titleEn: null,
     ownerIds: [MANAGER],
+    managerIds: [MANAGER],
     status: "pending",
     statusOverride: null,
     progress: "0",
@@ -121,10 +122,12 @@ class FakeTaskRepository {
       title: input.title,
       titleEn: input.titleEn,
       ownerIds: input.ownerIds,
+      managerIds: input.managerIds,
       sortIndex: input.sortIndex,
       priority: input.priority,
     });
   }
+  async syncProjectManagerIdsFromTasks(_projectId: string, _at: Date): Promise<void> {}
   async touchProject(projectId: string): Promise<void> {
     this.touched.push(projectId);
   }
@@ -206,6 +209,7 @@ function makeService(
     audit as unknown as AuditService,
     nodes as unknown as TaskNodeRepository,
     templates as unknown as TemplateService,
+    { assertAssignable: async () => {} } as unknown as ProjectManagerEligibilityService,
   );
   return { service, audit, database };
 }

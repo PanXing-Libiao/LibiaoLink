@@ -49,7 +49,7 @@ export const stakeholders = pgTable(
   ],
 );
 
-/** 干系人 ↔ 项目 多对多（A5-03）：联合唯一防重复关联；两侧反查索引。 */
+/** 干系人所属项目：每条记录只归属一个项目，同一个人可在不同项目有独立记录；联合唯一 + 记录唯一双约束。 */
 export const projectStakeholders = pgTable(
   "project_stakeholders",
   {
@@ -62,6 +62,6 @@ export const projectStakeholders = pgTable(
   (table) => [
     unique("uq_project_stakeholders").on(table.projectId, table.stakeholderId),
     index("ix_project_stakeholders_project").on(table.projectId),
-    index("ix_project_stakeholders_stakeholder").on(table.stakeholderId),
+    unique("uq_project_stakeholders_stakeholder").on(table.stakeholderId),
   ],
 );

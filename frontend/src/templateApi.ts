@@ -2,10 +2,10 @@
  * 任务节点库 / 任务模板接口封装（M3-05 余 · 第一段接线 + 第二段模板落库）：契约 shared/src/modules/templates.ts。
  * - 列表 GET /api/v1/task-nodes?stage=<九阶段 key>（任务模板页左列与「添加任务」卡片的「任务节点」标签同源）
  * - 新增 POST /api/v1/task-nodes（写 = 系统管理员 / 部门编辑账号；同阶段同名 409 NODE_ALREADY_EXISTS）
- * - 编辑 PATCH /api/v1/task-nodes/{id}（写 = blueprint.manage；乐观锁 version 必传：过期 409 VERSION_CONFLICT）
+ * - 编辑 PATCH /api/v1/task-nodes/{id}（写 = 节点库维护权（系统管理员或有效项目经理）；乐观锁 version 必传：过期 409 VERSION_CONFLICT）
  * - 删除 DELETE /api/v1/task-nodes/{id}（写 = blueprint.manage；物理删行 + 审计留痕；已生成的项目任务不受影响）
  * 任务模板（第二段 · Push 182）：GET/POST /api/v1/task-templates、PATCH/DELETE /api/v1/task-templates/{id}
- *   —— 写同样 = blueprint.manage；PATCH 是「改名 + nodeIds 全量替换」，version 乐观锁必传；DELETE 是软删（带 version）。
+ *   —— 写同样 = 公共模板维护权（新建：管理员或有效项目经理；编辑 / 删除：创建人或管理员）；PATCH 是「改名 + nodeIds 全量替换」，version 乐观锁必传；DELETE 是软删（带 version）。
  * 阶段名（界面板块）↔ 阶段 key 的换算复用 taskApi 的 stageKeyOfName（同一份九阶段字典，避免两处各写一份）。
  * 注意：任务侧还没有「节点库来源」字段（契约 taskNodeId 现解析为项目流程节点），
  * 「已添加」一律按「同阶段同名」折算（见 data/tasks.ts 的 addedNodeKeysOf）。
@@ -182,7 +182,7 @@ export async function deleteTaskTemplate(id: string, version: number): Promise<{
 /** 模板写入失败的统一文案（409 VERSION_CONFLICT / 403 FORBIDDEN 等；服务端仍是最终裁决）。 */
 export function templateWriteMessage(error: { code: string; message: string }): string {
   if (error.code === "FORBIDDEN") {
-    return "维护任务模板需要编辑权限";
+    return "仅模板创建人或系统管理员可以维护该模板";
   }
   if (error.code === "VERSION_CONFLICT") {
     return "此份模板已被他人改过";

@@ -72,7 +72,6 @@ const FALLBACK_TASK_COLUMNS = resolveColumns({});
 const FALLBACK_TASK_GRID = tableGridTemplate(FALLBACK_TASK_COLUMNS);
 const FALLBACK_TASK_MIN_W = tableMinWidth(FALLBACK_TASK_COLUMNS);
 /** 任务列表不带「项目经理」行内编辑（只读文本）：managerIds 占位同一份空数组（免得每行新建一个）。 */
-const NO_MANAGER_IDS: string[] = [];
 
 /**
  * 左表列宽 / 行高：左表与时间轴靠这一组常量逐行对齐。**列宽固定、不随可见宽度变** ——
@@ -590,7 +589,7 @@ function GanttLockIcon({ locked }: { locked: boolean }) {
  * 传了 onPatchTask / onSetProgress 就能拖动改期 / 改进度（不传 = 拖动照常预览、松手不写回）。
  * members = 人员目录（负责人筛选项的成员行渲染）。
  */
-export function GanttChart({ tasks, members, managers = "", tierTint = false, onPatchTask, onSetProgress }: { tasks: readonly ProjectTask[]; members: readonly Member[]; /** 项目经理展示文本（项目级；空态兜底列表的「项目经理」列用，同项目页任务表）。 */ managers?: string; /** 背景档位（适中 / 炫彩；空态兜底列表的行色与项目页任务行的铺色同口径，Push 294）。 */ tierTint?: TintedTier | false; onPatchTask?: (taskId: string, patch: TaskPatch) => void; onSetProgress?: (taskId: string, progress: number) => void }) {
+export function GanttChart({ tasks, members, tierTint = false, onPatchTask, onSetProgress }: { tasks: readonly ProjectTask[]; members: readonly Member[]; /** 背景档位（适中 / 炫彩；空态兜底列表的行色与项目页任务行的铺色同口径，Push 294）。 */ tierTint?: TintedTier | false; onPatchTask?: (taskId: string, patch: TaskPatch) => void; onSetProgress?: (taskId: string, progress: number) => void }) {
   const locale = useLocale();
   const localize = useLocalizedTranslator();
   /** 手打内容（任务名）机翻显示：英文界面 titleEn 优先 → 机翻 → 原文；中文界面照旧。 */
@@ -1298,8 +1297,6 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                         columns={FALLBACK_TASK_COLUMNS}
                         selected={false}
                         tierTint={tierTint}
-                        managers={managers}
-                        managerIds={NO_MANAGER_IDS}
                         members={members}
                         onProgress={
                           onSetProgress === undefined
