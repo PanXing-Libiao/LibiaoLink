@@ -91,6 +91,10 @@ class FakeGroupRepository {
     return this.rows.get(projectId) ?? null;
   }
 
+  async findByChatid(chatid: string): Promise<WecomGroupRow | null> {
+    return [...this.rows.values()].find((row) => row.chatid === chatid) ?? null;
+  }
+
   async listCandidates(since: Date): Promise<WecomGroupCandidateRow[]> {
     const bound = new Set([...this.rows.values()].map((row) => row.chatid));
     return [...this.candidates.values()]
@@ -257,6 +261,14 @@ describe("ProjectGroupService.getGroup", () => {
   it("项目不存在 / 已软删 → 404 NOT_FOUND", async () => {
     const { service } = makeService([projectRow({ id: UUID_A, deletedAt: AT })]);
     await expectAppErrorAsync(() => service.getGroup(UUID_A, true), "NOT_FOUND");
+  });
+
+  it("按 chatid 只读回查绑定项目：命中回 projectId，未绑定回 null", async () => {
+    const { service, groups } = makeService([projectRow({ id: UUID_A })]);
+    groups.rows.set(UUID_A, groupRow({ projectId: UUID_A, chatid: CHATID, name: "项目群" }));
+
+    await expect(service.projectIdByChatid(CHATID)).resolves.toBe(UUID_A);
+    await expect(service.projectIdByChatid("chatid-not-bound")).resolves.toBeNull();
   });
 });
 

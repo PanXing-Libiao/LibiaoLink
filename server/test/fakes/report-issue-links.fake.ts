@@ -16,6 +16,11 @@ export interface FilePhotoRef {
   name: string;
 }
 
+export interface FilePosterPhotoRef extends FilePhotoRef {
+  objectKey: string | null;
+  mime: string | null;
+}
+
 interface LinkRow {
   fileId: string;
   objectType: string;
@@ -25,8 +30,14 @@ interface LinkRow {
 
 /** 内存链路状态：files = 文件表替身（只校验 projectId），links = file_links 表替身（插入序）。 */
 export const photoStore = {
-  files: new Map<string, { name: string; projectId: string }>(),
+  files: new Map<string, { name: string; projectId: string; objectKey: string | null; mime: string | null }>(),
   links: [] as LinkRow[],
+  calls: {
+    loadReportPhotos: [] as string[][],
+    loadIssuePhotos: [] as string[][],
+    loadReportPosterPhotos: [] as string[][],
+    loadIssuePosterPhotos: [] as string[][],
+  },
   /** 成对删除钩子：由用例接到假仓储上，保持「删日报 = 连派生问题」「删问题 = 连来源日报」语义一致。 */
   hooks: {
     issueIdsByReport: (_reportId: string): string[] => [],
@@ -36,12 +47,22 @@ export const photoStore = {
   reset(): void {
     photoStore.files.clear();
     photoStore.links.length = 0;
+    photoStore.calls.loadReportPhotos.length = 0;
+    photoStore.calls.loadIssuePhotos.length = 0;
+    photoStore.calls.loadReportPosterPhotos.length = 0;
+    photoStore.calls.loadIssuePosterPhotos.length = 0;
     photoStore.hooks.issueIdsByReport = () => [];
     photoStore.hooks.onIssuesPurged = () => {};
     photoStore.hooks.onReportPurged = () => {};
   },
-  seedFile(fileId: string, name: string, projectId: string): void {
-    photoStore.files.set(fileId, { name, projectId });
+  seedFile(
+    fileId: string,
+    name: string,
+    projectId: string,
+    objectKey: string | null = "objects/" + fileId,
+    mime: string | null = "image/png",
+  ): void {
+    photoStore.files.set(fileId, { name, projectId, objectKey, mime });
   },
   refs(objectType: string, objectId: string, kind?: string): FilePhotoRef[] {
     return photoStore.links
@@ -50,6 +71,22 @@ export const photoStore = {
           link.objectType === objectType && link.objectId === objectId && (kind === undefined || link.kind === kind),
       )
       .map((link) => ({ fileId: link.fileId, name: photoStore.files.get(link.fileId)?.name ?? "" }));
+  },
+  posterRefs(objectType: string, objectId: string, kind?: string): FilePosterPhotoRef[] {
+    return photoStore.links
+      .filter(
+        (link) =>
+          link.objectType === objectType && link.objectId === objectId && (kind === undefined || link.kind === kind),
+      )
+      .map((link) => {
+        const file = photoStore.files.get(link.fileId);
+        return {
+          fileId: link.fileId,
+          name: file?.name ?? "",
+          objectKey: file?.objectKey ?? null,
+          mime: file?.mime ?? null,
+        };
+      });
   },
 };
 
@@ -100,6 +137,7 @@ export function createReportIssueLinksFake() {
       return new Map(unique.map((id) => [id, photoStore.files.get(id)?.name ?? ""]));
     },
     loadReportPhotos: async (reportIds: readonly string[]) => {
+      photoStore.calls.loadReportPhotos.push([...reportIds]);
       const result = new Map<string, { onsite: FilePhotoRef[]; issue: FilePhotoRef[] }>();
       for (const id of new Set(reportIds)) {
         result.set(id, { onsite: photoStore.refs("report", id, "onsite"), issue: photoStore.refs("report", id, "issue") });
@@ -107,8 +145,26 @@ export function createReportIssueLinksFake() {
       return result;
     },
     loadIssuePhotos: async (issueIds: readonly string[]) => {
+      photoStore.calls.loadIssuePhotos.push([...issueIds]);
       const result = new Map<string, FilePhotoRef[]>();
       for (const id of new Set(issueIds)) result.set(id, photoStore.refs("issue", id));
+      return result;
+    },
+    loadReportPosterPhotos: async (reportIds: readonly string[]) => {
+      photoStore.calls.loadReportPosterPhotos.push([...reportIds]);
+      const result = new Map<string, { onsite: FilePosterPhotoRef[]; issue: FilePosterPhotoRef[] }>();
+      for (const id of new Set(reportIds)) {
+        result.set(id, {
+          onsite: photoStore.posterRefs("report", id, "onsite"),
+          issue: photoStore.posterRefs("report", id, "issue"),
+        });
+      }
+      return result;
+    },
+    loadIssuePosterPhotos: async (issueIds: readonly string[]) => {
+      photoStore.calls.loadIssuePosterPhotos.push([...issueIds]);
+      const result = new Map<string, FilePosterPhotoRef[]>();
+      for (const id of new Set(issueIds)) result.set(id, photoStore.posterRefs("issue", id));
       return result;
     },
     insertReportPhotos: async (reportId: string, kind: string, fileIds: readonly string[]) => {

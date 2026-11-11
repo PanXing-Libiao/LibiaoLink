@@ -9,6 +9,7 @@ import { CadArchiveWorker, FileService, PreviewService, RECYCLE_SWEEP_BATCH as F
 import { PROJECT_RECYCLE_SWEEP_BATCH, ProjectService } from "../modules/project/index.js";
 import { IMPORT_PREVIEW_SWEEP_INTERVAL_MS, ProjectImportService } from "../modules/project-import/index.js";
 import { NotifyDmService, NotifyGroupService, NotifyService, WecomAibotClient } from "../modules/notify/index.js";
+import { ReportQueryService } from "../modules/report-query/index.js";
 import {
   buildOutboxLanes,
   JobScheduler,
@@ -47,6 +48,7 @@ async function bootstrap(): Promise<void> {
   const notify = app.get(NotifyService);
   const groupNotify = app.get(NotifyGroupService);
   const dmNotify = app.get(NotifyDmService);
+  const reportQuery = app.get(ReportQueryService);
   const dispatcher = app.get(OutboxDispatcher);
   const alerts = app.get(OutboxAlertProbe);
   const retention = app.get(OutboxRetention);
@@ -213,11 +215,15 @@ async function bootstrap(): Promise<void> {
   // 单聊未配置 = 投递行按未就绪 retry 收敛（bounded）；api 进程同模块但从不 start()（构造无副作用）。
   if (env.NOTIFY_DELIVERY_ENABLED === "true" && env.WECOM_BOT_ID !== "" && env.WECOM_BOT_SECRET !== "") {
     aibot.onMessage((message) => {
-      // 分流（M5-03-5-4；单聊面 M5-03-5-6 扩绑定码；Push 261 扩欢迎语）：单聊 enter_chat → 欢迎语
-      // （不激活、不绑定）；其余单聊消息 → 单聊 ingest（激活登记 + 绑定码命中）；群聊 → 群 ingest。
-      // 两侧 ingest 各自带过滤防御（cmd / chattype / 合法性），入参同形 —— 互不牵连。
+      // 分流（M5-03-5-4；单聊面 M5-03-5-6 扩绑定码；Push 261 扩欢迎语；S3 扩日报查询）：
+      // 查询候选在绑定码 / 群名命令之前处理 —— 单聊不再进入 extractBindingCode，群聊不再走群名命令；
+      // 其余单聊 enter_chat → 欢迎语，普通单聊 → 单聊 ingest，普通群聊 → 群 ingest。
+      // ReportQueryService.accepts 已按精确字符串开关和 chattype 过滤；未命中时原行为不变。
+      const queryCandidate = reportQuery.accepts(message);
       const ingest =
-        message.chattype === "single"
+        queryCandidate
+          ? reportQuery.handle(message)
+          : message.chattype === "single"
           ? message.cmd === "aibot_event_callback" && message.eventType === "enter_chat"
             ? dmNotify.replyWelcomeToEnterChat(message)
             : dmNotify.ingestCallback(message)

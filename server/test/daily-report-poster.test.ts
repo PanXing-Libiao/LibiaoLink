@@ -6,11 +6,18 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   normalizePosterIssueTitle,
+  renderDailyReportDigestPoster,
   renderDailyReportIssuePoster,
+  renderDailyReportIssueDigestPoster,
   renderDailyReportPoster,
   stripPosterListMarkers,
+  type DailyReportDigestPosterData,
   type DailyReportPosterData,
 } from "../src/modules/notify/daily-report.poster.js";
+import {
+  DAILY_REPORT_DIGEST_TRUNCATION_NOTICE,
+  DAILY_REPORT_POSTER_MAX_HEIGHT,
+} from "../src/modules/notify/daily-report.poster.constants.js";
 
 const SAMPLE: DailyReportPosterData = {
   projectId: "11111111-1111-4111-8111-111111111111",
@@ -69,6 +76,57 @@ const SAMPLE: DailyReportPosterData = {
       ],
     },
   ],
+};
+
+const DIGEST_SAMPLE: DailyReportDigestPosterData = {
+  projectId: SAMPLE.projectId,
+  projectCode: SAMPLE.projectCode,
+  projectName: SAMPLE.projectName,
+  managers: SAMPLE.managers,
+  reportDate: SAMPLE.reportDate,
+  draftCount: 1,
+  reports: [
+    {
+      reportId: SAMPLE.reportId,
+      authorName: SAMPLE.authorName,
+      submittedAt: SAMPLE.submittedAt,
+      state: "submitted",
+      headcount: SAMPLE.headcount,
+      stages: SAMPLE.stages,
+      doneWork: SAMPLE.doneWork,
+      plan: SAMPLE.plan,
+      photos: SAMPLE.photos,
+    },
+    {
+      reportId: "33333333-3333-4333-8333-333333333333",
+      authorName: "赵工",
+      submittedAt: "2026-10-05T12:08:00.000Z",
+      state: "supplement",
+      headcount: 1,
+      stages: ["现场施工"],
+      doneWork: "补填：完成安全巡检与围挡复核。",
+      plan: "补填：跟进问题整改。",
+      photos: SAMPLE.photos.slice(0, 1),
+    },
+  ],
+  issues: SAMPLE.issues.map((issue, index) => ({
+    id: issue.id,
+    title: issue.title,
+    categories: issue.categories,
+    ownerName: issue.ownerName,
+    state: issue.state,
+    solution: issue.solution,
+    raisedAt: SAMPLE.reportDate,
+    sourceReport:
+      index === 0
+        ? {
+            id: SAMPLE.reportId,
+            authorName: SAMPLE.authorName,
+            submittedAt: SAMPLE.submittedAt,
+          }
+        : null,
+    photos: issue.photos,
+  })),
 };
 
 function pngSize(buffer: Buffer): { width: number; height: number } {
@@ -183,4 +241,76 @@ describe("日报群同步双海报", () => {
     expect(size.width).toBe(1440);
     expect(size.height).toBeGreaterThan(500);
   }, 20_000);
+});
+
+describe("日报查询合集海报（S5）", () => {
+  it("多篇日报与问题合集固定 1440px 宽，输出多作者内容和缩略图", async () => {
+    const bytes = readFileSync(new URL("../assets/r06-brand-banner.jpg", import.meta.url));
+    const images = new Map<string, Buffer>();
+    for (const photo of [
+      ...DIGEST_SAMPLE.reports.flatMap((report) => report.photos),
+      ...DIGEST_SAMPLE.issues.flatMap((issue) => issue.photos),
+    ]) {
+      images.set(photo.fileId, bytes);
+    }
+
+    const daily = await renderDailyReportDigestPoster(DIGEST_SAMPLE, images);
+    const issue = await renderDailyReportIssueDigestPoster(DIGEST_SAMPLE, images);
+    const dailySize = pngSize(daily);
+    const issueSize = pngSize(issue);
+    expect(dailySize.width).toBe(1440);
+    expect(issueSize.width).toBe(1440);
+    expect(dailySize.height).toBeGreaterThan(900);
+    expect(issueSize.height).toBeGreaterThan(800);
+    expect(daily.length).toBeGreaterThan(80_000);
+    expect(issue.length).toBeGreaterThan(80_000);
+  }, 40_000);
+
+  it("正文超预算时高度不超过 16000px，并保留深链提示文案", async () => {
+    expect(DAILY_REPORT_POSTER_MAX_HEIGHT).toBe(16_000);
+    expect(DAILY_REPORT_DIGEST_TRUNCATION_NOTICE).toContain("完整内容请点击上方深链");
+
+    const reports = Array.from({ length: 80 }, (_, index) => ({
+      reportId: "budget-report-" + String(index),
+      authorName: "填写者 " + String((index % 12) + 1),
+      submittedAt: "2026-10-05T10:42:00.000Z",
+      state: index % 7 === 0 ? ("supplement" as const) : ("submitted" as const),
+      headcount: 2,
+      stages: ["施工", "调试"],
+      doneWork: "完成当日施工、设备点检与联调记录，剩余问题已登记并转交责任人跟进。".repeat(5),
+      plan: "继续完成剩余工位安装、联动测试与问题整改复核。".repeat(5),
+      photos: [],
+    }));
+    const issues = Array.from({ length: 40 }, (_, index) => ({
+      id: "budget-issue-" + String(index),
+      title: "现场问题：" + "预留孔洞偏差需要复核并完成整改。".repeat(8),
+      categories: ["质量", "安全"],
+      ownerName: "责任人 " + String((index % 8) + 1),
+      state: index % 2 === 0 ? "open" : "in_progress",
+      solution: "处理记录：" + "已完成现场复核、责任分派与材料更换，等待复测。".repeat(10),
+      raisedAt: "2026-10-05",
+      sourceReport: {
+        id: "budget-report-1",
+        authorName: "填写者 2",
+        submittedAt: "2026-10-05T10:42:00.000Z",
+      },
+      photos: [],
+    }));
+    const data: DailyReportDigestPosterData = {
+      ...DIGEST_SAMPLE,
+      reports,
+      issues,
+    };
+
+    const daily = await renderDailyReportDigestPoster(data);
+    const issue = await renderDailyReportIssueDigestPoster(data);
+    const dailySize = pngSize(daily);
+    const issueSize = pngSize(issue);
+    expect(dailySize.width).toBe(1440);
+    expect(issueSize.width).toBe(1440);
+    expect(dailySize.height).toBeLessThanOrEqual(DAILY_REPORT_POSTER_MAX_HEIGHT);
+    expect(issueSize.height).toBeLessThanOrEqual(DAILY_REPORT_POSTER_MAX_HEIGHT);
+    expect(dailySize.height).toBeGreaterThan(10_000);
+    expect(issueSize.height).toBeGreaterThan(10_000);
+  }, 60_000);
 });

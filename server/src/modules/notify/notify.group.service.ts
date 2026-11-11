@@ -182,6 +182,37 @@ export class NotifyGroupService {
   ) {}
 
   /**
+   * 日报查询专用群会话激活（S3）：只做合法群回调过滤、候选群登记与 activated_at 置位，
+   * 不解析 / 不执行群名命令。查询编排先调用本方法，再读取群绑定项目与发送人身份。
+   */
+  async activateFromReportQuery(incoming: AibotIncomingMessage): Promise<void> {
+    if (
+      incoming.cmd !== "aibot_msg_callback" ||
+      incoming.chattype !== "group" ||
+      incoming.chatid === null ||
+      !/^[A-Za-z0-9_-]{8,128}$/.test(incoming.chatid)
+    ) {
+      return;
+    }
+    const at = this.clock.now();
+    const row = await this.repository.findGroupByChatid(incoming.chatid);
+    if (row === null) {
+      await this.repository.observeCandidate(
+        { chatid: incoming.chatid, name: normalizeGroupName(incoming.chatName) },
+        at,
+      );
+      this.logger.log("群查询回调已登记候选群：" + maskChatid(incoming.chatid));
+      return;
+    }
+    if (row.activatedAt === null) {
+      const activated = await this.repository.activateByChatid(incoming.chatid, at);
+      if (activated !== null) {
+        this.logger.log("群会话已激活（查询回调）：" + maskChatid(incoming.chatid) + " · project=" + activated.projectId);
+      }
+    }
+  }
+
+  /**
    * 群消息回调 ingest（长连接 onMessage 接线）：只处理群聊消息回调（cmd=aibot_msg_callback / chattype=group /
    * 合法 chatid）。已绑定群 → 会话激活置位（幂等）；未绑定群 → 写入候选表供设置页自动发现，绑定后删除候选行。
    * 群名命令（@机器人 发「群名 XXX」/「群名：XXX」/「设置群名 XXX」）只更新展示名，不做绑定授权；
