@@ -207,6 +207,14 @@ export function dateOnlyText(iso: string): string {
   return parts;
 }
 
+/**
+ * 预计完成日期是否已过（2026-11-12 定档按钮规则）：按 Asia/Shanghai 业务今天比较，
+ * dueDate 当天不算过；空日期不锁。与后端 isUnfinalizeLockedByPlannedEnd 同口径。
+ */
+export function isPastPlannedEnd(dueDate: string, now: Date = new Date()): boolean {
+  return dueDate !== "" && dueDate < dateOnlyText(now.toISOString());
+}
+
 /** 预计所需天数 = 两个日期的含首尾天数（与源表口径一致：9月5日→9月22日 = 18 天）。 */
 export function daysBetweenInclusive(fromIso: string, toIso: string): number {
   const from = Date.parse(fromIso + "T00:00:00Z");

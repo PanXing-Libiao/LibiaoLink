@@ -633,7 +633,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/projects/{id}/tasks/{taskId}/unfinalize",
     tags: ["tasks"],
-    summary: "任务取消定档（抽屉「已」开关再次点击 · Push 260）：已定档 → 清位重新开放修改（留痕「取消定档」）；未定档 → 幂等原样返回",
+    summary: "任务取消定档（抽屉「已」开关再次点击 · Push 260）：预计完成日期当天及之前 → 清位重新开放修改（留痕「取消定档」）；预计完成日期已过 → 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；未定档 → 幂等原样返回",
     request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskUnfinalizeBodySchema) },
     responses: {
       200: { description: "取消定档后的任务（Task 同形；幂等路径原样返回）", ...json(TaskSchema) },

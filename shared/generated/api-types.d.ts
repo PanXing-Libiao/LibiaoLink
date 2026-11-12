@@ -1772,7 +1772,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 任务取消定档（抽屉「已」开关再次点击 · Push 260）：已定档 → 清位重新开放修改（留痕「取消定档」）；未定档 → 幂等原样返回 */
+        /** 任务取消定档（抽屉「已」开关再次点击 · Push 260）：预计完成日期当天及之前 → 清位重新开放修改（留痕「取消定档」）；预计完成日期已过 → 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；未定档 → 幂等原样返回 */
         post: {
             parameters: {
                 query?: never;
@@ -11134,7 +11134,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "CSRF_FAILED" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "REPORT_ALREADY_EXISTS" | "REPORT_GROUP_NOT_BOUND" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "IMPORT_FILE_INVALID" | "IMPORT_PARSE_FAILED" | "IMPORT_PREVIEW_EXPIRED" | "IMPORT_CANCELLED" | "RATE_LIMITED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "CSRF_FAILED" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "TASK_UNFINALIZE_AFTER_PLAN" | "REPORT_ALREADY_EXISTS" | "REPORT_GROUP_NOT_BOUND" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "IMPORT_FILE_INVALID" | "IMPORT_PARSE_FAILED" | "IMPORT_PREVIEW_EXPIRED" | "IMPORT_CANCELLED" | "RATE_LIMITED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -13199,7 +13199,7 @@ export interface components {
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];
         };
-        /** @description 任务取消定档提交（version = 抽屉当前行版本） */
+        /** @description 任务取消定档提交（version = 抽屉当前行版本）；预计完成日期已过时服务端拒绝并返回 409 TASK_UNFINALIZE_AFTER_PLAN */
         TaskUnfinalizeBody: {
             version: components["schemas"]["Version"] & unknown;
         };

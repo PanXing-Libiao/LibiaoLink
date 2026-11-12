@@ -3911,6 +3911,7 @@
           "TASK_ALREADY_DONE",
           "TASK_HAS_REFERENCES",
           "TASK_FINALIZED",
+          "TASK_UNFINALIZE_AFTER_PLAN",
           "REPORT_ALREADY_EXISTS",
           "REPORT_GROUP_NOT_BOUND",
           "BLUEPRINT_SCHEMA_INVALID",
@@ -10469,7 +10470,7 @@
                   "string",
                   "null"
                 ],
-                "description": "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档。Push 260（业务口径「把现在的定档改成 再次点击取消定档吧」）：经 POST …/unfinalize 清回 null（任务重新开放修改；文件级定档不回退）"
+                "description": "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档。Push 260（业务口径「把现在的定档改成 再次点击取消定档吧」）：经 POST …/unfinalize 清回 null（任务重新开放修改；文件级定档不回退）。2026-11-12 取消定档时间闸：预计完成日期当天及之前可取消；业务今天（Asia/Shanghai）已晚于 plannedEnd 时只能定档，取消返回 409 TASK_UNFINALIZE_AFTER_PLAN（无预计完成日期不锁）"
               }
             ]
           },
@@ -11911,7 +11912,7 @@
         "required": [
           "version"
         ],
-        "description": "任务取消定档提交（version = 抽屉当前行版本）"
+        "description": "任务取消定档提交（version = 抽屉当前行版本）；预计完成日期已过时服务端拒绝并返回 409 TASK_UNFINALIZE_AFTER_PLAN"
       },
       "TaskUpdateBody": {
         "type": "object",
@@ -15735,7 +15736,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "任务取消定档（抽屉「已」开关再次点击 · Push 260）：已定档 → 清位重新开放修改（留痕「取消定档」）；未定档 → 幂等原样返回",
+        "summary": "任务取消定档（抽屉「已」开关再次点击 · Push 260）：预计完成日期当天及之前 → 清位重新开放修改（留痕「取消定档」）；预计完成日期已过 → 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；未定档 → 幂等原样返回",
         "parameters": [
           {
             "schema": {

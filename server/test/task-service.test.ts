@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
 import type { PermissionService, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
@@ -27,6 +27,10 @@ const NODE = "33333333-3333-4333-8333-333333333333";
 const MANAGER = "caa8d763-4b6a-4967-9b26-7d1086272c9c";
 const ACTOR = "ea6eff88-4b3e-4df1-9ce0-02ffb14fed69";
 const MANAGER_2 = "b0f1c9d2-3a4b-4c5d-8e6f-7a8b9c0d1e2f";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
   return {
@@ -946,6 +950,63 @@ describe("任务取消定档入口（Push 260 · 「已」开关再次点击 + �
     expect(repo.task?.version).toBe(3);
     expect(audit.entries).toHaveLength(0);
     expect(repo.touched).toEqual([]);
+  });
+
+  it("预计完成日期已过：已定档任务 unfinalize → 409 TASK_UNFINALIZE_AFTER_PLAN（不写库 / 不审计）", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-12T01:00:00Z"));
+    const repo = new FakeTaskRepository();
+    const FINALIZED_AT = new Date("2026-11-10T02:00:00Z");
+    repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: ACTOR, plannedEnd: "2026-11-11", version: 9 });
+    const audit = new FakeAuditService();
+    await expect(makeService(repo, new FakePermissionService(), new FakeTaskGateRepository(), audit).unfinalize(PROJECT, TASK, { version: 9 }, MANAGER)).rejects.toMatchObject({ code: "TASK_UNFINALIZE_AFTER_PLAN", httpStatus: 409 });
+    expect(repo.task?.finalizedAt).toEqual(FINALIZED_AT);
+    expect(repo.task?.version).toBe(9);
+    expect(repo.touched).toEqual([]);
+    expect(audit.entries).toHaveLength(0);
+  });
+
+  it("预计完成日期已过但未定档：unfinalize 幂等返回，不误锁取消入口", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-12T01:00:00Z"));
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ plannedEnd: "2026-11-11", version: 9 });
+    const returned = await makeService(repo).unfinalize(PROJECT, TASK, { version: 9 }, MANAGER);
+    expect(returned.finalizedAt).toBeNull();
+    expect(returned.version).toBe(9);
+    expect(repo.touched).toEqual([]);
+  });
+
+  it("预计完成日期已过但未定档：finalize 仍允许（时间闸只锁取消）", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-12T01:00:00Z"));
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ plannedEnd: "2026-11-11", version: 9 });
+    const finalized = await makeService(repo).finalize(PROJECT, TASK, { version: 9 }, MANAGER);
+    expect(finalized.finalizedAt).not.toBeNull();
+    expect(finalized.version).toBe(10);
+    expect(repo.task?.plannedEnd).toBe("2026-11-11");
+  });
+
+  it("预计完成日期当天：仍允许取消定档（边界日不提前锁）", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-12T01:00:00Z"));
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ finalizedAt: new Date("2026-11-10T02:00:00Z"), finalizedBy: ACTOR, plannedEnd: "2026-11-12", version: 9 });
+    const updated = await makeService(repo).unfinalize(PROJECT, TASK, { version: 9 }, MANAGER);
+    expect(updated.finalizedAt).toBeNull();
+    expect(updated.version).toBe(10);
+    expect(repo.task?.plannedEnd).toBe("2026-11-12");
+  });
+
+  it("上海业务日界后（UTC 16:00 起）锁定取消定档", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-12T16:00:00Z"));
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ finalizedAt: new Date("2026-11-10T02:00:00Z"), finalizedBy: ACTOR, plannedEnd: "2026-11-12", version: 9 });
+    await expect(makeService(repo).unfinalize(PROJECT, TASK, { version: 9 }, MANAGER)).rejects.toMatchObject({ code: "TASK_UNFINALIZE_AFTER_PLAN", httpStatus: 409 });
+    expect(repo.task?.finalizedAt).not.toBeNull();
+    expect(repo.task?.version).toBe(9);
   });
 
   it("已定档任务：version 不匹配 → 409 VERSION_CONFLICT（不写库）", async () => {

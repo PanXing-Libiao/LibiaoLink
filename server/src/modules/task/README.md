@@ -131,7 +131,8 @@
 - 读面：`toTaskView` 下发 `finalizedAt`（ISO）/ `finalizedBy`；`TaskListItem` 经 spread 同口径（前端 `ProjectTask.finalizedAt` 据此出「已定档」提示与入口闸）。
 - 唯一保留的修改通道 = 对已定档文件的变更（A4-13 申请即通过，`intent=change`）。
 - 防绕过补漏（定档时）：`file.service.completeUpload` 事务内复核任务定档（会话先发起、任务后被定档 → 409 `TASK_FINALIZED`，change 意图放行）；漏网会话（如并发发起）由该复核兜住。
-- 单测：`test/task-service.test.ts`（「任务定档写口闸」4 例 + `finalize` 撤销会话 / 审计 metadata 断言）+ `task-remove` / `task-locked-fields` 各 1 例；其余 task 测试夹具补 `finalizedAt: null, finalizedBy: null`。
+- 取消定档时间闸（2026-11-12）：已定档任务的 `planned_end` 早于业务今天（Asia/Shanghai，`shanghaiToday(at)`）→ `unfinalize` 409 `TASK_UNFINALIZE_AFTER_PLAN`（details `path: plannedEnd`）；当天及未来、空日期仍可取消。未定档重复 `unfinalize` 的幂等短路优先（已过期也返回 200）；`finalize` / 随文件定档不受影响。
+- 单测：`test/task-service.test.ts`（「任务定档写口闸」4 例 + `finalize` 撤销会话 / 审计 metadata 断言 + 取消定档时间闸过期 409 / 当天放行 / 未定档幂等返回 / 过期仍可定档）+ `test/task-rules.test.ts`（时间闸边界）+ `task-remove` / `task-locked-fields` 各 1 例；其余 task 测试夹具补 `finalizedAt: null, finalizedBy: null`。
 
 ## 边界与后续（差异登记）
 

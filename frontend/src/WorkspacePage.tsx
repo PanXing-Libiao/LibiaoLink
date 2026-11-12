@@ -110,7 +110,7 @@ import type { IssueState, ReportPhoto } from "./data/reports";
 import { recordPreviewView, recycleFile, renameFile, uploadFiles, usePhotoUrl, type TaskFileRef } from "./fileApi";
 import type { ApiProject } from "./projectApi";
 import { ISSUE_STATE_NAMES, updateIssue } from "./reportApi";
-import { fetchTaskDetail, finalizeTask, stageNameOf, statusWriteValue, toUiTask, unfinalizeTask, updateTask, updateTaskProgress, type ApiTask } from "./taskApi";
+import { fetchTaskDetail, finalizeTask, stageNameOf, statusWriteValue, taskWriteMessage, toUiTask, unfinalizeTask, updateTask, updateTaskProgress, type ApiTask } from "./taskApi";
 import { fieldText, fullDateText, isLocalizedLocale, stageText, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT, workspaceLabelText } from "./i18n";
 import { fetchWorkspace, type ApiWorkspace, type ApiWorkspaceIssue, type ApiWorkspaceTask } from "./workspaceApi";
 import type { WorkspaceOpenProjects } from "./preferencesApi";
@@ -780,7 +780,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, manage
       scheduleReload();
       return updated.version;
     } catch (error) {
-      setTaskError(error instanceof ApiError ? error.message : t("ws.err.task"));
+      setTaskError(error instanceof ApiError ? taskWriteMessage(locale, error) : t("ws.err.task"));
       return null;
     }
   };

@@ -87,7 +87,7 @@ export const TaskSchema = z
     }),
     finalizedAt: DateTimeSchema.nullable().openapi({
       description:
-        "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档。Push 260（业务口径「把现在的定档改成 再次点击取消定档吧」）：经 POST …/unfinalize 清回 null（任务重新开放修改；文件级定档不回退）",
+        "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档。Push 260（业务口径「把现在的定档改成 再次点击取消定档吧」）：经 POST …/unfinalize 清回 null（任务重新开放修改；文件级定档不回退）。2026-11-12 取消定档时间闸：预计完成日期当天及之前可取消；业务今天（Asia/Shanghai）已晚于 plannedEnd 时只能定档，取消返回 409 TASK_UNFINALIZE_AFTER_PLAN（无预计完成日期不锁）",
     }),
     finalizedBy: UuidSchema.nullable().openapi({
       description: "任务定档操作人（随文件定档同事务写入；与 finalizedAt 成对出现，同为 null = 未定档）",
@@ -265,12 +265,12 @@ export const TaskFinalizeBodySchema = z
   .openapi("TaskFinalizeBody", { description: "任务定档提交（version = 抽屉当前行版本）" });
 
 /** 任务取消定档提交（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）：抽屉头部「已」开关再次点击 → 二次确认后调用。
- * 已定档 → 清空 finalizedAt / finalizedBy 并重新开放修改（此后可编辑 / 可删；version+1、留痕「取消定档」、outbox task.unfinalized）；未定档 → 幂等短路（200 原样返回，不重复写）。 */
+ * 已定档 → 若预计完成日期未过（业务今天 Asia/Shanghai 不晚于 plannedEnd，或 plannedEnd 为空）则清空 finalizedAt / finalizedBy 并重新开放修改（此后可编辑 / 可删；version+1、留痕「取消定档」、outbox task.unfinalized）；预计完成日期已过 → 409 TASK_UNFINALIZE_AFTER_PLAN；未定档 → 幂等短路（200 原样返回，不重复写）。 */
 export const TaskUnfinalizeBodySchema = z
   .object({
     version: VersionSchema.openapi({ description: "乐观锁版本（已定档路径必校验；未定档幂等短路不校验）" }),
   })
-  .openapi("TaskUnfinalizeBody", { description: "任务取消定档提交（version = 抽屉当前行版本）" });
+  .openapi("TaskUnfinalizeBody", { description: "任务取消定档提交（version = 抽屉当前行版本）；预计完成日期已过时服务端拒绝并返回 409 TASK_UNFINALIZE_AFTER_PLAN" });
 
 /** 完成预检（UI 置灰依据；不替代事务内强校验 —— 与节点 can-complete 同口径）。 */
 export const TaskCanCompleteResponseSchema = z

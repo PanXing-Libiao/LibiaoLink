@@ -48,6 +48,7 @@ import {
   applyStatusWrite,
   deriveDisplayStatus,
   deriveOnTime,
+  isUnfinalizeLockedByPlannedEnd,
   shanghaiToday,
 } from "./task.rules.js";
 import {
@@ -1140,8 +1141,9 @@ export class TaskService {
 
   /**
    * POST /projects/{id}/tasks/{taskId}/unfinalize：任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）。
-   * 口径：已定档 → 清空 finalized_at / finalized_by（version+1、留痕「取消定档」、outbox task.unfinalized、项目触点），
-   * 任务重新开放修改（编辑 / 删除 / 文件写口恢复）；文件级定档（files.status=final）不回退 —— 文件修改仍走变更（A4-13）。
+   * 口径：已定档且预计完成日期当天及之前 → 清空 finalized_at / finalized_by（version+1、留痕「取消定档」、outbox task.unfinalized、项目触点），
+   * 任务重新开放修改（编辑 / 删除 / 文件写口恢复）；预计完成日期已过（Asia/Shanghai 今天晚于 planned_end）→ 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；无预计完成日期不锁。
+   * 文件级定档（files.status=final）不回退 —— 文件修改仍走变更（A4-13）。
    * 未定档 → 幂等短路（200 原样返回，不写库 / 不递增版本）；version 不匹配 → 409 VERSION_CONFLICT。
    * 操作记录（业务口径「点击定档按钮应该也要计入操作记录」）：定档 / 取消定档各留一条「任务」记录（action=update，摘要前缀「任务定档」/「取消定档」）。
    */
@@ -1155,6 +1157,11 @@ export class TaskService {
       this.assertCanManageTaskFinalization(actorId, before, access);
       if (before.finalizedAt === null) {
         return before;
+      }
+      if (isUnfinalizeLockedByPlannedEnd(before.plannedEnd, today)) {
+        throw new AppError("TASK_UNFINALIZE_AFTER_PLAN", "预计完成时间已过，已定档任务不能取消定档", [
+          { code: "unfinalize_after_planned_end", message: "预计完成日期：" + (before.plannedEnd ?? ""), path: "plannedEnd" },
+        ]);
       }
       if (before.version !== body.version) {
         throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
