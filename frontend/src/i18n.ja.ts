@@ -1103,6 +1103,7 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "pd.files.filter.stage.search": "段階を検索",
   "pd.files.col.stage": "段階",
   "pd.files.col.task": "タスク",
+  "pd.files.previewHint": "ファイル行をクリックするとプレビューできます",
   "pd.files.status.before": "変更前",
   "pd.files.status.after": "変更後",
   "pd.files.status.material": "再発行申請",
