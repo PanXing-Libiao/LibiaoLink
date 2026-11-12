@@ -1,3 +1,5 @@
+> **2026-11-12 · 任务定档历史清洗**：`0089_unfinalize_legacy_tasks_without_deliverables.sql` 只清洗未删除、`finalized_at` 非空且 `deliverable_types` 为空的历史任务：先把原定档时间 / 操作人 / 版本写入 `audit_logs`，再清空定档位并 `version + 1`。配置了成果类型的已定档任务、文件定档状态和业务数据不受影响；本迁移无 DDL，重复执行命中 0 行，回滚依据见文件头注。
+
 > **2026-11-10 · CAD**　迁移 0088_cad_dwg_companion_sets.sql 允许 DWG 归档保存已选的固定版本配套文件。启用该入口前使用项目迁移器应用；原有 STEP 限制继续生效。
 
 # database/ · 数据库基线（g3 · S5）

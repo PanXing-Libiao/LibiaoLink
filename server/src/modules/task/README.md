@@ -132,6 +132,7 @@
 - 唯一保留的修改通道 = 对已定档文件的变更（A4-13 申请即通过，`intent=change`）。
 - 防绕过补漏（定档时）：`file.service.completeUpload` 事务内复核任务定档（会话先发起、任务后被定档 → 409 `TASK_FINALIZED`，change 意图放行）；漏网会话（如并发发起）由该复核兜住。
 - 取消定档时间闸（2026-11-12，同日按业务修订）：已定档任务 `planned_end` 早于业务今天（Asia/Shanghai，`shanghaiToday(at)`）时，**仅 `capabilities.source=task_owner`** 调用 `unfinalize` 返回 409 `TASK_UNFINALIZE_AFTER_PLAN`（details `path: plannedEnd`）；项目经理及其他项目编辑者仍可取消。当天及未来、空日期不锁；未定档重复 `unfinalize` 的幂等短路优先；`finalize` / 文件定档不受该时间闸影响。
+- 历史数据清洗（2026-11-12 · 迁移 0089）：早期未配置输出成果却被定档的未删除任务，先用 `audit_logs` 保存原 `finalized_at / finalized_by / version`，再清空定档位并递增 version；配置成果类型的已定档任务和文件定档状态不动。新入口已由统一门禁阻止同类数据再次产生。
 - 单测：`test/task-service.test.ts`（任务完成 / 成果类型 / 节点必交成果 / 文件缺件四类定档门禁，`finalize` 撤销会话与审计 metadata，逾期取消仅锁任务负责人 / 项目经理仍可取消 / 当天放行 / 未定档幂等返回 / 过期仍可定档）+ `test/task-rules.test.ts`（时间闸边界）+ `task-remove` / `task-locked-fields` 各 1 例；其余 task 测试夹具补 `finalizedAt: null, finalizedBy: null`。
 
 ## 边界与后续（差异登记）
