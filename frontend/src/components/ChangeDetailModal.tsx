@@ -416,7 +416,7 @@ function RowIcon({ kind }: { kind: IconKind }) {
 }
 
 /** 变更阶段展示（空 / 未知 → 「—」）。 */
-function stageLabelOf(locale: Locale, stageKey: string | null): string {
+export function stageLabelOf(locale: Locale, stageKey: string | null): string {
   const label = stageNameOf(stageKey);
   return label === "" ? "—" : stageText(locale, label);
 }
@@ -434,17 +434,17 @@ export function splitChangeReason(reason: string): { content: string; cause: str
 }
 
 /** 空文本 → 「—」。 */
-function textOrDash(text: string | null): ReactNode {
+export function textOrDash(text: string | null): ReactNode {
   return text === null || text.trim() === "" ? <span className="text-zinc-400">—</span> : text;
 }
 
 /** 申请人展示（名字 + (工号)；无工号 = 只有名字）。 */
-function applicantHandleText(name: string, handle: string | null): string {
+export function applicantHandleText(name: string, handle: string | null): string {
   return handle === null || handle === "" ? name : name + "(" + handle + ")";
 }
 
 /** ISO 时间戳 → 「YYYY/M/D」（对齐源表大日期口径）。 */
-function slashDate(iso: string): string {
+export function slashDate(iso: string): string {
   const day = new Date(iso);
   if (Number.isNaN(day.getTime())) {
     return iso;
