@@ -249,10 +249,10 @@ class FakeTaskGateRepository {
       if (!merged.has(docType)) merged.set(docType, 1);
     }
     const requirements = [...merged].map(([docType, minCount]) => ({ docType, minCount }));
-    const present = new Map(this.uploadedCounts.filter((item): item is { docType: string; present: number } => item.docType !== null).map((item) => [item.docType, item.present] as const));
-    const missing = requirements
-      .filter((item) => (present.get(item.docType) ?? 0) < item.minCount)
-      .map((item) => ({ docType: item.docType, required: item.minCount, present: present.get(item.docType) ?? 0 }));
+    const hasUploadedFile = this.uploadedCounts.some((item) => item.present > 0);
+    const missing = requirements.length === 0 || hasUploadedFile
+      ? []
+      : requirements.map((item) => ({ docType: item.docType, required: item.minCount, present: 0 }));
     return { status: task.status, requirements, missing, ready: task.status === "done" && task.deliverableTypes.length > 0 && missing.length === 0 };
   }
   async countUploadedFiles(): Promise<{ docType: string | null; present: number }[]> {
@@ -317,7 +317,7 @@ class FakeAuditService {
   }
 }
 
-/** 定档就绪夹具：已完成 + 已配置 CAD图纸 + 该类型至少一份已上传文件。 */
+/** 定档就绪夹具：已完成 + 已配置 CAD图纸 + 范围内至少一份已上传文件。 */
 function makeFinalizeReady(overrides: Partial<TaskRow> = {}): { repo: FakeTaskRepository; gate: FakeTaskGateRepository } {
   const repo = new FakeTaskRepository();
   repo.task = makeRow({ status: "done", deliverableTypes: ["CAD图纸"], ...overrides });
@@ -948,6 +948,20 @@ describe("任务定档入口（Push 252 · 抽屉「定档」开关 + 二次确�
     expect(repo.touched).toEqual([]);
     expect(audit.entries).toEqual([]);
     expect(database.outbox).toEqual([]);
+  });
+
+  it("已完成且配置输出成果：文件 doc_type 为空或与配置不一致都可定档（双向识别）", async () => {
+    const uploadedCases: { docType: string | null; present: number }[][] = [
+      [{ docType: null, present: 1 }],
+      [{ docType: "合同", present: 1 }],
+    ];
+    for (const uploaded of uploadedCases) {
+      const { repo, gate } = makeFinalizeReady();
+      gate.uploadedCounts = uploaded;
+      const updated = await makeService(repo, new FakePermissionService(), gate).finalize(PROJECT, TASK, { version: 3 }, MANAGER);
+      expect(updated.finalizedAt).not.toBeNull();
+      expect(repo.task?.finalizedAt).not.toBeNull();
+    }
   });
 
   it("任务负责人：未定档任务 finalize 置位 finalizedAt / finalizedBy + version+1 + 审计「任务定档」+ 项目触点", async () => {

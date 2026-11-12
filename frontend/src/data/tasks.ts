@@ -158,11 +158,12 @@ export type TaskFinalizeReadiness = {
 /**
  * 任务定档就绪（2026-11-12 业务口径）：必须绑定任务完成与输出成果文件。
  * 完成态优先于文件判断；未配置成果类型不展示定档入口；files=null 表示详情清单尚未取回，按加载中处理。
- * 上传口径与服务端门禁一致：draft / final / changed 且详情清单已过滤掉无当前版本的记录；archived 不计。
+ * 上传口径与服务端门禁一致：范围内存在任一 draft / final / changed 文件即可，不比较 doc_type；
+ * 详情清单已过滤掉无当前版本的记录，archived 不计。missingDocTypes 仅用于“一份文件都没有”时的提示。
  */
 export function taskFinalizeReadiness(
   task: Pick<ProjectTask, "status" | "deliverableTypes">,
-  files: readonly { docType: string | null; status: string }[] | null,
+  files: readonly { status: string }[] | null,
 ): TaskFinalizeReadiness {
   if (task.deliverableTypes.length === 0) {
     return { ready: false, blocker: "no-deliverables", missingDocTypes: [] };
@@ -173,15 +174,12 @@ export function taskFinalizeReadiness(
   if (files === null) {
     return { ready: false, blocker: "files-loading", missingDocTypes: [] };
   }
-  const uploadedTypes = new Set(
-    files
-      .filter((file) => file.docType !== null && (file.status === "draft" || file.status === "final" || file.status === "changed"))
-      .map((file) => file.docType as string),
+  const hasUploadedFile = files.some(
+    (file) => file.status === "draft" || file.status === "final" || file.status === "changed",
   );
-  const missingDocTypes = task.deliverableTypes.filter((docType) => !uploadedTypes.has(docType));
-  return missingDocTypes.length === 0
+  return hasUploadedFile
     ? { ready: true, blocker: null, missingDocTypes: [] }
-    : { ready: false, blocker: "missing-files", missingDocTypes };
+    : { ready: false, blocker: "missing-files", missingDocTypes: [...task.deliverableTypes] };
 }
 
 /**

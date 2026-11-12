@@ -38,15 +38,19 @@ test("逾期取消定档时间闸只锁任务负责人，项目经理等项目�
 });
 
 
-test("taskFinalizeReadiness：任务定档必须绑定完成态与逐类成果文件", () => {
+test("taskFinalizeReadiness：任务定档绑定完成态与任一已上传成果文件，不比较文件类型", () => {
   const base = { status: "已完成", deliverableTypes: ["CAD图纸", "技术协议"] };
   const cad = { docType: "CAD图纸", status: "draft" };
   const agreement = { docType: "技术协议", status: "final" };
+  const unmatched = { docType: "合同", status: "final" };
+  const blankType = { docType: null, status: "changed" };
   assert.equal(taskFinalizeReadiness({ ...base, status: "进行中" }, [cad, agreement]).blocker, "not-complete");
   assert.equal(taskFinalizeReadiness({ ...base, deliverableTypes: [] }, [cad]).blocker, "no-deliverables");
   assert.equal(taskFinalizeReadiness(base, null).blocker, "files-loading");
-  assert.deepEqual(taskFinalizeReadiness(base, [cad]).missingDocTypes, ["技术协议"]);
-  assert.equal(taskFinalizeReadiness(base, [cad, agreement]).ready, true);
-  assert.equal(taskFinalizeReadiness(base, [{ docType: "CAD图纸", status: "archived" }, agreement]).blocker, "missing-files");
-  assert.equal(taskFinalizeReadiness({ ...base, status: "提前完成" }, [cad, agreement]).ready, true);
+  assert.equal(taskFinalizeReadiness(base, [cad]).ready, true);
+  assert.equal(taskFinalizeReadiness(base, [unmatched]).ready, true);
+  assert.equal(taskFinalizeReadiness(base, [blankType]).ready, true);
+  assert.deepEqual(taskFinalizeReadiness(base, []).missingDocTypes, ["CAD图纸", "技术协议"]);
+  assert.equal(taskFinalizeReadiness(base, [{ docType: "CAD图纸", status: "archived" }]).blocker, "missing-files");
+  assert.equal(taskFinalizeReadiness({ ...base, status: "提前完成" }, [blankType]).ready, true);
 });

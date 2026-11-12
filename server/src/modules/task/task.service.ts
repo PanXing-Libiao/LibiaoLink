@@ -999,7 +999,7 @@ export class TaskService {
    */
   /**
    * GET /projects/{id}/tasks/{taskId}/can-complete：完成任务预检（UI 置灰依据；不替代事务内强校验 —— 与节点 can-complete 同口径）。
-   * 门禁口径（ADR-024 / A4-20 · 2026-10-29）：合并节点 required_doc 与任务 deliverable_types，配置了成果类型才要求对应上传文件；未配置不要求。
+   * 门禁口径（ADR-024 / A4-20 · 2026-11-12）：合并节点 required_doc 与任务 deliverable_types，配置了成果类型才要求上传文件，且只要范围内存在任一已上传文件即可；文件 doc_type 不参与匹配。未配置不要求文件。
    * draft 文件可完成并返回 R02 提醒；预检与事务内强校验同口径。
    */
   async canComplete(projectId: string, taskId: string): Promise<TaskCanCompleteResponse> {
@@ -1080,8 +1080,8 @@ export class TaskService {
 
   /**
    * POST /projects/{id}/tasks/{taskId}/finalize：任务定档（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态，有二次提示」）。
-   * 口径（2026-11-12）：任务必须已完成（status=done）、至少配置一类输出成果文件，且每类成果均已有已上传文件，才可定档；
-   * 未完成 / 未配置成果类型 → 409 TASK_FINALIZE_NOT_READY；成果文件缺件 → 422 TASK_REQUIRED_DOC_MISSING。
+   * 口径（2026-11-12）：任务必须已完成（status=done）、至少配置一类输出成果文件，且范围内存在任一已上传文件，才可定档；
+   * 文件 doc_type 为空或与配置不一致均不阻止。未完成 / 未配置成果类型 → 409 TASK_FINALIZE_NOT_READY；没有任何成果文件 → 422 TASK_REQUIRED_DOC_MISSING。
    * 通过后置位 finalized_at / finalized_by（version+1、留痕、outbox task.finalized、项目触点）；此后写口一律 409 TASK_FINALIZED（assertTaskMutable）；修改走变更。
    * 防绕过补漏：定档同时撤销该任务在途的 version 上传会话；completeUpload 事务内再复核（会话早于定档发起时状态门禁不够）。
    * 已定档 → 幂等短路（200 原样返回，不写库 / 不递增版本 —— 抽屉开关重复点击 / 与文件定档并发都只生效一次）；version 不匹配 → 409 VERSION_CONFLICT。
@@ -1222,7 +1222,7 @@ export class TaskService {
 
   /**
    * 门禁判定（ADR-024 / A4-20 · 2026-10-29 收敛）：
-   * 1) 合并节点 required_doc 与任务 deliverable_types；配置了成果类型时逐类要求至少上传一份；
+   * 1) 合并节点 required_doc 与任务 deliverable_types；配置了成果类型时，范围内存在任一已上传文件即可；
    * 2) 未配置任何成果类型时不要求文件，不能凭空增加“所有任务都必须有文件”的隐性约束。
    * 上传口径：files.status ∈ (draft, final, changed) 且 current_version_id 非空；draft 放行并给 R02 提醒。
    */
@@ -1701,7 +1701,10 @@ function normalizeDocTypes(values: readonly string[]): Task["deliverableTypes"] 
 
 /** 放行提示（A2-10 / R02）：存在未定档（draft）成果文件时按内置字典顺序、其后自定义顺序出 warning（计数 > 0 才出）。 */
 function buildDraftWarnings(rows: readonly TaskGateDocCountRow[]): TaskGateWarning[] {
-  const counts = new Map(rows.map((row) => [row.docType, row.present]));
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    if (row.docType !== null) counts.set(row.docType, row.present);
+  }
   const docTypes = [...DOC_TYPES, ...[...counts.keys()].filter((docType) => !(DOC_TYPES as readonly string[]).includes(docType))];
   const warnings: TaskGateWarning[] = [];
   for (const docType of docTypes) {

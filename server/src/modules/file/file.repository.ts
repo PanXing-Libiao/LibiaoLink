@@ -5,7 +5,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import { changeRequests } from "../../db/schema/change.js";
 import type { MaterialReissueSnapshot } from "@libiaolink/contracts";
 import { fileLinks, files, fileVersions, uploadSessions } from "../../db/schema/files.js";
-import { nodeRequirements, projectNodes } from "../../db/schema/flow.js";
+import { projectNodes } from "../../db/schema/flow.js";
 import { users } from "../../db/schema/identity.js";
 import { projectStages, projects } from "../../db/schema/projects.js";
 import { tasks } from "../../db/schema/tasks.js";
@@ -295,8 +295,9 @@ export class FileRepository {
   }
 
   /**
-   * 文件定档联动任务定档前置判定（2026-11-12）：任务必须 done、任务自身至少配置一类输出成果，
-   * 且节点 required_doc / 任务 deliverable_types 合并后的每类成果都有已上传文件。
+   * 文件定档联动任务定档前置判定（2026-11-12）：任务必须 done、任务自身至少配置一类非空输出成果，
+   * 且任务自身或所属节点范围内存在任一 draft / final / changed 且 current_version_id 非空的文件。
+   * 文件 doc_type 为空或与任务成果类型不一致均不阻止；节点 required_doc 不替代任务自身成果配置。
    * file 属平台模块、task 属领域模块，边界规则禁止 file → task，故本处只读表，与
    * TaskGateRepository.evaluateFinalization 保持同一口径；两处口径变更必须同步并跑两侧单测。
    */
@@ -307,47 +308,18 @@ export class FileRepository {
       .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt)))
       .limit(1);
     const task = rows[0];
-    if (task === undefined || task.status !== "done" || task.deliverableTypes.length === 0) {
-      return false;
-    }
-
-    const requiredByType = new Map<string, number>();
-    for (const rawDocType of task.deliverableTypes) {
-      const docType = rawDocType.trim();
-      if (docType !== "" && !requiredByType.has(docType)) requiredByType.set(docType, 1);
-    }
-    if (requiredByType.size === 0) return false;
-
-    if (task.nodeId !== null) {
-      const requirements = await client
-        .select({ docType: nodeRequirements.docType, minCount: nodeRequirements.minCount })
-        .from(nodeRequirements)
-        .where(and(eq(nodeRequirements.nodeId, task.nodeId), eq(nodeRequirements.requirementType, "required_doc")));
-      for (const requirement of requirements) {
-        if (requirement.docType === null) continue;
-        requiredByType.set(
-          requirement.docType,
-          Math.max(requiredByType.get(requirement.docType) ?? 0, Number(requirement.minCount)),
-        );
-      }
-    }
+    if (task === undefined || task.status !== "done") return false;
+    if (!task.deliverableTypes.some((docType) => docType.trim() !== "")) return false;
 
     const scope = task.nodeId === null
       ? eq(files.taskId, taskId)
       : (or(eq(files.taskId, taskId), eq(files.nodeId, task.nodeId)) as SQL);
-    const uploadedRows = await client
-      .select({ docType: files.docType, present: count() })
+    const uploaded = await client
+      .select({ id: files.id })
       .from(files)
       .where(and(scope, inArray(files.status, ["draft", "final", "changed"]), isNotNull(files.currentVersionId)))
-      .groupBy(files.docType);
-    const presentByType = new Map<string, number>();
-    for (const row of uploadedRows) {
-      if (row.docType !== null) presentByType.set(row.docType, Number(row.present));
-    }
-    for (const [docType, required] of requiredByType) {
-      if ((presentByType.get(docType) ?? 0) < required) return false;
-    }
-    return true;
+      .limit(1);
+    return uploaded.length > 0;
   }
 
   /** 补发申请：来源任务需校验未删除并取阶段 / 节点 / 标题。 */

@@ -14,7 +14,7 @@ export interface TaskGateScope {
 }
 
 export interface TaskGateDocCountRow {
-  docType: string;
+  docType: string | null;
   present: number;
 }
 
@@ -69,7 +69,8 @@ interface TaskDeliveryTaskRow {
 
 /**
  * 任务完成门禁数据访问（M3-03 · ADR-024）：只读 node_requirements / files，不做任何写。
- * 完成依据 = 已配置成果类型存在至少一份已上传文件（draft / final / changed 且 current_version_id 非空）；
+ * 完成依据 = 任务配置了成果类型（含节点 required_doc 合并项）且范围内存在至少一份已上传文件
+ * （draft / final / changed 且 current_version_id 非空），文件 doc_type 不参与匹配且可为空；
  * 未配置成果类型 = 不要求文件。节点任务按节点挂接文件统计，无节点任务按任务挂接文件统计。
  * 说明：node 模块的 GateService 依赖 task（TaskStatsService），task 反向依赖会成环，
  * 故判定实现落本模块、与 GateService.evaluateNode 保持可解释的边界（node/README.md 已登记收敛点）。
@@ -92,7 +93,7 @@ export class TaskGateRepository {
       .map((row) => ({ docType: row.docType, minCount: Number(row.minCount) }));
   }
 
-  /** 已上传文件计数：draft / final / changed 且 current_version_id 非空。 */
+  /** 已上传文件计数：draft / final / changed 且 current_version_id 非空；保留 doc_type 为空的行用于“任一份文件”判定。 */
   async countUploadedFiles(client: DbClient, scope: TaskGateScope): Promise<TaskGateDocCountRow[]> {
     const rows = await client
       .select({ docType: files.docType, present: count() })
@@ -110,7 +111,8 @@ export class TaskGateRepository {
 
   /**
    * 任务定档统一门禁（2026-11-12）：任务状态必须为 done、任务自身至少配置一类输出成果，且合并后的
-   * 节点 required_doc / 任务 deliverable_types 每类成果都已有 draft / final / changed 且 current_version_id 非空的文件。
+   * 节点 required_doc / 任务 deliverable_types 范围内至少存在一份 draft / final / changed 且
+   * current_version_id 非空的文件；文件 doc_type 为空或不一致均不影响。
    * 注意：节点必交成果不能替代任务自身的输出成果配置；任务 deliverable_types 为空时一律不得定档。
    * 任务定档与文件定档联动任务定档共用本判定，避免从文件入口绕过。
    */
@@ -128,19 +130,19 @@ export class TaskGateRepository {
     };
   }
 
-  /** 未定档（draft）计数：放行提示 warning 与 R02 触发用。 */
+  /** 未定档（draft）计数：放行提示 warning 与 R02 触发用；未填类型的 draft 不进入 warning。 */
   async countDraftFiles(client: DbClient, scope: TaskGateScope): Promise<TaskGateDocCountRow[]> {
     const rows = await client
       .select({ docType: files.docType, present: count() })
       .from(files)
       .where(and(scopeCondition(scope), eq(files.status, "draft"), isNotNull(files.currentVersionId)))
       .groupBy(files.docType);
-    return toDocCountRows(rows);
+    return toDocCountRows(rows).filter((row) => row.docType !== null);
   }
 
   /**
-   * 阶段 / 项目交付齐套状态：逐任务合并节点 required_doc 与任务 deliverable_types，
-   * 仅对配置了成果类型的任务要求文件；未配置 = 不需要文件。
+   * 阶段 / 项目交付齐套状态：逐任务合并节点 required_doc 与任务 deliverable_types；
+   * 配置了成果类型时仅要求范围内存在至少一份已上传文件，未配置 = 不需要文件。
    * deliveryReady 只统计已完成任务中要求已满足的数量，供阶段通知 / 阶段推进判断。
    */
   async evaluateDeliveryStatus(
@@ -211,7 +213,6 @@ export class TaskGateRepository {
       .groupBy(tasks.id, files.docType);
     const uploadedByTask = new Map<string, TaskGateDocCountRow[]>();
     for (const row of fileRows) {
-      if (row.docType === null) continue;
       const current = uploadedByTask.get(row.taskId) ?? [];
       current.push({ docType: row.docType, present: Number(row.present) });
       uploadedByTask.set(row.taskId, current);
@@ -268,14 +269,13 @@ export function missingDeliveryRequirements(
   requirements: readonly TaskDeliveryRequirement[],
   uploaded: readonly TaskGateDocCountRow[],
 ): TaskDeliveryMissing[] {
-  const presentByType = new Map(uploaded.map((row) => [row.docType, row.present]));
-  return requirements
-    .filter((requirement) => (presentByType.get(requirement.docType) ?? 0) < requirement.minCount)
-    .map((requirement) => ({
-      docType: requirement.docType,
-      required: requirement.minCount,
-      present: presentByType.get(requirement.docType) ?? 0,
-    }));
+  if (requirements.length === 0) return [];
+  if (uploaded.some((row) => row.present > 0)) return [];
+  return requirements.map((requirement) => ({
+    docType: requirement.docType,
+    required: requirement.minCount,
+    present: 0,
+  }));
 }
 
 function scopeCondition(scope: TaskGateScope): SQL {
@@ -284,7 +284,5 @@ function scopeCondition(scope: TaskGateScope): SQL {
 }
 
 function toDocCountRows(rows: { docType: string | null; present: number }[]): TaskGateDocCountRow[] {
-  return rows
-    .filter((row): row is { docType: string; present: number } => row.docType !== null)
-    .map((row) => ({ docType: row.docType, present: Number(row.present) }));
+  return rows.map((row) => ({ docType: row.docType, present: Number(row.present) }));
 }
