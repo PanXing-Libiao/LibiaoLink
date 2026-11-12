@@ -1420,6 +1420,7 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "sac.addedTitle": "이미 프로젝트에 있음",
   "sac.summary": "{nodes}개 노드 · {templates}개 템플릿",
   "sac.closeAria": "닫기",
+  "sac.dragAria": "패널 이동 (방향 키로도 이동 가능)",
   "sac.tab.nodes": "작업 노드",
   "sac.previewPrefix": "템플릿 미리보기 · ",
   "sac.added": "{n} 추가됨",

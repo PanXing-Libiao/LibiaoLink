@@ -1,4 +1,12 @@
-> **2026-11-12 10:45 项目归档改为任务全部完成即可（测试机增量 · PR #824 / codex/archive-task-complete@2a894be5；正式生产不部署）**：旧实现把验收阶段完成、文件全部定档、节点必交成果齐全误当成归档前置。现改为项目内未删除任务全部 done 即可归档；有未完成任务返回 409 `ARCHIVE_NOT_READY`，`confirm=true` 不可越过；文件是否定档、必交成果是否齐全不再阻断。新归档 `acknowledgedMissing` 恒为空数组，旧缺项类型仅用于读取历史归档。前端「已归档」提示同步改为「项目任务全部完成后即可归档。」，四语与归档单测、UI 回放脚本、ADR / 需求文档同步。
+> **2026-11-12 13:02 项目归档改为任务全部完成即可（正式机增量 · PR #824 / codex/archive-task-complete@7551b71d）**：项目内未删除任务全部 done 即可归档；有未完成任务返回 409 `ARCHIVE_NOT_READY`，`confirm=true` 不可越过；文件是否定档、必交成果是否齐全不再阻断。正式机保留既有任务定档 / 取消定档与输出成果配置，仅叠加归档服务端模块与四语前端提示。
+>
+> **发布件**：`archive-task-complete-prod-overlay.tar.gz` 643,745 B · SHA-256 `6d7e68545aacdd6db5406f4323e02d66516d05f484d0d94f0a9ae3fb9eb9535c` · 8 文件；含 server 归档模块 6 个编译文件、`index.html` 522 B · `6f03f461…`、主 JS `assets/index-e1fb3Uii.js` 2,232,111 B · `cb5d16ea…`。CSS `index-CZ5UyZQJ.css` 216,015 B · `8b99d67c…` 未变，继续使用正式机现值。
+>
+> **正式机**：release = `prod-20261112-1256-px-archive-task-complete-7551b71d`，previous = `prod-20261112-1245-px-task-finalize-deliverable-gate-9cd6a068`；staging `/srv/data/deploy-prod-20261112-1256-px-archive-task-complete-7551b71d`，备份 `/srv/data/backups/before-prod-20261112-1256-px-archive-task-complete-7551b71d/`（原前端 `frontend-before.tar.gz` 670,828 B · `4e0d06bd…`、原归档模块 `server-archive-before.tar.gz` 10,548 B · `a5f4a57c…`、原 manifest 17,392 B · `abaa08ff…`）；新 manifest 15,306 B · `64147279…`，`activeIncrementalRelease` 已切到本 release。
+>
+> **验收 / 边界 / 回滚**：安装后 8 / 8 目标文件哈希与发布件一致，公网 HTML / JS / CSS 哈希逐字节一致；站点 `/`、`/healthz`、`/readyz` 均 200，四项就绪探针全 true，未登录 `/api/v1/projects` 401；8 / 8 容器 healthy，RestartCount / OOM 0。api / worker 部署窗口 error / exception / fatal 0 命中；web 未重启，04:57:27–30 因 api 重启出现 6 条 notifications/stream 上游断开日志，04:58:00Z 起 0 命中。仅用潘兴账号打开自己的 `test—cad` 编辑弹窗选择「已归档」，显示「项目任务全部完成后即可归档。」，随后取消、未保存任何项目改动，console error 0。仅替换前端 2 文件与服务端归档模块 6 文件，保留 9cd6a068 任务定档 / 输出成果配置、51315998 服务端、CAD、shared 与数据库；未改 DDL / Compose / env / Secret，仅重启 api / worker。回滚恢复备份中的前端、归档模块与原 manifest，再执行同一 Compose restart api worker。
+
+> **2026-11-12 10:45 项目归档改为任务全部完成即可（测试机增量 · PR #824 / codex/archive-task-complete@2a894be5；正式机随后于 13:02 增量部署）**：旧实现把验收阶段完成、文件全部定档、节点必交成果齐全误当成归档前置。现改为项目内未删除任务全部 done 即可归档；有未完成任务返回 409 `ARCHIVE_NOT_READY`，`confirm=true` 不可越过；文件是否定档、必交成果是否齐全不再阻断。新归档 `acknowledgedMissing` 恒为空数组，旧缺项类型仅用于读取历史归档。前端「已归档」提示同步改为「项目任务全部完成后即可归档。」，四语与归档单测、UI 回放脚本、ADR / 需求文档同步。
 >
 > **发布件**：`archive-task-complete-overlay.tar.gz` 643,209 B · SHA-256 `84ee3cf7074f359be276ff6a3684b5aa85d3852501f151a99e02dbf734a995b5` · 8 文件；含 server 归档模块 6 个编译文件、`index.html` 522 B · `ac8ae5d2…`、主 JS `assets/index-DihJWn69.js` 2,230,481 B · `61dd278f…`。CSS `index-CZ5UyZQJ.css` 216,015 B · `8b99d67c…` 未变，继续使用测试机现值。
 >
