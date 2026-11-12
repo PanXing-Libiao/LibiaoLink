@@ -241,11 +241,10 @@ try {
   const followB1 = await call("POST", "/api/v1/follows", { objectType: "task", objectId: taskB1.body?.id });
   check("F8", "归档前：项目 B + 任务 B1 均可关注（201 x 2）", "201 x 2", followB.status + " / " + followB1.status, createdB.status === 201 && followB.status === 201 && followB1.status === 201);
 
-  await db.query("update project_stages set status = $2, advanced_at = now() where project_id = $1 and stage_key = $3", [projectB, "done", "acceptance"]);
-  await db.query("update projects set stage_key = $2 where id = $1", [projectB, "acceptance"]);
+  await db.query("update tasks set status = $2, updated_at = now() where id = $1", [taskB1.body?.id, "done"]);
   const beforeArchiveB = await call("GET", "/api/v1/projects/" + projectB);
-  const archiveB = await call("POST", "/api/v1/projects/" + projectB + "/archive", { version: beforeArchiveB.body?.version, confirm: true });
-  check("F9", "归档项目 B（真实归档端点：acceptance 造态 + confirm=true 越过缺项）", "200 / status=archived", archiveB.status + " " + short({ status: archiveB.body?.status ?? archiveB.body?.project?.status ?? null }, 120), beforeArchiveB.status === 200 && archiveB.status === 200);
+  const archiveB = await call("POST", "/api/v1/projects/" + projectB + "/archive", { version: beforeArchiveB.body?.version, confirm: false });
+  check("F9", "归档项目 B（真实归档端点：任务全部完成即归档，文件与成果不阻断）", "200 / status=archived", archiveB.status + " " + short({ status: archiveB.body?.status ?? archiveB.body?.project?.status ?? null }, 120), beforeArchiveB.status === 200 && archiveB.status === 200);
 
   const followArchivedProject = await call("POST", "/api/v1/follows", { objectType: "project", objectId: projectB });
   const followArchivedTask = await call("POST", "/api/v1/follows", { objectType: "task", objectId: taskB1.body?.id });

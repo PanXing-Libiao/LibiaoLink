@@ -712,7 +712,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** 项目归档（门禁：验收阶段完成 + 成果文件齐全性检查；缺项 422 返回清单，confirm=true 确认越过后归档并生成清单） */
+        /** 项目归档（门禁：项目内未删除任务全部完成；有未完成任务 409 ARCHIVE_NOT_READY 且 confirm 不可越过；通过后置位并生成引用式清单） */
         post: {
             parameters: {
                 query?: never;
@@ -12374,19 +12374,19 @@ export interface components {
             deletedAt: components["schemas"]["DateTime"] & (string | null);
             deletedBy: components["schemas"]["Uuid"] & (string | null);
         };
-        /** @description 归档请求：version 必带；缺项越过分两步（先 422 拿清单，再 confirm=true 重试） */
+        /** @description 归档请求：version 必带；confirm 仅兼容旧客户端，当前忽略 */
         ProjectArchiveBody: {
             version: components["schemas"]["Version"] & unknown;
             /**
-             * @description 缺项确认：false（缺省）= 有缺项即 422；true = 确认带缺项归档（缺项入清单 acknowledgedMissing）
+             * @description 旧契约兼容字段：当前忽略；归档只校验任务是否全部完成，true 不能绕过 ARCHIVE_NOT_READY
              * @default false
              */
             confirm: boolean;
         };
-        /** @description 归档缺项条目（确认越过时原样入清单 acknowledgedMissing） */
+        /** @description 归档缺项条目（历史兼容；2026-11-12 起新归档 acknowledgedMissing 恒为空） */
         ProjectArchiveMissing: {
             /**
-             * @description 缺项类型：task_not_done 未完成任务 / file_not_final 未定档文件 / doc_missing 必交成果缺件（A4-20 口径）
+             * @description 缺项类型：task_not_done 未完成任务；file_not_final / doc_missing 仅用于读取历史归档记录，新归档不再产生
              * @enum {string}
              */
             code: "task_not_done" | "file_not_final" | "doc_missing";
@@ -12400,7 +12400,7 @@ export interface components {
         ProjectArchiveSnapshot: {
             stage: {
                 stageKey: components["schemas"]["StageKey"];
-                /** @description 阶段状态（归档时点；验收阶段应为 done） */
+                /** @description 阶段状态（仅归档时点快照；不再要求已完成） */
                 status: string;
                 advancedAt: components["schemas"]["DateTime"] & (string | null);
             };
@@ -12465,7 +12465,7 @@ export interface components {
             /** @description 归档操作人姓名（users.display_name；取不到 = null） */
             archivedByName: string | null;
             snapshot: components["schemas"]["ProjectArchiveSnapshot"];
-            /** @description 确认越过的缺项清单（无缺项 = 空数组） */
+            /** @description 旧流程缺项留痕（历史兼容；2026-11-12 起新归档恒为空数组） */
             acknowledgedMissing: components["schemas"]["ProjectArchiveMissing"][];
         };
         /** @description 创建项目：项目序号 seqNo 不接受传入，由服务端分配并随响应返回 */

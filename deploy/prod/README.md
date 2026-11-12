@@ -1,3 +1,25 @@
+> **2026-11-12 13:06 正式机最终线上状态（wmj 1300 合并携带归档修复）**：13:02 归档版本上线后，wmj 于 13:02 并发发布 `prod-20261112-1300-wmj-stage-add-card-cdc9a661`，明确以 `prod-20261112-1256-px-archive-task-complete-7551b71d` 为 previous，保留本次 1256 归档服务端热修与四语文案，并合入 stage-add-card。
+>
+> **最终线上**：release = `prod-20261112-1300-wmj-stage-add-card-cdc9a661`；`index.html` 522 B · `e71c16c7…`、主 JS `assets/index-BXYRQqOn.js` 2,236,514 B · `d474841f…`；新归档提示命中 1 次、旧提示 0 次，`deliverableTypes` 保留。当前 manifest 7,032 B · `6d9bbdb9…`，`activeIncrementalRelease` 指向 wmj release。
+>
+> **验收 / 回滚**：公网 HTML / JS / CSS 哈希与安装件一致，`/`、`/healthz`、`/readyz` 200，四项探针 true，未登录 401，8 / 8 容器 healthy。仅用潘兴账号打开自己的 `test—cad` 编辑弹窗选择「已归档」，显示「项目任务全部完成后即可归档。」，随后取消、未保存项目改动，console error 0。归档回滚点仍为 `/srv/data/backups/before-prod-20261112-1256-px-archive-task-complete-7551b71d/`；wmj 发布的完整前端回滚点为 `/srv/data/backups/before-prod-20261112-1300-wmj-stage-add-card-cdc9a661/`。
+
+> **2026-11-12 13:02 项目归档改为任务全部完成即可（正式机增量 · PR #824 / codex/archive-task-complete@7551b71d）**：项目内未删除任务全部 done 即可归档；有未完成任务返回 409 `ARCHIVE_NOT_READY`，`confirm=true` 不可越过；文件是否定档、必交成果是否齐全不再阻断。正式机保留既有任务定档 / 取消定档与输出成果配置，仅叠加归档服务端模块与四语前端提示。
+>
+> **发布件**：`archive-task-complete-prod-overlay.tar.gz` 643,745 B · SHA-256 `6d7e68545aacdd6db5406f4323e02d66516d05f484d0d94f0a9ae3fb9eb9535c` · 8 文件；含 server 归档模块 6 个编译文件、`index.html` 522 B · `6f03f461…`、主 JS `assets/index-e1fb3Uii.js` 2,232,111 B · `cb5d16ea…`。CSS `index-CZ5UyZQJ.css` 216,015 B · `8b99d67c…` 未变，继续使用正式机现值。
+>
+> **正式机**：release = `prod-20261112-1256-px-archive-task-complete-7551b71d`，previous = `prod-20261112-1245-px-task-finalize-deliverable-gate-9cd6a068`；staging `/srv/data/deploy-prod-20261112-1256-px-archive-task-complete-7551b71d`，备份 `/srv/data/backups/before-prod-20261112-1256-px-archive-task-complete-7551b71d/`（原前端 `frontend-before.tar.gz` 670,828 B · `4e0d06bd…`、原归档模块 `server-archive-before.tar.gz` 10,548 B · `a5f4a57c…`、原 manifest 17,392 B · `abaa08ff…`）；新 manifest 15,306 B · `64147279…`，`activeIncrementalRelease` 已切到本 release。
+>
+> **验收 / 边界 / 回滚**：安装后 8 / 8 目标文件哈希与发布件一致，公网 HTML / JS / CSS 哈希逐字节一致；站点 `/`、`/healthz`、`/readyz` 均 200，四项就绪探针全 true，未登录 `/api/v1/projects` 401；8 / 8 容器 healthy，RestartCount / OOM 0。api / worker 部署窗口 error / exception / fatal 0 命中；web 未重启，04:57:27–30 因 api 重启出现 6 条 notifications/stream 上游断开日志，04:58:00Z 起 0 命中。仅用潘兴账号打开自己的 `test—cad` 编辑弹窗选择「已归档」，显示「项目任务全部完成后即可归档。」，随后取消、未保存任何项目改动，console error 0。仅替换前端 2 文件与服务端归档模块 6 文件，保留 9cd6a068 任务定档 / 输出成果配置、51315998 服务端、CAD、shared 与数据库；未改 DDL / Compose / env / Secret，仅重启 api / worker。回滚恢复备份中的前端、归档模块与原 manifest，再执行同一 Compose restart api worker。
+
+> **2026-11-12 10:45 项目归档改为任务全部完成即可（测试机增量 · PR #824 / codex/archive-task-complete@2a894be5；正式机随后于 13:02 增量部署）**：旧实现把验收阶段完成、文件全部定档、节点必交成果齐全误当成归档前置。现改为项目内未删除任务全部 done 即可归档；有未完成任务返回 409 `ARCHIVE_NOT_READY`，`confirm=true` 不可越过；文件是否定档、必交成果是否齐全不再阻断。新归档 `acknowledgedMissing` 恒为空数组，旧缺项类型仅用于读取历史归档。前端「已归档」提示同步改为「项目任务全部完成后即可归档。」，四语与归档单测、UI 回放脚本、ADR / 需求文档同步。
+>
+> **发布件**：`archive-task-complete-overlay.tar.gz` 643,209 B · SHA-256 `84ee3cf7074f359be276ff6a3684b5aa85d3852501f151a99e02dbf734a995b5` · 8 文件；含 server 归档模块 6 个编译文件、`index.html` 522 B · `ac8ae5d2…`、主 JS `assets/index-DihJWn69.js` 2,230,481 B · `61dd278f…`。CSS `index-CZ5UyZQJ.css` 216,015 B · `8b99d67c…` 未变，继续使用测试机现值。
+>
+> **测试机**：release = `test-20261112-1045-px-archive-task-complete-2a894be5`，previous = `test-20261112-0938-px-task-gate-any-upload-7784a493`；staging `/srv/data/deploy-test-20261112-1045-px-archive-task-complete-2a894be5`，备份 `/srv/data/backups/before-test-20261112-1045-px-archive-task-complete-2a894be5/`（原归档模块 `server-archive-before.tar.gz` 10,680 B · `810ef0df…`、原前端 `frontend-before.tar.gz` 670,486 B · `4e23e1a1…`、原 manifest 9,082 B · `68dce635…`）；新 manifest 10,108 B · `ef293373…`，`activeIncrementalRelease` 已切到本 release。
+>
+> **验收 / 边界 / 回滚**：安装后 8 / 8 文件哈希与发布件一致，公网 HTML / JS / CSS 哈希逐字节一致；站点 `/`、`/healthz`、`/readyz` 均 200，四项就绪探针全 true，未登录 `/api/v1/projects` 401；api / worker / web healthy，RestartCount / OOM 0，重启后近 15 分钟 error / exception / fatal 0 命中。刷新真实浏览器后，编辑项目选择「已归档」显示「项目任务全部完成后即可归档。」，本次未保存任何项目改动。仅重启 api / worker，未改数据库 / DDL / shared / 依赖 / Compose / env / Secret / web / CAD / Pro 权限 / 任务门禁 / 日报查询。回滚恢复备份中的 server 归档模块、原 HTML / 旧主 JS 与原 manifest，再执行同一 Compose restart api worker；正式机 `10.1.103.44` 未触碰。
+
 > **2026-11-11 21:18 个人权限跨部门规则回显与撤销修复（测试机 + 正式机 · PR #822 / main@f7472670）**：PR #822 的 6 / 6 CI 通过后 squash 合入 `main@f7472670`（树 `38565f37`），从干净 detached main 工作树执行 `npm run typecheck`、`npm run build`。个人权限页按人员跨全部部门查找既有个人规则，编辑区加载规则并显示来源部门；保存沿用原规则所属部门，“恢复部门默认”一次清除该人员所有部门的个人规则并清空草稿。
 >
 > **发布件**：两台使用同一 `frontend-dist.tar.gz`，667,633 B · `7cf3b1e5636b32f84454b3ef91f2c4b0cd5eddd1dce9c9f754cda48df4d5e085` · 3 文件；内含 `index.html` 522 B · `4b3a9810725899219985121218b14a33416908e75bc222817419c4dbe8446915`、`assets/index-DOYHFifX.js` 2,230,937 B · `959ce0449944cad5865249e21558a37fa5e376e4af8d3f73c65d0596fb79f926`、`assets/index-CZ5UyZQJ.css` 216,015 B · `8b99d67c9640bf1f6e93c0566c4525bca47479697826e45b1341eb33eef74855`。正式机 `release-files.json` 764 B · `26f47bdb1f7aac8f2dcc05821c4e89d6a86d9582268fe8271986ed23dc91d380`。

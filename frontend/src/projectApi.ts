@@ -184,8 +184,8 @@ export function updateProject(id: string, input: ProjectWriteInput, version: num
 
 /**
  * 项目归档（M7-04 · C4-02 / C4-03 · ADR-027；Push 262 编辑弹窗「已归档」接线）：`PATCH` 不收 archived，归档只能走本端点 ——
- * 硬前置 = 验收阶段完成（未完成 409 ARCHIVE_NOT_READY，不可越过）；缺项首次 422 ARCHIVE_GATE_NOT_PASSED（明细在 ApiError.details），
- * `confirm=true` 二次确认后带缺项归档（缺项随清单 acknowledgedMissing 留痕）。
+ * 门禁 = 项目内未删除任务全部完成（未完成 409 ARCHIVE_NOT_READY，confirm=true 不可越过）；
+ * 文件定档 / 必交成果不再阻断。confirm 仅保留为旧客户端兼容字段。
  */
 export type ProjectArchiveResult = {
   id: string;
