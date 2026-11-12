@@ -21,9 +21,10 @@
  *           或 项目项目经理含我（本回放项目 managerIds = admin）+ 未完成、不限完成日期窗口：默认待分配（无日期）→ unscheduled；
  *           指派我 + 昨天 → overdue、今天 → today、明天与今天 + 400 天 → upcoming（原 7 天窗口取消）；
  *           清空负责人（待分配）+ 无日期仍命中未排期（项目经理口径）。我的问题两栏（我处理 ownerId / 我提出的 reporterId）双命中双列。
- *   证据七（归档 · M7-04 · C4-02 / C4-03 · ADR-027）：验收完成硬前置 → 首次归档 422 ARCHIVE_GATE_NOT_PASSED（缺项明细
- *           + 失败留痕 + 不置位）→ confirm=true 确认越过 200（置 archived + 引用式清单 + 成功留痕）→ 清单读面 GET /archive
- *           → PATCH 不再接受 archived（400，契约收紧）→ 归档检索 filter[archivedYear] 命中。
+ *   证据七（归档 · M7-04 · C4-02 / C4-03 · ADR-027）：任务全部完成门禁 → 有未完成任务 409 ARCHIVE_NOT_READY
+ *           （confirm=true 不可越过 + 不置位 + 不写清单）→ 任务全部 done 后 confirm=false 直接归档 200
+ *           （置 archived + 引用式清单 + 成功留痕）→ 清单读面 GET /archive → PATCH 不再接受 archived（400，契约收紧）
+ *           → 归档检索 filter[archivedYear] 命中。
  *   证据八（归档写保护 · ADR-027）：归档项目写保护（G4：日报填报 / 问题处理 / 任务删除均 409 PROJECT_ARCHIVED）
  *           + 归档后工作台整项目剔除（W7：任务四组 / 问题两栏零残留）—— 项目由证据七真实归档端点置位。
  *
@@ -418,34 +419,33 @@ try {
   const wsFull302 = unassignedHit !== null && handlingHit !== null && wsProjectCard302 !== null && unassignedHit.projectName === created.body?.name && Array.isArray(unassignedHit.files) && unassignedHit.files.length === 0 && Array.isArray(unassignedHit.deliverableTypes) && unassignedHit.deliverableTypes.length === 0 && Array.isArray(unassignedHit.changeLinks) && unassignedHit.changeLinks.length === 0 && typeof unassignedHit.version === "number" && unassignedHit.version >= 0 && handlingHit.solution === null && Array.isArray(handlingHit.photos) && handlingHit.photos.length === 0 && wsProjectCard302.code === created.body?.code && wsProjectCard302.managerIds.indexOf(adminId) >= 0;
   check("W6b", "Push 302 全字段修订：任务行随行 projectName / files / deliverableTypes / changeLinks / version，问题行随行 solution / photos，响应随盘 projects 卡（managerNames / managerIds / version）", "行字段齐全（空值不丢键）+ 项目卡命中", short({ projectName: unassignedHit?.projectName ?? null, files: unassignedHit?.files?.length ?? null, deliverables: unassignedHit?.deliverableTypes?.length ?? null, changes: unassignedHit?.changeLinks?.length ?? null, version: unassignedHit?.version ?? null, solution: handlingHit?.solution ?? "-", photos: handlingHit?.photos?.length ?? null, card: wsProjectCard302 === null ? null : { code: wsProjectCard302.code, managers: wsProjectCard302.managerNames, version: wsProjectCard302.version } }, 260), wsFull302 === true);
 
-  // ---------- 证据七：归档（M7-04 · C4-02 / C4-03 · ADR-027）：门禁 → 确认越过 → 清单 → 只读 → 检索 ----------
-  // 硬前置「验收完成」：回放不推进九阶段，直接造态（acceptance 行 done + 当前阶段指到 acceptance）。
-  await db.query("update project_stages set status = $2, advanced_at = now() where project_id = $1 and stage_key = $3", [cleanup.projectId, "done", "acceptance"]);
-  await db.query("update projects set stage_key = $2 where id = $1", [cleanup.projectId, "acceptance"]);
+  // ---------- 证据七：归档（M7-04 · C4-02 / C4-03 · ADR-027）：任务完成门禁 → 直接归档 → 清单 → 只读 → 检索 ----------
+  // 2026-11-12 业务口径：只校验项目内未删除任务全部 done；阶段是否推进、文件是否定档、必交成果是否齐全均不阻断。
   const beforeArchive = await call("GET", API);
   const archiveVersion = beforeArchive.body?.version;
-  check("A1", "归档前置：项目读到验收阶段（stageKey=acceptance）与当前 version", "200 stageKey=acceptance version>=0", beforeArchive.status + " " + short({ stageKey: beforeArchive.body?.stageKey, version: archiveVersion }, 140), beforeArchive.status === 200 && beforeArchive.body?.stageKey === "acceptance" && Number.isInteger(archiveVersion) && archiveVersion >= 0);
+  check("A1", "归档前置：项目可读 + 当前 version（阶段完成不再是门禁）", "200 + version>=0", beforeArchive.status + " " + short({ stageKey: beforeArchive.body?.stageKey, version: archiveVersion }, 140), beforeArchive.status === 200 && Number.isInteger(archiveVersion) && archiveVersion >= 0);
 
-  const gateRejected = await call("POST", API + "/archive", { version: archiveVersion });
+  const gateRejected = await call("POST", API + "/archive", { version: archiveVersion, confirm: true });
   const gateCodes = (gateRejected.body?.details ?? []).map((item) => item.code);
-  check("A2", "归档门禁：有缺项且未确认 -> 422 ARCHIVE_GATE_NOT_PASSED（details 带缺项明细）", "422 ARCHIVE_GATE_NOT_PASSED + details 含 task_not_done", gateRejected.status + " " + (gateRejected.body?.code ?? "-") + " " + short(gateCodes, 160), gateRejected.status === 422 && gateRejected.body?.code === "ARCHIVE_GATE_NOT_PASSED" && gateCodes.indexOf("task_not_done") >= 0 && (gateRejected.body?.details ?? []).every((item) => item.path === "missing" && typeof item.message === "string"));
+  check("A2", "有未完成任务：confirm=true 仍 409 ARCHIVE_NOT_READY（details 带 task_not_done）", "409 ARCHIVE_NOT_READY + details 含 task_not_done", gateRejected.status + " " + (gateRejected.body?.code ?? "-") + " " + short(gateCodes, 160), gateRejected.status === 409 && gateRejected.body?.code === "ARCHIVE_NOT_READY" && gateCodes.indexOf("task_not_done") >= 0 && (gateRejected.body?.details ?? []).every((item) => item.path === "missing" && typeof item.message === "string"));
 
   const afterReject = await call("GET", API);
-  const failedAudit = await db.query("select count(*)::int as n from audit_logs where project_id = $1 and action = $2 and result = $3", [cleanup.projectId, "archive", "failed"]);
-  check("A3", "门禁拒绝：不置位（仍 active）+ 写失败留痕（audit archive / failed）", "200 status=active + audit failed>=1", afterReject.status + " " + short({ status: afterReject.body?.status, failed: failedAudit.rows[0].n }, 140), afterReject.status === 200 && afterReject.body?.status === "active" && failedAudit.rows[0].n >= 1);
+  const rejectedArchives = await db.query("select count(*)::int as n from project_archives where project_id = $1", [cleanup.projectId]);
+  check("A3", "门禁拒绝：不置位（仍 active）+ 不写归档清单", "200 status=active + archives=0", afterReject.status + " " + short({ status: afterReject.body?.status, archives: rejectedArchives.rows[0].n }, 140), afterReject.status === 200 && afterReject.body?.status === "active" && rejectedArchives.rows[0].n === 0);
 
-  const confirmed = await call("POST", API + "/archive", { version: archiveVersion, confirm: true });
-  const confirmedSnapshot = confirmed.body?.snapshot;
-  const ackCodes = (confirmed.body?.acknowledgedMissing ?? []).map((item) => item.code);
-  const afterConfirm = await call("GET", API);
-  const snapshotOk = confirmedSnapshot !== undefined && confirmedSnapshot !== null && confirmedSnapshot.stage?.stageKey === "acceptance" && confirmedSnapshot.tasks?.total >= 2 && Array.isArray(confirmedSnapshot.files?.items) && confirmedSnapshot.reports?.total >= 1 && confirmedSnapshot.issues?.total >= 1 && confirmedSnapshot.issues?.byState?.open >= 1 && confirmedSnapshot.issues?.byState?.unassigned === undefined;
-  check("A4", "确认越过（confirm=true）-> 200：置 archived + 引用式清单落库（缺项随 acknowledgedMissing 留痕；问题三态快照）", "200 projectId/archivedBy 对齐 + status=archived + archivedAt 非空 + snapshot 齐全 + ack 含 task_not_done", confirmed.status + " " + short({ id: confirmed.body?.id, projectId: confirmed.body?.projectId, archivedBy: confirmed.body?.archivedBy, ack: ackCodes, tasks: confirmedSnapshot?.tasks?.total, files: confirmedSnapshot?.files?.total, reports: confirmedSnapshot?.reports?.total, issues: confirmedSnapshot?.issues?.total, issueStates: confirmedSnapshot?.issues?.byState, projectStatus: afterConfirm.body?.status }, 320), confirmed.status === 200 && confirmed.body?.projectId === cleanup.projectId && typeof confirmed.body?.id === "string" && confirmed.body?.archivedBy === adminId && typeof confirmed.body?.archivedAt === "string" && ackCodes.indexOf("task_not_done") >= 0 && snapshotOk && afterConfirm.status === 200 && afterConfirm.body?.status === "archived" && afterConfirm.body?.archivedAt !== null);
+  await db.query("update tasks set status = $2, updated_at = now() where project_id = $1 and deleted_at is null", [cleanup.projectId, "done"]);
+  const archived = await call("POST", API + "/archive", { version: archiveVersion, confirm: false });
+  const archivedSnapshot = archived.body?.snapshot;
+  const ackCodes = (archived.body?.acknowledgedMissing ?? []).map((item) => item.code);
+  const afterArchive = await call("GET", API);
+  const snapshotOk = archivedSnapshot !== undefined && archivedSnapshot !== null && archivedSnapshot.stage?.stageKey === beforeArchive.body?.stageKey && archivedSnapshot.tasks?.total >= 1 && archivedSnapshot.tasks?.byStatus?.done === archivedSnapshot.tasks?.total && Array.isArray(archivedSnapshot.files?.items) && archivedSnapshot.reports?.total >= 1 && archivedSnapshot.issues?.total >= 1 && archivedSnapshot.issues?.byState?.open >= 1 && archivedSnapshot.issues?.byState?.unassigned === undefined;
+  check("A4", "全部任务完成（confirm=false）→ 200：置 archived + 引用式清单落库（acknowledgedMissing=[]；问题三态快照）", "200 projectId/archivedBy 对齐 + status=archived + archivedAt 非空 + snapshot 齐全 + ack=[]", archived.status + " " + short({ id: archived.body?.id, projectId: archived.body?.projectId, archivedBy: archived.body?.archivedBy, ack: ackCodes, tasks: archivedSnapshot?.tasks, files: archivedSnapshot?.files?.total, reports: archivedSnapshot?.reports?.total, issues: archivedSnapshot?.issues?.total, issueStates: archivedSnapshot?.issues?.byState, projectStatus: afterArchive.body?.status }, 320), archived.status === 200 && archived.body?.projectId === cleanup.projectId && typeof archived.body?.id === "string" && archived.body?.archivedBy === adminId && typeof archived.body?.archivedAt === "string" && Array.isArray(archived.body?.acknowledgedMissing) && archived.body.acknowledgedMissing.length === 0 && snapshotOk && afterArchive.status === 200 && afterArchive.body?.status === "archived" && afterArchive.body?.archivedAt !== null);
 
   const archiveRead = await call("GET", API + "/archive");
-  check("A5", "归档清单读面：GET /archive 200（与写面同形；未归档项目 404 见单测）", "200 同 id / 同 projectId / 同任务数", archiveRead.status + " " + short({ id: archiveRead.body?.id, tasks: archiveRead.body?.snapshot?.tasks?.total }, 140), archiveRead.status === 200 && archiveRead.body?.id === confirmed.body?.id && archiveRead.body?.projectId === cleanup.projectId && archiveRead.body?.snapshot?.tasks?.total === confirmedSnapshot?.tasks?.total);
+  check("A5", "归档清单读面：GET /archive 200（与写面同形；未归档项目 404 见单测）", "200 同 id / 同 projectId / 同任务数", archiveRead.status + " " + short({ id: archiveRead.body?.id, tasks: archiveRead.body?.snapshot?.tasks?.total }, 140), archiveRead.status === 200 && archiveRead.body?.id === archived.body?.id && archiveRead.body?.projectId === cleanup.projectId && archiveRead.body?.snapshot?.tasks?.total === archivedSnapshot?.tasks?.total);
 
-  const afterConfirmVersion = afterConfirm.body?.version;
-  const patchArchived = await call("PATCH", API, { version: afterConfirmVersion, status: "archived" });
+  const afterArchiveVersion = afterArchive.body?.version;
+  const patchArchived = await call("PATCH", API, { version: afterArchiveVersion, status: "archived" });
   check("A6", "契约收紧反证：PATCH 项目不再接受 status=archived（归档只能走归档端点）", "400 VALIDATION_FAILED", patchArchived.status + " " + (patchArchived.body?.code ?? "-"), patchArchived.status === 400 && patchArchived.body?.code === "VALIDATION_FAILED");
 
   const archivedYear = Number(today.slice(0, 4));
@@ -528,7 +528,7 @@ lines.push(...report);
 lines.push("");
 lines.push("## 汇总");
 lines.push("");
-lines.push(failures === 0 ? "- 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：日报填报（A3-02 / A3-04 · 同日多条）+ 提交副作用幂等与附图转挂（A3-09）+ A3-08 停用 + 三态与留痕（A3-10 / A3-13）+ 成对删除 + 引用守卫（A2-01）+ 当日汇总与应填未填（A7-01 / A7-05）+ 工作台四组两栏（A6-01 / A6-03 · 2026-09-30 复评口径）+ 归档门禁 / 确认越过 / 清单 / 检索（M7-04 · C4-02 / C4-03）+ 归档写保护。" : "- 有 " + failures + " 项失败，见上方 FAIL 行。");
+lines.push(failures === 0 ? "- 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：日报填报（A3-02 / A3-04 · 同日多条）+ 提交副作用幂等与附图转挂（A3-09）+ A3-08 停用 + 三态与留痕（A3-10 / A3-13）+ 成对删除 + 引用守卫（A2-01）+ 当日汇总与应填未填（A7-01 / A7-05）+ 工作台四组两栏（A6-01 / A6-03 · 2026-09-30 复评口径）+ 归档任务完成门禁 / 清单 / 检索（M7-04 · C4-02 / C4-03）+ 归档写保护。" : "- 有 " + failures + " 项失败，见上方 FAIL 行。");
 lines.push("");
 lines.push("## 验收对照（M6-01 ~ M6-03 + M6-01 收口 + M6-05（2026-09-30 口径复评）+ M7-04 · Push 215）");
 lines.push("");
@@ -541,7 +541,7 @@ lines.push("- 成对删除（Push 215）= G1 / G2：DELETE 日报 = 连带派生
 lines.push("- A2-01（删除引用守卫，Push 215 口径）= G3 / G4：被问题引用的任务 409（details[].code = issue_ref）；日报一侧 report_ref 随「关联任务改关联阶段」删除；无引用任务可删、重复删除 404。");
 lines.push("- A7-01（当日汇总）= S1 / S2：只算已提交条目（草稿不计入正文与人数；同一人多条各计一条）+ 人数合计 / 问题计数 + 阶段名与附图随行 + 工作日信息；缺省日期 = 今天。");
 lines.push("- A7-05（应填未填）= S4 ~ S6：名册即应填范围；已提交（submitted / supplement）不进名单、草稿未提交仍计未填；同一人多条取首条已提交；非工作日整列为空（不催报）；未来日期 400。");
-lines.push("- M7-04 归档（C4-02 / C4-03 · ADR-027）= A1 ~ A7：验收完成硬前置；缺项首次 422 ARCHIVE_GATE_NOT_PASSED（明细 + 失败留痕 + 不置位）；confirm=true 确认越过 200（置 archived + 引用式清单（问题三态快照）+ 成功留痕）；清单读面 GET /archive；PATCH 不再接受 archived（契约收紧）；filter[archivedYear] 归档检索。");
+lines.push("- M7-04 归档（C4-02 / C4-03 · ADR-027）= A1 ~ A7：项目内任务全部完成门禁；有未完成任务 409 ARCHIVE_NOT_READY（confirm=true 不可越过 + 不置位 + 不写清单）；任务全部 done 后直接归档 200（置 archived + 引用式清单（问题三态快照）+ acknowledgedMissing 为空 + 成功留痕）；清单读面 GET /archive；PATCH 不再接受 archived（契约收紧）；filter[archivedYear] 归档检索。");
 lines.push("- 归档写保护（ADR-027）= G4b：归档项目上日报填报 / 问题处理 / 任务删除均 409 PROJECT_ARCHIVED（项目由 A4 真实归档端点置位）。");
 lines.push("- A6-01（我的任务四组 · 2026-09-30 复评）= W0 ~ W5：任务负责人含我 或 项目项目经理含我（本回放项目 managerIds = admin）+ 未完成、不限完成日期窗口 —— 默认待分配无日期 → unscheduled；指派我 + 昨天 → overdue / 今天 → today / 明天与今天 + 400 天 → upcoming（无窗口上限）；清空负责人 + 无日期仍命中「未排期」（原「待分配不进」反例失效，供 W7 反证）。");
 lines.push("- A6-03（我的问题两栏）= W6：我处理（ownerId = 我）与我提出的（reporterId = 我）双命中两边都出现（本回放命中 open 未关闭条目，多值归类随行）。");

@@ -11,9 +11,9 @@
  *   ② 编辑弹窗「项目状态」四选一：四枚选项 / 文案四档 / 当前选中 = 库内值；新建弹窗不含该区（只编辑有）；
  *   ③ 状态改「已暂停」→ 保存：卡面 / 库内 / 审计（status active → paused）三处对账；刷新后仍生效（持久化）；
  *      再改「已完成」对账、最后「进行中」还原（PATCH 走乐观锁 version，均写字段级留痕）；
- *   ④「已归档」走归档端点（契约：PATCH 不收 archived —— ADR-027 门禁 + 清单 + 留痕）：在抛荒项目上
- *      缺项 422 → 弹窗内二次确认面板（缺项逐条，含「任务未完成」）→ 取消不动库 → 再保存 → 仍要归档 →
- *      归档成功：status = archived + project_archives 清单 1 行（acknowledged_missing 含缺项）+ 审计 action = archive；
+ *   ④「已归档」走归档端点（契约：PATCH 不收 archived —— ADR-027 任务完成门禁 + 清单 + 留痕）：在抛荒项目上
+ *      先插入未完成任务 → 409 提示、无二次确认、库内不置位 → SQL 置全部任务 done → 再保存直接归档；
+ *      归档成功：status = archived + project_archives 清单 1 行（acknowledged_missing=[]）+ 审计 action = archive；
  *   ⑤ 已归档项目再开编辑弹窗：四枚选项与保存全禁用（只读保护），提示「项目已归档：处于只读保护」在场；
  *   ⑥ 控制台零报错；跑完会话撤销、抛荒项目业务表零残留（审计行追加写、按 C7-05 保留）、目标项目状态还原。
  *   ⑦ 编辑弹窗「备注」（Push 280 · 契约 description）：多行文本框在场（选填 · 上限 2000 · 占位文案）且初值 = 库内值；填文本保存 → 库内 description 落文本 + 审计字段级留痕（null → 文本）；重开弹窗回填；清空保存 → 库内 null（清空发 null）+ 审计（文本 → null）；再开为空；收尾随 ⑱ 一并还原。
@@ -99,8 +99,7 @@ const created = await apiCall("POST", "/api/v1/projects", { code: throwCode, nam
 if (created.body === null || typeof created.body.id !== "string") { console.error("抛荒项目创建失败：" + String(created.status) + " " + JSON.stringify(created.body)); process.exit(1); }
 const throwId = created.body.id;
 console.log("抛荒项目：" + throwCode + "（" + throwId + "）");
-// 归档硬前置 = 验收阶段 done（SQL 夹具）；缺项 = 插入一条未完成任务（保证 422 二次确认路径可复现）。
-await db.query("update project_stages set status = $2, advanced_at = now() where project_id = $1 and stage_key = $3", [throwId, "done", "acceptance"]);
+// 归档门禁 = 项目内任务全部 done；先插入一条未完成任务复现 409，再置为 done 复现直接归档。
 await db.query("insert into tasks (project_id, stage_key, manager_ids, title, status) select id, stage_key, manager_ids, $2, $3 from projects where id = $1", [throwId, "回放-未完成任务-" + stamp, "pending"]);
 
 async function cleanupThrowProject() {
@@ -253,7 +252,7 @@ const createDialogSel = "[role=dialog][aria-label=" + j("新建项目") + "]";
 const submitSel = editDialogSel + " button[type=submit]";
 
 const cardExpr = () => "(function(){var ref=document.createElement(" + j("span") + ");ref.className=" + j("text-zinc-400") + ";ref.textContent=" + j("m") + ";ref.style.position=" + j("absolute") + ";ref.style.visibility=" + j("hidden") + ";document.body.appendChild(ref);var refColor=getComputedStyle(ref).color;document.body.removeChild(ref);var cards=document.querySelectorAll(" + j(".project-card") + ");var out=[];for(var i=0;i<cards.length;i+=1){var c=cards[i];var h=c.querySelector(" + j("h1") + ");var st=c.querySelector(" + j("[data-card-status]") + ");var badge=st===null?null:st.previousElementSibling;var r=st===null?null:st.getBoundingClientRect();var b=badge===null?null:badge.getBoundingClientRect();var conf=st===null?null:getComputedStyle(st);out.push({code:h===null?null:String(h.textContent).trim(),status:st===null?null:String(st.getAttribute(" + j("data-card-status") + ")),text:st===null?null:String(st.textContent).trim(),left:r===null?null:r.left,badgeRight:b===null?null:b.right,top:r===null?null:r.top,bottom:r===null?null:r.bottom,badgeTop:b===null?null:b.top,badgeBottom:b===null?null:b.bottom,color:conf===null?null:conf.color,refColor:refColor,fontSize:conf===null?null:conf.fontSize});}return out;})()";
-const modalExpr = () => "(function(){var d=document.querySelector(" + j(editDialogSel) + ");if(d===null){return null;}var opts=[];var bs=d.querySelectorAll(" + j("[data-project-status-option]") + ");for(var i=0;i<bs.length;i+=1){opts.push({value:bs[i].getAttribute(" + j("data-project-status-option") + "),text:String(bs[i].textContent).trim(),selected:bs[i].getAttribute(" + j("aria-checked") + "),disabled:bs[i].disabled});}var submit=d.querySelector(" + j("button[type=submit]") + ");var spans=d.querySelectorAll(" + j("span") + ");var hint=null;for(var k=0;k<spans.length;k+=1){var t=String(spans[k].textContent).trim();if(t.indexOf(" + j("保存后立即生效") + ")===0||t.indexOf(" + j("归档走归档流程") + ")===0||t.indexOf(" + j("项目已归档：处于只读保护") + ")===0){hint=t;break;}}return {options:opts,submitLabel:submit===null?null:String(submit.textContent).trim(),submitDisabled:submit===null?true:submit.disabled,hint:hint};})()";
+const modalExpr = () => "(function(){var d=document.querySelector(" + j(editDialogSel) + ");if(d===null){return null;}var opts=[];var bs=d.querySelectorAll(" + j("[data-project-status-option]") + ");for(var i=0;i<bs.length;i+=1){opts.push({value:bs[i].getAttribute(" + j("data-project-status-option") + "),text:String(bs[i].textContent).trim(),selected:bs[i].getAttribute(" + j("aria-checked") + "),disabled:bs[i].disabled});}var submit=d.querySelector(" + j("button[type=submit]") + ");var spans=d.querySelectorAll(" + j("span") + ");var hint=null;for(var k=0;k<spans.length;k+=1){var t=String(spans[k].textContent).trim();if(t.indexOf(" + j("保存后立即生效") + ")===0||t.indexOf(" + j("项目任务全部完成后即可归档") + ")===0||t.indexOf(" + j("项目已归档：处于只读保护") + ")===0){hint=t;break;}}return {options:opts,submitLabel:submit===null?null:String(submit.textContent).trim(),submitDisabled:submit===null?true:submit.disabled,hint:hint};})()";
 
 const remarkSel = editDialogSel + " textarea";
 const remarkExpr = () => "(function(){var d=document.querySelector(" + j(editDialogSel) + ");if(d===null){return null;}var a=d.querySelector(" + j("textarea") + ");if(a===null){return {present:false};}var lab=a.closest(" + j("label") + ");return {present:true,tag:a.tagName,label:lab===null?null:String(lab.textContent).trim(),value:a.value,maxLength:a.maxLength,placeholder:a.placeholder,disabled:a.disabled};})()";
@@ -410,7 +409,7 @@ try {
   await clickByText(editDialogSel + " button", "取消");
   await waitFor("document.querySelector(" + j(editDialogSel) + ") === null", 8000);
 
-  // ---------- ④ 已归档：缺项 422 → 二次确认 → 归档成功（抛荒项目） ----------
+  // ---------- ④ 已归档：有未完成任务 409 拦截 → 全部完成后直接归档（抛荒项目） ----------
   await page.send("Page.reload");
   await waitFor("document.querySelectorAll(" + j(".project-card") + ").length > 0", 40000);
   await sleep(1200);
@@ -421,42 +420,35 @@ try {
   await sleep(600);
   const archivedModal = await ev(modalExpr());
   const archivedSelected = archivedModal === null ? [] : archivedModal.options.filter((o) => o.selected === "true");
-  const hintOk = archivedModal !== null && archivedModal.hint !== null && archivedModal.hint.indexOf("归档走归档流程") === 0;
+  const hintOk = archivedModal !== null && archivedModal.hint !== null && archivedModal.hint.indexOf("项目任务全部完成后即可归档") === 0;
   const hintShot = await shot("project-status-archived-hint", { x: 380, y: 60, width: 740, height: 880, scale: 1 });
   console.log("截图：" + hintShot);
-  check("⑫ 点「已归档」：选中态 + 提示「归档走归档流程（需先完成验收…）」在场",
+  check("⑫ 点「已归档」：选中态 + 提示「项目任务全部完成后即可归档」在场",
     openedThrow === true && archivedModal !== null && hintOk && archivedSelected.length === 1 && archivedSelected[0].value === "archived",
     JSON.stringify(archivedModal === null ? null : archivedModal.hint));
   await clickSelector(submitSel);
-  const panelReady = await waitFor("document.querySelector(" + j("[data-archive-confirm]") + ") !== null", 25000);
-  const panel = await ev("(function(){var p=document.querySelector(" + j("[data-archive-confirm]") + ");if(p===null){return null;}var items=p.querySelectorAll(" + j("[data-archive-missing-item]") + ");var list=[];for(var i=0;i<items.length;i+=1){list.push(String(items[i].textContent).trim());}return {count:list.length,items:list};})()");
-  const failedAudit = Number((await db.query("select count(*)::int n from audit_logs where object_id = $1 and action = $2 and result = $3", [throwId, "archive", "failed"])).rows[0].n);
+  const rejectedReady = await waitFor("(function(){var d=document.querySelector(" + j(editDialogSel) + ");if(d===null){return false;}var a=d.querySelector(" + j("[role=alert]") + ");return a!==null&&String(a.textContent).trim().indexOf(" + j("项目还有任务未完成") + ")===0;})()", 25000);
+  const rejectedUi = await ev("(function(){var d=document.querySelector(" + j(editDialogSel) + ");if(d===null){return null;}var a=d.querySelector(" + j("[role=alert]") + ");return {text:a===null?null:String(a.textContent).trim(),panel:document.querySelector(" + j("[data-archive-confirm]") + ")!==null,dialog:true};})()");
   const stillActive = (await projectRowOf(throwId)).status;
-  const confirmShot = await shot("project-status-archive-confirm", { x: 380, y: 60, width: 740, height: 900, scale: 1 });
-  console.log("截图：" + confirmShot);
-  check("⑬ 缺项 422：弹窗内二次确认面板（缺项逐条，含「任务未完成」）+ 库内未归档 + 审计留失败行",
-    panelReady === true && panel !== null && panel.count >= 1 && panel.items.some((t) => t.indexOf("任务未完成") === 0) && stillActive === "active" && failedAudit >= 1,
-    JSON.stringify({ panel: panel, status: stillActive, failedAudit: failedAudit }));
-  await clickSelector("[data-archive-cancel-button]");
-  await sleep(600);
-  const afterCancel = await ev("(function(){return {panel:document.querySelector(" + j("[data-archive-confirm]") + ") !== null,dialog:document.querySelector(" + j(editDialogSel) + ") !== null};})()");
-  check("⑭ 取消二次确认：面板收起、弹窗仍在、库内仍 active",
-    afterCancel.panel === false && afterCancel.dialog === true && (await projectRowOf(throwId)).status === "active",
-    JSON.stringify(afterCancel));
+  const rejectedArchiveCount = Number((await db.query("select count(*)::int n from project_archives where project_id = $1", [throwId])).rows[0].n);
+  const rejectShot = await shot("project-status-archive-not-ready", { x: 380, y: 60, width: 740, height: 900, scale: 1 });
+  console.log("截图：" + rejectShot);
+  check("⑬ 有未完成任务 → 409：弹窗内提示「项目还有任务未完成，不能归档。」、无二次确认、库内未归档",
+    rejectedReady === true && rejectedUi !== null && rejectedUi.text !== null && rejectedUi.text.indexOf("项目还有任务未完成") === 0 && rejectedUi.panel === false && stillActive === "active" && rejectedArchiveCount === 0,
+    JSON.stringify({ ui: rejectedUi, status: stillActive, archives: rejectedArchiveCount }));
+  await db.query("update tasks set status = $2, updated_at = now() where project_id = $1 and deleted_at is null", [throwId, "done"]);
   await clickSelector(submitSel);
-  await waitFor("document.querySelector(" + j("[data-archive-confirm]") + ") !== null", 25000);
-  await clickSelector("[data-archive-confirm-button]");
   const archivedOk = await waitFor("document.querySelector(" + j(editDialogSel) + ") === null", 40000);
   await sleep(1500);
   const throwAfter = await projectRowOf(throwId);
   const archiveCount = Number((await db.query("select count(*)::int n from project_archives where project_id = $1", [throwId])).rows[0].n);
   const archiveRow = (await db.query("select acknowledged_missing from project_archives where project_id = $1", [throwId])).rows[0];
-  const ackText = archiveRow === undefined ? null : JSON.stringify(archiveRow.acknowledged_missing);
+  const ackEmpty = archiveRow !== undefined && Array.isArray(archiveRow.acknowledged_missing) && archiveRow.acknowledged_missing.length === 0;
   const archiveAudit = Number((await db.query("select count(*)::int n from audit_logs where object_id = $1 and action = $2 and result = $3", [throwId, "archive", "succeeded"])).rows[0].n);
   const throwCardArchived = await cardStatusOf(throwCode);
-  check("⑮ 仍要归档：归档成功（status = archived + 清单 1 行 · acknowledged_missing 含缺项 + 审计 archive 成功 + 卡面 = 已归档）",
-    archivedOk === true && throwAfter.status === "archived" && archiveCount === 1 && ackText !== null && ackText.indexOf("任务未完成") !== -1 && archiveAudit >= 1 && throwCardArchived !== null && throwCardArchived.text === "已归档",
-    JSON.stringify({ db: throwAfter.status, archives: archiveCount, ack: ackText, audit: archiveAudit, card: throwCardArchived === null ? null : throwCardArchived.status }));
+  check("⑮ 全部任务完成 → 直接归档：status = archived + 清单 1 行 · acknowledged_missing 为空 + 审计 archive 成功 + 卡面 = 已归档",
+    archivedOk === true && throwAfter.status === "archived" && archiveCount === 1 && ackEmpty === true && archiveAudit >= 1 && throwCardArchived !== null && throwCardArchived.text === "已归档",
+    JSON.stringify({ db: throwAfter.status, archives: archiveCount, ack: archiveRow === undefined ? null : archiveRow.acknowledged_missing, audit: archiveAudit, card: throwCardArchived === null ? null : throwCardArchived.status }));
 
   // ---------- ⑤ 已归档项目只读 ----------
   const openedLocked = await openEditFor(throwCode);
@@ -564,9 +556,9 @@ try {
   await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
   await sleep(400);
   // ---------- ⑥ 控制台 ----------
-  const archiveGateNoise = consoleErrors.filter((item) => item.text.indexOf("Failed to load resource") === 0 && item.text.indexOf("422") !== -1 && item.url.indexOf("/archive") !== -1);
+  const archiveGateNoise = consoleErrors.filter((item) => item.text.indexOf("Failed to load resource") === 0 && item.text.indexOf("409") !== -1 && item.url.indexOf("/archive") !== -1);
   const realErrors = consoleErrors.filter((item) => archiveGateNoise.indexOf(item) === -1);
-  check("⑰ 控制台零报错 / 零异常（归档门禁故意触发的 422 网络日志 " + String(archiveGateNoise.length) + " 条已豁免）", realErrors.length === 0, realErrors.slice(0, 3).map((item) => item.text).join(" ;; "));
+  check("⑰ 控制台零报错 / 零异常（归档门禁故意触发的 409 网络日志 " + String(archiveGateNoise.length) + " 条已豁免）", realErrors.length === 0, realErrors.slice(0, 3).map((item) => item.text).join(" ;; "));
 } catch (error) {
   check("⑰-异常 流程异常中止：" + String(error !== null && error !== undefined && error.message !== undefined ? error.message : error), false);
 } finally {
