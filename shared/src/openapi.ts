@@ -418,7 +418,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/projects/{id}/archive",
     tags: ["projects"],
-    summary: "项目归档（门禁：验收阶段完成 + 成果文件齐全性检查；缺项 422 返回清单，confirm=true 确认越过后归档并生成清单）",
+    summary: "项目归档（门禁：项目内未删除任务全部完成；有未完成任务 409 ARCHIVE_NOT_READY 且 confirm 不可越过；通过后置位并生成引用式清单）",
     request: { params: idParams, body: json(ProjectArchiveBodySchema) },
     responses: {
       200: { description: "归档记录与清单（项目进入只读保护：写路径 409 PROJECT_ARCHIVED）", ...json(ProjectArchiveViewSchema) },

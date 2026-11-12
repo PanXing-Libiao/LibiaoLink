@@ -206,9 +206,9 @@ const ZeroOrMore = z.number().int().min(0);
 
 /**
  * 归档（C4-02 / C4-03 · ADR-027 · M7-04）：门禁 + 引用式清单 + 冻结状态位（projects.status = archived）。
- * 门禁两级：① 硬前置 = 验收阶段已完成（未完成 409 ARCHIVE_NOT_READY，不可确认越过）；
- * ② 缺项清单 = 未完成任务 / 未定档文件 / 必交成果缺件（422 ARCHIVE_GATE_NOT_PASSED 返回明细；
- *    项目经理确认（confirm = true）后放行归档，缺项随清单 acknowledgedMissing 留痕）。
+ * 门禁：项目内未删除任务全部完成（有未完成任务 409 ARCHIVE_NOT_READY，confirm=true 不可越过）；
+ * 文件是否定档、节点必交成果是否齐全均不再阻断归档（2026-11-12 业务口径）；
+ * 新归档 acknowledgedMissing 恒为空；旧缺项 422 与 file_not_final / doc_missing 仅用于历史读取。
  * 清单为引用式快照：只记 id 与摘要（任务数与状态分布 / 阶段状态 / 文件清单含版本 / 变更 / 日报 / 问题），不复制业务数据；
  * 归档不清数据、不改阶段；清单导出（目录结构 + 文件按类型 / 阶段组织）随 M7-03 导出框架。
  */
@@ -218,27 +218,27 @@ export const ProjectArchiveBodySchema = z
     confirm: z
       .boolean()
       .default(false)
-      .openapi({ description: "缺项确认：false（缺省）= 有缺项即 422；true = 确认带缺项归档（缺项入清单 acknowledgedMissing）" }),
+      .openapi({ description: "旧契约兼容字段：当前忽略；归档只校验任务是否全部完成，true 不能绕过 ARCHIVE_NOT_READY" }),
   })
-  .openapi("ProjectArchiveBody", { description: "归档请求：version 必带；缺项越过分两步（先 422 拿清单，再 confirm=true 重试）" });
+  .openapi("ProjectArchiveBody", { description: "归档请求：version 必带；confirm 仅兼容旧客户端，当前忽略" });
 
-/** 归档缺项条目：422 明细与清单 acknowledgedMissing 同形（code / message / meta 三件套，与门禁 details 口径一致）。 */
+/** 归档缺项条目（历史兼容）：旧版本 422 明细与清单 acknowledgedMissing 同形；新归档只可能产生 task_not_done。 */
 export const ProjectArchiveMissingSchema = z
   .object({
     code: z
       .enum(["task_not_done", "file_not_final", "doc_missing"])
-      .openapi({ description: "缺项类型：task_not_done 未完成任务 / file_not_final 未定档文件 / doc_missing 必交成果缺件（A4-20 口径）" }),
+      .openapi({ description: "缺项类型：task_not_done 未完成任务；file_not_final / doc_missing 仅用于读取历史归档记录，新归档不再产生" }),
     message: z.string(),
     meta: z.record(z.string(), z.unknown()).openapi({ description: "缺项定位（任务 id / 文件 id / 节点与文档类型等）" }),
   })
-  .openapi("ProjectArchiveMissing", { description: "归档缺项条目（确认越过时原样入清单 acknowledgedMissing）" });
+  .openapi("ProjectArchiveMissing", { description: "归档缺项条目（历史兼容；2026-11-12 起新归档 acknowledgedMissing 恒为空）" });
 
 /** 归档清单（引用式快照）：归档时点 + 统计口径 + 文件清单含版本；只记 id 与摘要，不复制业务数据。 */
 export const ProjectArchiveSnapshotSchema = z
   .object({
     stage: z.object({
       stageKey: StageKeySchema,
-      status: z.string().openapi({ description: "阶段状态（归档时点；验收阶段应为 done）" }),
+      status: z.string().openapi({ description: "阶段状态（仅归档时点快照；不再要求已完成）" }),
       advancedAt: DateTimeSchema.nullable(),
     }),
     tasks: z.object({
@@ -284,7 +284,7 @@ export const ProjectArchiveViewSchema = z
     archivedBy: UuidSchema,
     archivedByName: z.string().nullable().openapi({ description: "归档操作人姓名（users.display_name；取不到 = null）" }),
     snapshot: ProjectArchiveSnapshotSchema,
-    acknowledgedMissing: z.array(ProjectArchiveMissingSchema).openapi({ description: "确认越过的缺项清单（无缺项 = 空数组）" }),
+    acknowledgedMissing: z.array(ProjectArchiveMissingSchema).openapi({ description: "旧流程缺项留痕（历史兼容；2026-11-12 起新归档恒为空数组）" }),
   })
   .openapi("ProjectArchiveView", { description: "归档记录与清单（POST 归档返回；GET /projects/{id}/archive 读面同形）" });
 
