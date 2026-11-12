@@ -469,6 +469,36 @@ export const FileDownloadUrlResponseSchema = z
   })
   .openapi("FileDownloadUrlResponse");
 
+/** 项目文件批量 ZIP 的单项选择：entryName 只用于 ZIP 内显示名，鉴权与扩展名始终以服务端版本为准。 */
+export const FileArchiveItemSchema = z
+  .object({
+    fileId: UuidSchema,
+    versionId: UuidSchema,
+    entryName: z.string().min(1).max(255).optional().openapi({
+      description: "ZIP 内显示名（可选）；服务端清洗路径字符并强制使用该版本对象键的真实扩展名",
+    }),
+  })
+  .openapi("FileArchiveItem", { description: "批量 ZIP 的文件版本选择项" });
+
+export const FileArchiveRequestSchema = z
+  .object({
+    items: z.array(FileArchiveItemSchema).min(1).max(50).openapi({
+      description: "待打包的版本列表；按提交顺序入包，相同 (fileId, versionId) 只保留首次出现项",
+    }),
+  })
+  .openapi("FileArchiveRequest", { description: "项目文件批量 ZIP 请求（单批最多 50 个版本）" });
+
+export const FileArchiveResponseSchema = z
+  .object({
+    batchId: UuidSchema,
+    fileName: z.string().openapi({ description: "ZIP 下载文件名（含项目编号 / 名称与 .zip 扩展名）" }),
+    url: z.string().openapi({ description: "短时签名 ZIP 下载地址；前端只触发一次下载，不读取整包字节" }),
+    sizeBytes: z.number().int().min(0).openapi({ description: "生成的 ZIP 文件大小（压缩后）" }),
+    expiresAt: DateTimeSchema,
+    itemCount: z.number().int().min(1).max(50).openapi({ description: "实际入包的唯一版本数" }),
+  })
+  .openapi("FileArchiveResponse", { description: "项目文件批量 ZIP 生成结果" });
+
 /**
  * 预览目标（渲染通道口径 · wmj 评审定案 · PR #103）：按前端渲染方式定义，不按文件格式；格式差异由产物 MIME 表达。
  * 缓存键 = versionId + pipelineVersion + target；不同版本即使内容哈希相同也隔离（迁移 0067）。
