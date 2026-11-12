@@ -1713,7 +1713,6 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "izv.in": "확대",
   "izv.hint": "스크롤하여 확대 · 드래그하여 이동 · 더블클릭하여 확대",
   "ts.dragTitle": "드래그하여 열 더 보기",
-  "project.changeRecords.open": "변경 기록",
   "project.changeRecords.title": "프로젝트 변경 기록",
   "project.changeRecords.subtitle": "프로젝트의 모든 변경을 작업별로 표시",
   "project.changeRecords.count": "총 {n}건",

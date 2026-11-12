@@ -1713,7 +1713,6 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "izv.in": "拡大",
   "izv.hint": "スクロールで拡大 · ドラッグで移動 · ダブルクリックで拡大",
   "ts.dragTitle": "ドラッグして他の列を表示",
-  "project.changeRecords.open": "変更履歴",
   "project.changeRecords.title": "プロジェクト変更履歴",
   "project.changeRecords.subtitle": "プロジェクトのすべての変更をタスク別に表示",
   "project.changeRecords.count": "全 {n} 件",
