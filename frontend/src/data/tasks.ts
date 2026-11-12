@@ -113,6 +113,14 @@ export function taskCapabilitiesOf(task: Pick<ProjectTask, "capabilities">): Tas
 }
 
 /**
+ * 任务是否需要定档：只有设定了输出成果文件（deliverableTypes 非空）的任务才展示定档入口并允许走任务定档。
+ * 权限投影 canFinalize 只回答「谁可以定档」，本函数回答「该任务是否需要定档」；两者同时为真才显示入口。
+ */
+export function hasOutputDeliverables(task: Pick<ProjectTask, "deliverableTypes">): boolean {
+  return task.deliverableTypes.length > 0;
+}
+
+/**
  * 没有阶段的任务（看板「添加 → 临时任务」手工创建）的展示名（Push 196）：
  * 项目总览 / 甘特图固定垫底的分组头、看板卡片「所属阶段」与抽屉阶段签共用同一文案。
  */

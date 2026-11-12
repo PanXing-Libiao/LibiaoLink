@@ -104,7 +104,7 @@ import { MyPlanBoard } from "./components/MyPlanBoard";
 import { TaskDrawer, type TaskEditSubmit } from "./components/TaskDrawer";
 import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_TINT, ISSUE_ROW_TINT_VIVID, ISSUE_TAG_CLASS, IssueStateCell } from "./components/ReportIssuePanel";
 import { TaskRow, resolveColumns, tableGridTemplate, tableMinWidth, taskPatchBody, type ColumnDef, type TaskPatch } from "./components/TaskBoard";
-import { TEMP_TASK_STAGE, taskCapabilitiesOf, type ProjectTask, type TaskStatus } from "./data/tasks";
+import { TEMP_TASK_STAGE, hasOutputDeliverables, taskCapabilitiesOf, type ProjectTask, type TaskStatus } from "./data/tasks";
 import { memberNameOf, type Member } from "./data/members";
 import type { IssueState, ReportPhoto } from "./data/reports";
 import { recordPreviewView, recycleFile, renameFile, uploadFiles, usePhotoUrl, type TaskFileRef } from "./fileApi";
@@ -401,7 +401,7 @@ function TaskTable({ projectId, project, items, tierTint, members, managerMember
                       onOpenTask(task);
                     }}
                     onProgress={handlers === undefined ? undefined : (progress) => { handlers.onProgress(projectId, task.id, progress); }}
-                    canFinalize={handlers !== undefined && taskCapabilitiesOf(ui).canFinalize}
+                    canFinalize={handlers !== undefined && taskCapabilitiesOf(ui).canFinalize && hasOutputDeliverables(ui)}
                     members={members}
                     managerMembers={managerMembers}
                     customDeliverableTypes={customDeliverableTypes}
@@ -923,7 +923,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, manage
 
   const drawerProject = drawerTask === null ? undefined : projectById.get(drawerTask.projectId);
   const drawerProjectEditable = drawerProject?.accessLevel === "edit";
-  const drawerCanFinalize = drawerTask !== null && taskCapabilitiesOf(drawerTask.task).canFinalize;
+  const drawerCanFinalize = drawerTask !== null && taskCapabilitiesOf(drawerTask.task).canFinalize && hasOutputDeliverables(drawerTask.task);
 
   return (
     <section data-workspace-tasks="" className="space-y-3">

@@ -8,6 +8,7 @@ import type { ReportPhoto } from "../data/reports";
 import {
   TEMP_TASK_STAGE,
   dateOnlyText,
+  hasOutputDeliverables,
   isPastPlannedEnd,
   ownersLabel,
   daysBetweenInclusive,
@@ -219,7 +220,7 @@ function draftOf(task: ProjectTask | null): Draft {
 }
 
 type TaskDrawerProps = {
-  /** 当前账号是否可对该任务定档 / 取消定档（服务端投影 canFinalize）。 */
+  /** 当前账号是否可对该任务定档 / 取消定档（服务端投影 canFinalize，且任务已设定输出成果文件）。 */
   canFinalize?: boolean;
   /** 项目经理是项目级字段：仅当前项目编辑者可改并同步全项目；任务负责人不得改。 */
   canEditManagers?: boolean;
@@ -747,7 +748,7 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
   const managerEditable = editable && canEditManagers;
   const managerChoices = memberOptionsWithExisting(managerMembers, draft.managerIds, members);
   const ownerEditable = editable && capabilities.canAssignOwners;
-  const canFinalize = canFinalizeProp && capabilities.canFinalize;
+  const canFinalize = canFinalizeProp && capabilities.canFinalize && hasOutputDeliverables(task);
   const unfinalizeLockedByPlannedEnd = task.finalizedAt !== null && isPastPlannedEnd(task.dueDate);
   const unfinalizeAria = unfinalizeLockedByPlannedEnd ? t("drawer.finalize.afterDueAria") : onUnfinalize === undefined ? t("drawer.finalize.onAria") : t("drawer.finalize.offAria");
   const unfinalizeTitle = unfinalizeLockedByPlannedEnd ? t("drawer.finalize.afterDueTitle") : onUnfinalize === undefined ? t("drawer.finalize.onTitle") : t("drawer.finalize.offTitle");

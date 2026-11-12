@@ -31,7 +31,8 @@
  *      顶部「＋ 添加文件」/「＋ 添加定档文件」一行两个按钮（添加文件在前、定档文件在后）= 点哪个直接开选文件框、不出定档一问（无取消按钮）——定档版传完即定档
  *      （任务随定档锁定：任务 / 文件写口全 409 TASK_FINALIZED、下拉顶常驻提示、两个添加入口关闭；
  *      Push 260 补漏 · 业务口径「定档后还能删除是bug 不能删除定档后」——下拉 / 抽屉的删除入口整体下架 + recycle 409，④s2b / ④s6 / ④s7）；
- *   ⑭ 抽屉定档开关（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态 有二次提示的」）：
+ *   ⑭ 抽屉定档开关（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态 有二次提示的」；
+ *      2026-11-12 入口门：任务 deliverableTypes 非空（已设定输出成果文件）才显示定档开关与「添加定档文件」）：
  *      开关在状态签旁（未定档 = 灰底「未」；已定档 = logo 黄底「已」）；点开 = 就地二次确认条（不落库）、取消 = 收条（③d 段）；
  *      确认定档 = POST …/tasks/{taskId}/finalize → tasks.finalized_at 置位（幂等 + 此后写口 409 TASK_FINALIZED，第二个任务端到端 · ④t 段）；
  *      Push 260 改版（业务口径「点击定档按钮应该也要计入操作记录」+「把现在的定档改成 再次点击取消定档吧」）：定档后「已」开关可**再次点击** →
@@ -195,7 +196,7 @@ const fixtureCode = "PX-M4FU-" + randomBytes(3).toString("hex").toUpperCase();
 const projRes = await api("/api/v1/projects", "POST", { code: fixtureCode, name: "M4回放·任务文件上传", description: "M4回放·任务文件上传", managerIds: [userRow.id] });
 check("夹具：建临时项目（201）", projRes.status === 201, String(projRes.status) + " " + projRes.text.slice(0, 140));
 const projectId = projRes.json === null ? "" : projRes.json.id;
-const taskRes = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "design", title: TASK_TITLE, ownerIds: [userRow.id] });
+const taskRes = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "design", title: TASK_TITLE, ownerIds: [userRow.id], deliverableTypes: ["技术协议"] });
 check("夹具：建一条任务（201）", taskRes.status === 201, String(taskRes.status) + " " + taskRes.text.slice(0, 140));
 const taskId = taskRes.json === null ? "" : taskRes.json.id;
 
@@ -832,7 +833,7 @@ check("④s7 定档任务的抽屉「文件」行：删除入口整体下架（�
 //   第二条任务（本任务已随文件定档锁定，确认路径要在未定档任务上验证）—— 建任务 → 重载 → 开抽屉 → 点开关 → 二次确认「确认定档」
 //   → tasks.finalized_at / finalized_by 置位（version+1）+ 任务定档审计 + 开关转「已（on）」并置灰；接口幂等（重复 POST 原样返回）+ 定档后写口 409。
 const task2Title = "回放任务·抽屉定档开关";
-const task2Res = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "design", title: task2Title, ownerIds: [userRow.id] });
+const task2Res = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { stageKey: "design", title: task2Title, ownerIds: [userRow.id], deliverableTypes: ["技术协议"] });
 check("④t0 夹具：第二条任务（抽屉定档开关端到端用）", task2Res.status === 201, String(task2Res.status) + " " + task2Res.text.slice(0, 140));
 const task2Id = task2Res.json === null ? "" : task2Res.json.id;
 const task2Ver0 = task2Res.json === null ? 0 : Number(task2Res.json.version);

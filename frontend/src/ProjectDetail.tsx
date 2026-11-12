@@ -20,7 +20,7 @@ import type { StagePlacement } from "./components/StageAddCard";
 import { PROJECT_STAGES } from "./data/projects";
 import { memberNameOf, type Member } from "./data/members";
 import { lockBodyScroll } from "./scrollLock";
-import { TEMP_TASK_STAGE, isTaskDone, taskCapabilitiesOf, type ProjectTask, type TaskStatus } from "./data/tasks";
+import { TEMP_TASK_STAGE, hasOutputDeliverables, isTaskDone, taskCapabilitiesOf, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
 import { exportProjectOverviewPdf } from "./exportOverviewPdf";
@@ -146,8 +146,8 @@ export default function ProjectDetail({ me, project, view, dailySub, dailyDate, 
     projectEditable && project !== null && onCreateDeliverableType !== undefined
       ? (name: string): Promise<string | null> => onCreateDeliverableType(project.id, name)
       : undefined;
-  /** 定档 / 取消定档：服务端任务能力投影的 canFinalize（项目编辑者或当前任务负责人）。 */
-  const canFinalizeTask = (task: ProjectTask): boolean => taskWritable && taskCapabilitiesOf(task).canFinalize;
+  /** 定档 / 取消定档：服务端任务能力投影 canFinalize 且任务已设定输出成果文件；未配置成果类型的任务不展示定档入口。 */
+  const canFinalizeTask = (task: ProjectTask): boolean => taskWritable && taskCapabilitiesOf(task).canFinalize && hasOutputDeliverables(task);
 
   /**
    * 任务数据（M3-07 刀 1 后半接线）：列表与汇总卡全部来自服务端任务接口（GET /projects/{id}/tasks 与 /summary）。
