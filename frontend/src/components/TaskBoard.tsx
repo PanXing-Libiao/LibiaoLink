@@ -9,6 +9,7 @@ import { fieldText, isLocalizedLocale, mdText, priorityText, stageText, statusTe
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { TaskChangesPopover } from "./TaskChangesPopover";
+import { ProjectChangesPopover } from "./ProjectChangesPopover";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { TaskFilesPopover } from "./TaskFilesPopover";
@@ -396,8 +397,6 @@ type TaskBoardProps = {
   filesByTask?: ReadonlyMap<string, TaskFileRef[]>;
   /** 任务详情接口所需（抽屉里的文件清单按它取详情）；不传 = 抽屉不拉清单。 */
   projectId?: string;
-  /** 行内「变更关联」气泡底部的「查看全部变更」入口；不传 = 不显示该入口。 */
-  onOpenChangeRecords?: (taskId?: string | null) => void;
 };
 
 function Chevron({ collapsed }: { collapsed: boolean }) {
@@ -420,7 +419,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
  *  （onSetStatus）/ 紧急重要度与成果文件与进展描述（onPatch）/ 「文件」列下拉（onUploadFiles + onDeleteFile）/
  *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）；**onSelect 不传 = 整行不可点**（不出「点击查看任务详情」提示、不出 pointer 光标、不占键盘 Tab 焦点；行内各列仍按回调照常只读 / 可编辑 —— 甘特图「画不出时间轴」的兜底列表这样用，Push 294）。
  *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
-export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, canFinalize = false, members, managerMembers = members, customDeliverableTypes = [], onCreateDeliverableType, onSetStatus, onSetActualEnd, onChangeManagers, canEditManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle, onOpenAllChanges }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; canFinalize?: boolean; members: readonly Member[]; managerMembers?: readonly Member[]; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (name: string) => Promise<string | null>; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (taskId: string, managerIds: string[]) => void; canEditManagers?: boolean; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string; onOpenAllChanges?: (() => void) | null }) {
+export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, canFinalize = false, members, managerMembers = members, customDeliverableTypes = [], onCreateDeliverableType, onSetStatus, onSetActualEnd, onChangeManagers, canEditManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; canFinalize?: boolean; members: readonly Member[]; managerMembers?: readonly Member[]; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (name: string) => Promise<string | null>; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (taskId: string, managerIds: string[]) => void; canEditManagers?: boolean; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
   const locale = useLocale();
   const t = useT();
   /** 手打内容机翻显示（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
@@ -824,7 +823,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       </span>
     ),
     change: task.changes.length === 0 ? null : (
-      <TaskChangesPopover task={task} members={members} onOpenAllChanges={onOpenAllChanges} onOpenLinkedTask={onSelect} />
+      <TaskChangesPopover task={task} members={members} onOpenLinkedTask={onSelect} />
     ),
   };
 
@@ -922,7 +921,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, managerMembers, customDeliverableTypes = [], onCreateDeliverableType, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, canEditManagers, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint, onOpenChangeRecords }: TaskBoardProps) {
+export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, managerMembers, customDeliverableTypes = [], onCreateDeliverableType, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, canEditManagers, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
   const t = useT();
   const locale = useLocale();
   /**
@@ -949,7 +948,7 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
   const [tempFormOpen, setTempFormOpen] = useState(false);
   /** 键盘焦点陷阱（Push 264 追订）：临时任务新建浮层开着时焦点进浮层、Tab 在浮层内循环。 */
   const tempFormTrapRef = useFocusTrap<HTMLDivElement>(tempFormOpen && onCreateTempTask !== undefined);
-  /** 卡片的落点（Push 67：固定在表格表头正下方、左边缘对齐「项目经理」列，不浮在页面右上角、也不跟着点击跑）。 */
+  /** 临时任务表单仍相对表格定位；阶段添加卡片在视口内居中打开。 */
   const [cardBox, setCardBox] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const boardWrapRef = useRef<HTMLDivElement | null>(null);
   const boardCardRef = useRef<HTMLDivElement | null>(null);
@@ -981,10 +980,7 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
     setTempFormOpen(false);
   }, [viewStage]);
 
-  /**
-   * 量落点（Push 67，业务定稿版）：卡片**顶部与所点阶段的分组头在同一水平线**（卡顶 = 分组头顶，卡片正好贴在这一阶段左边，
-   * 页面滚到哪都保持这条水平线），左边缘对齐「项目经理」列（该列被列显隐关掉时回落到表格右边、始终夹在表格内）。
-   */
+  /** 测量临时任务表单在表格中的落点。 */
   const measureCardBox = (stage: string) => {
     const wrap = boardWrapRef.current;
     const board = boardCardRef.current;
@@ -1013,14 +1009,13 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
     };
   };
 
-  /** 点阶段标签：再点同一个 = 关掉；开的时候先量好落点，避免卡片先闪在旧位置。 */
+  /** 点阶段标签：再点同一个 = 关掉；新卡片在视口内居中打开。 */
   const toggleCard = (stage: string) => {
     if (cardStage === stage) {
       setCardStage(null);
       return;
     }
     setTempFormOpen(false);
-    setCardBox(measureCardBox(stage));
     setCardStage(stage);
   };
 
@@ -1035,8 +1030,8 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
     setTempFormOpen(true);
   };
 
-  /** 当前该量的浮层（Push 197）：「临时任务」新建表单开着就量它，否则量阶段卡片 —— 两者共用同一个落点。 */
-  const measureStage = tempFormOpen ? TEMP_TASK_STAGE : cardStage;
+  /** 临时任务表单继续随表格测量；阶段添加卡片打开后独立停在视口内。 */
+  const measureStage = tempFormOpen ? TEMP_TASK_STAGE : null;
   // 表格尺寸变化（列显隐 / 阶段折叠 / 换项目）与窗口缩放时重新量落点
   useEffect(() => {
     if (measureStage === null) {
@@ -1157,7 +1152,16 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
           style={{ gridTemplateColumns: gridTemplate, minWidth: minWidth }}
         >
             {columns.map((column) =>
-              column.key === "title" ? (
+              column.key === "change" ? (
+                <span key={column.key} data-column={column.key} className="flex min-w-0 items-center justify-center self-stretch px-1">
+                  <ProjectChangesPopover
+                    tasks={tasks}
+                    members={members}
+                    projectId={projectId}
+                    onOpenTask={(taskId) => { setSelectedTaskId(taskId); }}
+                  />
+                </span>
+              ) : column.key === "title" ? (
                 <span key={column.key} data-column={column.key} className="flex min-w-0 items-center gap-2.5">
                   <span className="truncate">{column.header ?? fieldText(locale, column.label)}</span>
                   <button
@@ -1322,7 +1326,6 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
                         onUploadFiles={onUploadFiles}
                         onDeleteFile={onDeleteFile}
                         files={filesByTask?.get(task.id)}
-                        onOpenAllChanges={onOpenChangeRecords === undefined ? undefined : () => { onOpenChangeRecords(task.id); }}
                       />
                     ))}
                   </div>
@@ -1380,7 +1383,8 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
           // Push 207 撤（业务口径「临时任务不应该存在于阶段里面新建」）：阶段卡片不再收「临时任务」入口 ——
           // 临时任务的新建仍走本表底部「临时任务」分组头（见下方常驻入口）与看板列底「添加」菜单
           onClose={() => setCardStage(null)}
-          style={cardBox === null ? { top: 10, left: 24 } : cardBox}
+          viewportDraggable
+          style={{ position: "fixed", top: 0, left: 0 }}
         />
       ) : null}
       </div>

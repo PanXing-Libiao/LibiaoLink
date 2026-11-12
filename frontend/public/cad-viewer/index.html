@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="fonts/latin.css">
   <link rel="stylesheet" href="fonts/noto.css">
   <script type="importmap">{"imports":{"three":"./core/vendor/three.module.js"}}</script>
-  <link rel="modulepreload" href="platform-entry.js?v=cad-0.21.30">
+  <link rel="modulepreload" href="platform-entry.js?v=cad-0.21.32">
 </head>
 <body data-cad-state="loading" data-sidebar="closed">
   <header class="viewer-header">
@@ -60,8 +60,7 @@
             <ol id="loadSteps" class="import-steps" aria-label="导入步骤"><li data-state="current" aria-current="step"><span>1</span>读取文件</li><li><span>2</span>处理模型</li><li><span>3</span>准备视图</li><li><span>4</span>完成</li></ol>
             <div class="import-progress-head"><strong id="loadStage">正在读取文件</strong><span id="loadMeasure">第 1 步 / 共 4 步</span></div>
             <div class="progress-track"><progress id="loadProgress" aria-label="模型处理进行中，当前没有可测量的完成百分比"></progress><span class="progress-indicator" aria-hidden="true"></span></div>
-            <div class="import-time"><strong id="loadEta">读取文件后估算时间</strong><span id="loadElapsed">已用 0 秒</span></div>
-            <p id="loadBasis" class="import-basis">正在准备文件与处理任务</p>
+            <div class="import-time"><span id="loadElapsed">已用 0 秒</span></div>
             <button id="cancelLoad" hidden>取消导入</button>
           </div>
         </div>
@@ -114,6 +113,6 @@
       window.addEventListener("load", mounted, { once: true });
     })();
   </script>
-  <script type="module" src="platform-entry.js?v=cad-0.21.30"></script>
+  <script type="module" src="platform-entry.js?v=cad-0.21.32"></script>
 </body>
 </html>

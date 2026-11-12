@@ -66,7 +66,16 @@ export class CadArchiveRepository {
   async view(jobId: string, source: CadArchiveSource, actorId: string, viewId: string) {
     if (!/^[a-f0-9]{32}$/.test(jobId)) return null;
     const id = jobId.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
-    const rows = await this.database.db.select({ view: cadViews, artifact: cadArtifacts }).from(cadViews)
+    // A newly queued file can simply be waiting for the worker's next poll.
+    const waitingForDrawing = sql<boolean>`case when not ${cadViews.cancelled} and (
+      (${cadArtifacts.state} = 'queued' and ${cadArtifacts.availableAt} <= now())
+      or (${cadArtifacts.state} = 'running' and ${cadArtifacts.phase} = 'queue-entered')
+    ) then exists (select 1 from ${cadArtifacts} processing
+      where processing.id <> ${cadArtifacts.id} and processing.state = 'running'
+        and processing.claim_until > now() and processing.phase <> 'queue-entered'
+        and (${cadArtifacts.state} = 'queued' or processing.phase <> 'persisting'))
+    else false end`;
+    const rows = await this.database.db.select({ view: cadViews, artifact: cadArtifacts, waitingForDrawing }).from(cadViews)
       .innerJoin(cadArtifacts, eq(cadArtifacts.id, cadViews.artifactId)).where(and(eq(cadViews.id, id),
         eq(cadViews.actorId, actorId), eq(cadViews.viewId, viewId), gt(cadViews.expiresAt, new Date()),
         eq(cadArtifacts.versionId, source.versionId), eq(cadArtifacts.fileId, source.fileId),
@@ -119,11 +128,15 @@ export class CadArchiveRepository {
         objectPrefix ? eq(cadArtifacts.objectPrefix, objectPrefix) : undefined));
   }
 
-  async claim(): Promise<CadArtifactRow | null> {
+  async claim(viewedDwgOnly = false): Promise<CadArtifactRow | null> {
     return this.database.db.transaction(async (tx) => {
       const now = new Date();
       const row = (await tx.select().from(cadArtifacts).where(and(
         inArray(cadArtifacts.formatVersion, Object.values(CAD_FORMAT_VERSIONS)),
+        viewedDwgOnly ? and(eq(cadArtifacts.sourceFormat, "DWG"), eq(cadArtifacts.resourceSetHash, "0".repeat(64)),
+          eq(cadArtifacts.state, "queued"), sql`exists (select 1 from ${cadViews} where ${cadViews.artifactId} = ${cadArtifacts.id}
+            and not ${cadViews.cancelled} and ${cadViews.expiresAt} > ${now}
+            and ${cadViews.lastSeenAt} > ${new Date(now.getTime() - 30_000)})`) : undefined,
         or(and(eq(cadArtifacts.state, "queued"), lt(cadArtifacts.availableAt, now)),
           and(eq(cadArtifacts.state, "running"), lt(cadArtifacts.claimUntil, now)))))
         .orderBy(sql`case

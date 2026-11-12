@@ -40,7 +40,7 @@ export class CadArchiveService {
     const view = await this.repository.openView(artifact.id, actorId, viewId);
     const current = await this.repository.view(view.id.replaceAll("-", ""), source, actorId, viewId);
     if (!current) throw new AppError("NOT_FOUND", "模型任务不存在或不可访问");
-    return { job: this.public(current.artifact, current.view), reused: ["completed", "partial"].includes(artifact.state) };
+    return { job: this.public(current.artifact, current.view, current.waitingForDrawing), reused: ["completed", "partial"].includes(artifact.state) };
   }
 
   async job(action: "status" | "cancel", source: CadArchiveSource, actorId: string, viewId: string, jobId: string): Promise<CadJob> {
@@ -54,7 +54,7 @@ export class CadArchiveService {
       && ["completed", "partial"].includes(bound.artifact.state)) {
       await this.repository.lease(bound.view.id);
     }
-    return this.public(bound.artifact, bound.view);
+    return this.public(bound.artifact, bound.view, bound.waitingForDrawing);
   }
 
   async resource(action: "manifest" | "buffer", source: CadArchiveSource, actorId: string, viewId: string,
@@ -118,13 +118,13 @@ export class CadArchiveService {
     return result;
   }
 
-  private public(row: CadArtifactRow, view: CadViewRow): CadJob {
+  private public(row: CadArtifactRow, view: CadViewRow, waitingForDrawing: boolean): CadJob {
     const state = view.cancelled ? "cancelled" : row.state as CadJob["state"];
     const columns = row.buffers?.find((item) => item.kind === "dwg-curve-columns-v1");
     const resources = row.resourceLease && row.buffers
       ? { lease: row.resourceLease, buffers: row.buffers.filter((item) => !item.kind).slice(0, 256).map(({ sha256, byteLength }) => ({ sha256, byteLength })) }
       : undefined;
-    return { id: view.id.replaceAll("-", ""), state, format: row.sourceFormat, phase: view.cancelled ? "cancelled" : row.phase,
+    return { id: view.id.replaceAll("-", ""), state, format: row.sourceFormat, phase: view.cancelled ? "cancelled" : waitingForDrawing ? "waiting-for-drawing" : row.phase,
       sourceSHA256: row.sourceSHA256, sourceByteLength: row.sourceBytes, nameCodepage: row.nameCodepage as CadNameCodepage,
       createdAt: row.createdAt.getTime() / 1000, updatedAt: row.updatedAt.getTime() / 1000,
       ...(["completed", "partial"].includes(row.state) && !view.cancelled ? { artifactBytes: row.artifactBytes, ...(resources ? { resources } : {}),

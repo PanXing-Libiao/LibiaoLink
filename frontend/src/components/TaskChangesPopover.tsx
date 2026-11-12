@@ -14,12 +14,11 @@ const CARD_GAP = 12;
  * - 触发按钮固定在任务行内；点击后在按钮正下方弹出横向卡片轨，顶部小箭头对准触发按钮；
  * - 卡片只承担“选一条变更”的轻量浏览，完整字段仍进入 ChangeDetailModal；
  * - 条目较多时在浮层内横向滚动，页面纵向高度不变；
- * - 「查看全部变更」由项目总览工具区打开项目级变更记录弹窗。
+ * - 不再提供“查看全部变更”跳转；项目级汇总只在表头「变更关联」入口。
  */
-export function TaskChangesPopover({ task, members, onOpenAllChanges, onOpenLinkedTask }: {
+export function TaskChangesPopover({ task, members, onOpenLinkedTask }: {
   task: ProjectTask;
   members: readonly Member[];
-  onOpenAllChanges?: (() => void) | null;
   /** 详情弹窗「关联」回写任务：任务表传入选中当前行（打开任务抽屉）。 */
   onOpenLinkedTask?: (() => void) | null;
 }) {
@@ -166,21 +165,9 @@ export function TaskChangesPopover({ task, members, onOpenAllChanges, onOpenLink
               );
             })}
           </div>
-          {onOpenAllChanges === undefined || onOpenAllChanges === null ? null : (
-            <div className="flex items-center justify-between border-t border-zinc-100 px-3 py-2">
+          {scrollState.atStart && scrollState.atEnd ? null : (
+            <div className="border-t border-zinc-100 px-3 py-2">
               <span className="text-[11px] text-zinc-400">{t("changePopover.hint")}</span>
-              <button
-                type="button"
-                data-change-popover-all="true"
-                onClick={() => {
-                  setOpen(false);
-                  onOpenAllChanges();
-                }}
-                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition hover:bg-amber-50"
-              >
-                {t("changePopover.viewAll")}
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="h-3 w-3"><path strokeLinecap="round" strokeLinejoin="round" d="m7 4 6 6-6 6" /></svg>
-              </button>
             </div>
           )}
         </div>,

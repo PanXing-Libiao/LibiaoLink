@@ -25,7 +25,7 @@ import {
   projectLabel,
   type EffectiveMemberPermission,
 } from "./accessRoleModel";
-import { effectiveMemberAccess, memberRuleOf, scopePermissionsOf } from "./accessRules";
+import { memberRuleOf, scopePermissionsOf } from "./accessRules";
 import { AccessScopePicker } from "./AccessScopePicker";
 import { AppHeader } from "./components/AppHeader";
 import { SelectMenu } from "./components/SelectMenu";
@@ -436,7 +436,9 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     ? []
     : data.projects.filter((project) => (project.code + " " + project.name).toLowerCase().includes(personalProjectQuery.trim().toLowerCase()));
   const personalMember = personalUserId === null ? null : selectedMembers.find((member) => member.userId === personalUserId) ?? null;
-  const personalRule = personalMember === null || selectedGroup === null ? null : memberRuleOf(selectedGroup, personalMember.userId);
+  const personalRuleGroups = personalMember === null || data === null ? [] : data.groups.filter((group) => memberRuleOf(group, personalMember.userId) !== null);
+  const personalRuleGroup = personalRuleGroups[0] ?? null;
+  const personalRule = personalRuleGroup === null || personalMember === null ? null : memberRuleOf(personalRuleGroup, personalMember.userId);
   const personalAdmin = personalMember === null ? null : adminByUserId.get(personalMember.userId) ?? null;
   const personalAutomatic = personalMember === null ? null : automaticRoleOf(rolesById, personalMember.userId);
   const personalEffective = personalMember === null || personalAutomatic === null || data === null
@@ -471,9 +473,10 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   }
 
   function setPersonalRuleFromMember(group: GroupAccessGroup, userId: string): void {
-    const effective = effectiveMemberAccess(group, userId);
-    setPersonalScopePermissions(effective.scopePermissions);
-    setPersonalProjectIds(effective.projectIds);
+    const ruleGroup = allGroups.find((candidate) => memberRuleOf(candidate, userId) !== null) ?? group;
+    const rule = memberRuleOf(ruleGroup, userId);
+    setPersonalScopePermissions(rule === null ? [] : scopePermissionsOf(rule.scopePermissions, rule.projectScope, rule.accessLevel));
+    setPersonalProjectIds(rule?.projectIds ?? []);
   }
 
   function applyGroup(group: GroupAccessGroup): void {
@@ -582,7 +585,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     setSavingPersonal(true);
     try {
       await saveGroupAccessMemberRules({
-        groupKey: selectedKey,
+        groupKey: personalRuleGroup?.groupKey ?? selectedKey,
         userIds: [personalMember.userId],
         scopePermissions: personalScopePermissions,
         projectIds: personalScopePermissions.some((permission) => permission.projectScope === "selected") ? personalProjectIds : [],
@@ -598,12 +601,15 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   }
 
   async function handleRestorePersonal(): Promise<void> {
-    if (selectedKey === null || personalMember === null || restoringPersonal || savingPersonal) return;
+    if (selectedKey === null || personalMember === null || personalRuleGroups.length === 0 || restoringPersonal || savingPersonal) return;
     if (!window.confirm(t("access.confirmRestoreDepartmentDefault"))) return;
     setRestoringPersonal(true);
     try {
-      await deleteGroupAccessMemberRules({ groupKey: selectedKey, userIds: [personalMember.userId] });
-      if (selectedGroup !== null) setPersonalRuleFromMember(selectedGroup, personalMember.userId);
+      for (const group of personalRuleGroups) {
+        await deleteGroupAccessMemberRules({ groupKey: group.groupKey, userIds: [personalMember.userId] });
+      }
+      setPersonalScopePermissions([]);
+      setPersonalProjectIds([]);
       setNotice({ kind: "ok", text: t("access.personalRestored") });
       void loadMyPermissions(true);
       setReload((value) => value + 1);
@@ -882,6 +888,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
 
                     <div data-access-personal-editor="true" className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm sm:p-5">
                       <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="text-sm font-semibold text-zinc-800">{t("access.extraPersonalTitle")}</h3><p className="mt-0.5 text-xs leading-5 text-zinc-500">{t("access.extraPersonalHint")}</p></div><RoleTag tone="amber">{t("access.manualConfigured")}</RoleTag></div>
+                      {personalRuleGroups.length === 0 ? null : <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-2 text-[10px] leading-4 text-amber-700 ring-1 ring-inset ring-amber-100">{t("access.personalRuleSource", { groups: personalRuleGroups.map((group) => group.groupName).join(" / ") })}</p>}
                       <div className="mt-3"><AccessScopePicker scopePermissions={personalScopePermissions} onChange={setPersonalScopePermissions} /></div>
                       {personalScopePermissions.some((permission) => permission.projectScope === "selected") ? <ProjectPicker projects={filteredPersonalProjects} selectedIds={personalProjectIds} query={personalProjectQuery} t={t} onQueryChange={setPersonalProjectQuery} onToggle={togglePersonalProject} /> : null}
                       <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-4 text-zinc-400"><svg viewBox="0 0 20 20" aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0"><circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="M10 9v4M10 6.6v.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg><span>{t("access.personalFootNote")}</span></p>
