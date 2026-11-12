@@ -1,3 +1,9 @@
+> **2026-11-12 13:06 正式机最终线上状态（wmj 1300 合并携带归档修复）**：13:02 归档版本上线后，wmj 于 13:02 并发发布 `prod-20261112-1300-wmj-stage-add-card-cdc9a661`，明确以 `prod-20261112-1256-px-archive-task-complete-7551b71d` 为 previous，保留本次 1256 归档服务端热修与四语文案，并合入 stage-add-card。
+>
+> **最终线上**：release = `prod-20261112-1300-wmj-stage-add-card-cdc9a661`；`index.html` 522 B · `e71c16c7…`、主 JS `assets/index-BXYRQqOn.js` 2,236,514 B · `d474841f…`；新归档提示命中 1 次、旧提示 0 次，`deliverableTypes` 保留。当前 manifest 7,032 B · `6d9bbdb9…`，`activeIncrementalRelease` 指向 wmj release。
+>
+> **验收 / 回滚**：公网 HTML / JS / CSS 哈希与安装件一致，`/`、`/healthz`、`/readyz` 200，四项探针 true，未登录 401，8 / 8 容器 healthy。仅用潘兴账号打开自己的 `test—cad` 编辑弹窗选择「已归档」，显示「项目任务全部完成后即可归档。」，随后取消、未保存项目改动，console error 0。归档回滚点仍为 `/srv/data/backups/before-prod-20261112-1256-px-archive-task-complete-7551b71d/`；wmj 发布的完整前端回滚点为 `/srv/data/backups/before-prod-20261112-1300-wmj-stage-add-card-cdc9a661/`。
+
 > **2026-11-12 13:02 项目归档改为任务全部完成即可（正式机增量 · PR #824 / codex/archive-task-complete@7551b71d）**：项目内未删除任务全部 done 即可归档；有未完成任务返回 409 `ARCHIVE_NOT_READY`，`confirm=true` 不可越过；文件是否定档、必交成果是否齐全不再阻断。正式机保留既有任务定档 / 取消定档与输出成果配置，仅叠加归档服务端模块与四语前端提示。
 >
 > **发布件**：`archive-task-complete-prod-overlay.tar.gz` 643,745 B · SHA-256 `6d7e68545aacdd6db5406f4323e02d66516d05f484d0d94f0a9ae3fb9eb9535c` · 8 文件；含 server 归档模块 6 个编译文件、`index.html` 522 B · `6f03f461…`、主 JS `assets/index-e1fb3Uii.js` 2,232,111 B · `cb5d16ea…`。CSS `index-CZ5UyZQJ.css` 216,015 B · `8b99d67c…` 未变，继续使用正式机现值。
