@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { lockBodyScroll } from "../scrollLock";
 import { useT } from "../i18n";
 
@@ -42,7 +42,18 @@ export function estimateRemainingSeconds(elapsedSeconds: number, done: number, t
 
 export type ExportProgressVariant = "overview" | "project-data" | "page-export";
 
-export function ExportProgressOverlay({ progress, variant = "overview" }: { progress: ExportTranslateProgress | null; variant?: ExportProgressVariant }) {
+export function ExportProgressOverlay({
+  progress,
+  variant = "overview",
+  title,
+  hint,
+}: {
+  progress: ExportTranslateProgress | null;
+  variant?: ExportProgressVariant;
+  /** 复用同一套等待动效时，允许业务替换标题与说明（例如项目文件 ZIP 打包）。 */
+  title?: ReactNode;
+  hint?: ReactNode;
+}) {
   const t = useT();
   const [elapsed, setElapsed] = useState(0);
   const [remaining, setRemaining] = useState<number | null>(null);
@@ -96,9 +107,9 @@ export function ExportProgressOverlay({ progress, variant = "overview" }: { prog
             </span>
           </span>
         </div>
-        <p className="export-progress__title">{projectData ? t("exp.projectData.title") : pageExport ? t("pageExport.generatingTitle") : waiting || translating ? t("exp.translating") : t("exp.generating")}</p>
+        <p className="export-progress__title">{title ?? (projectData ? t("exp.projectData.title") : pageExport ? t("pageExport.generatingTitle") : waiting || translating ? t("exp.translating") : t("exp.generating"))}</p>
         <p className="export-progress__hint">
-          {projectData
+          {hint ?? (projectData
             ? t("exp.projectData.hint")
             : pageExport
               ? t("pageExport.generatingHint")
@@ -110,7 +121,7 @@ export function ExportProgressOverlay({ progress, variant = "overview" }: { prog
                       {t("exp.etaLead")}<span className="export-progress__num">{Math.max(1, Math.round(displayed))}</span>{t("exp.etaTail", { d: done, t: total })}
                     </>
                   )
-                : t("exp.ready")}
+                : t("exp.ready"))}
         </p>
         <div className={"export-progress__bar" + (indeterminate ? " is-waiting" : "")}>
           <span className="export-progress__bar-fill" style={indeterminate ? undefined : { width: percent + "%" }} />

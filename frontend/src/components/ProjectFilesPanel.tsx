@@ -26,6 +26,7 @@ import { mobileFilePreviewMustDownload } from "../mobilePreviewPolicy";
 import { useLiveRefresh } from "../useLiveRefresh";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { FileTypeIcon } from "./FileTypeIcon";
+import { ExportProgressOverlay } from "./ExportProgressOverlay";
 import { Loader } from "./Loader";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { SearchInput } from "./SearchInput";
@@ -1248,29 +1249,12 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
       ) : null}
 
       {bulkBusy?.kind === "archive" ? (
-        <div
-          data-project-files-bulk-overlay=""
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/35 p-4 backdrop-blur-[1px]"
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="project-files-archive-title"
-            aria-describedby="project-files-archive-description"
-            aria-busy="true"
-            className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white px-6 py-7 text-center shadow-[0_24px_70px_-24px_rgba(15,23,42,0.5)]"
-          >
-            <div className="flex justify-center">
-              <Loader />
-            </div>
-            <h3 id="project-files-archive-title" className="mt-4 text-base font-semibold text-zinc-900">
-              {t("pd.files.bulk.archiveProgress", { n: bulkBusy.total })}
-            </h3>
-            <p id="project-files-archive-description" className="mt-2 text-sm leading-6 text-zinc-500">
-              {t("pd.files.bulk.archiveWait")}
-            </p>
-          </div>
-        </div>
+        <ExportProgressOverlay
+          progress={null}
+          variant="project-data"
+          title={t("pd.files.bulk.archiveProgress", { n: bulkBusy.total })}
+          hint={t("pd.files.bulk.archiveWait")}
+        />
       ) : null}
 
       {preview === null ? null : (
