@@ -653,7 +653,9 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
                   <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.status")}</th>
                   <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.uploader")}</th>
                   <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.createdAt")}</th>
-                  <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.actions")}</th>
+                  <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 text-right font-medium">
+                    <span className="inline-flex w-16 items-center justify-center">{t("lib.col.actions")}</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
