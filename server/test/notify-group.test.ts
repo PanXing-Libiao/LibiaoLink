@@ -11,6 +11,7 @@ import { ClockService } from "../src/common/clock/clock.service.js";
 import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
 import type {
   R06PosterData,
+  GroupStakeholderRow,
   WecomGroupCandidateRow,
   WecomGroupRow,
 } from "../src/modules/notify/notify.group.repository.js";
@@ -23,11 +24,15 @@ import {
   GROUP_DEGRADE_PREFIX,
   GROUP_MARKDOWN_MAX_BYTES,
   GROUP_NAME_COMMAND_HINT,
+  GROUP_STAKEHOLDER_MAX_ROWS,
+  GROUP_STAKEHOLDER_UNBOUND_HINT,
   GROUP_TRUNCATION_SUFFIX,
   maskChatid,
   NotifyGroupService,
   parseGroupMessage,
   parseGroupNameCommand,
+  parseGroupStakeholderCommand,
+  renderGroupStakeholdersMarkdown,
   truncateGroupMarkdown,
 } from "../src/modules/notify/notify.group.service.js";
 import type { AibotIncomingMessage, AibotSendResult, WecomAibotClient } from "../src/modules/notify/wecom.aibot.js";
@@ -36,11 +41,14 @@ import type {
   ProjectGroupUnavailableReason,
 } from "../src/modules/notify/project-group-delivery-alert.service.js";
 import { FakeNotifyDeliveryArchive } from "./fakes/notify-delivery-archive.fake.js";
+import type { ActorAuthorization } from "../src/modules/identity/index.js";
 
 const AT = new Date("2026-10-12T06:00:00.000Z");
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const PROJECT_2 = "22222222-2222-4222-8222-222222222222";
 const CHATID = "AbcDefGhiJkLmNoPqrStUv-12";
+const ACTOR_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const BOT_ID = "bot-test-1";
 
 function dailyReportGroupBody(reportId: string): string {
   return (
@@ -58,6 +66,22 @@ function groupRow(overrides: Partial<WecomGroupRow> & { projectId: string; chati
     activatedAt: AT,
     createdAt: AT,
     updatedAt: AT,
+    ...overrides,
+  };
+}
+
+function stakeholderRow(overrides: Partial<GroupStakeholderRow> = {}): GroupStakeholderRow {
+  return {
+    id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    name: "潘兴",
+    companyType: "libiao",
+    company: null,
+    title: "系统研发",
+    phone: "123456",
+    wechat: "crabajn",
+    email: "panxing@libiaorobot.com",
+    role: "研发实习生",
+    createdByName: "潘兴",
     ...overrides,
   };
 }
@@ -82,6 +106,9 @@ class FakeGroupRepository {
   stageCompletePosterData: StageCompletePosterData | null = null;
   materialReissuePosterData: MaterialReissuePosterData | null = null;
   setNameCalls: { chatid: string; name: string; at: Date }[] = [];
+  stakeholderRows: GroupStakeholderRow[] = [];
+  stakeholderQueryCalls: string[] = [];
+  boundUsers = new Map<string, string>();
 
   async findGroupByProject(projectId: string): Promise<WecomGroupRow | null> {
     return this.groups.find((row) => row.projectId === projectId) ?? null;
@@ -135,6 +162,15 @@ class FakeGroupRepository {
     return this.managers.get(projectId) ?? null;
   }
 
+  async findBoundLocalUserId(botId: string, wecomUserid: string): Promise<string | null> {
+    return this.boundUsers.get(botId + "|" + wecomUserid) ?? null;
+  }
+
+  async listProjectStakeholders(projectId: string): Promise<GroupStakeholderRow[]> {
+    this.stakeholderQueryCalls.push(projectId);
+    return this.stakeholderRows;
+  }
+
   async findProjectName(projectId: string): Promise<string | null> {
     return this.projectNames.get(projectId) ?? null;
   }
@@ -166,6 +202,27 @@ class FakeGroupRepository {
     return this.materialReissuePosterData;
   }
 
+}
+
+
+class FakePermissions {
+  access = true;
+  authorization: ActorAuthorization = {
+    userId: ACTOR_ID,
+    roleCodes: [],
+    dataScopes: ["all"],
+    permissionKeys: ["stakeholder.view", "stakeholder.contact.view"],
+  };
+  resolveCalls: { actorId: string; projectId: string }[] = [];
+
+  async resolveProjectAccess(actorId: string, projectId: string): Promise<object | null> {
+    this.resolveCalls.push({ actorId, projectId });
+    return this.access ? {} : null;
+  }
+
+  async getAuthorization(): Promise<ActorAuthorization> {
+    return this.authorization;
+  }
 }
 
 class FakeAibot {
@@ -260,11 +317,13 @@ function makeService(
   inbox: FakeNotifyInbox;
   archive: FakeNotifyDeliveryArchive;
   deliveryAlerts: FakeDeliveryAlerts;
+  permissions: FakePermissions;
 } {
   const repo = new FakeGroupRepository();
   const aibot = new FakeAibot();
   const inbox = new FakeNotifyInbox();
   const deliveryAlerts = new FakeDeliveryAlerts();
+  const permissions = new FakePermissions();
   const clock = new ClockService();
   clock.setSource(() => AT);
   const service = new NotifyGroupService(
@@ -275,6 +334,7 @@ function makeService(
     clock,
     {
       env: {
+        WECOM_BOT_ID: BOT_ID,
         WECOM_R06_DYNAMIC_POSTER: "true",
         WECOM_R06_FONT_SANS_PATH: "",
         WECOM_R06_FONT_SANS_BOLD_PATH: "",
@@ -288,8 +348,9 @@ function makeService(
     } as never,
     {} as never,
     deliveryAlerts as never,
+    permissions as never,
   );
-  return { service, repo, aibot, inbox, archive: repo.archive, deliveryAlerts };
+  return { service, repo, aibot, inbox, archive: repo.archive, deliveryAlerts, permissions };
 }
 
 function claimedRow(payload: Record<string, unknown>, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
@@ -402,6 +463,98 @@ describe("parseGroupNameCommand（群内群名命令）", () => {
 
   it("超过 64 字符：invalid too_long", () => {
     expect(parseGroupNameCommand("群名：" + "汉".repeat(65))).toEqual({ kind: "invalid", reason: "too_long" });
+  });
+});
+
+describe("群内干系人命令 / markdown 表格（纯函数）", () => {
+  it("仅精确 @机器人 干系人触发；裸 @、未 @ 与其他变体不触发", () => {
+    expect(parseGroupStakeholderCommand("@机器人")).toBe(false);
+    expect(parseGroupStakeholderCommand("<@bot-user>")).toBe(false);
+    expect(parseGroupStakeholderCommand("@机器人 干系人")).toBe(true);
+    expect(parseGroupStakeholderCommand("<@bot-user> 干系人")).toBe(true);
+    expect(parseGroupStakeholderCommand("@机器人 干系人信息")).toBe(false);
+    expect(parseGroupStakeholderCommand("@机器人 查看干系人")).toBe(false);
+    expect(parseGroupStakeholderCommand("@机器人 查询干系人列表")).toBe(false);
+    expect(parseGroupStakeholderCommand("干系人")).toBe(false);
+    expect(parseGroupStakeholderCommand("干系人信息")).toBe(false);
+    expect(parseGroupStakeholderCommand("查看干系人")).toBe(false);
+    expect(parseGroupStakeholderCommand("群名 测试群")).toBe(false);
+    expect(parseGroupStakeholderCommand("大家好")).toBe(false);
+    expect(parseGroupStakeholderCommand(null)).toBe(false);
+  });
+
+  it("有权限：列名 / 顺序 / 公司与联系方式照系统干系人页", () => {
+    const content = renderGroupStakeholdersMarkdown({
+      projectName: "爱尔兰DPD包裹分拣",
+      rows: [stakeholderRow()],
+      viewer: { kind: "authorized", authorization: new FakePermissions().authorization },
+    });
+    expect(content).toContain("**爱尔兰DPD包裹分拣 · 干系人**");
+    expect(content).toContain(
+      "| 干系人姓名 | 电话 / WhatsApp | 微信 | 邮箱 Email | 职务 / 责任板块 | 所属公司 | 填写者 | 干系人角色 |",
+    );
+    expect(content).toContain(
+      "| 潘兴 | 123456 | crabajn | panxing@libiaorobot.com | 系统研发 | 立镖机器人 | 潘兴 | 研发实习生 |",
+    );
+  });
+
+  it("未绑定平台账号：保留姓名 / 公司分类 / 填写者 / 角色，联系方式与商务字段全部隐藏", () => {
+    const content = renderGroupStakeholdersMarkdown({
+      projectName: "爱尔兰DPD包裹分拣",
+      rows: [stakeholderRow()],
+      viewer: { kind: "anonymous" },
+    });
+    expect(content).toContain(
+      "| 潘兴 | — | — | — | — | 立镖机器人 | 潘兴 | 研发实习生 |",
+    );
+    expect(content).not.toContain("123456");
+    expect(content).not.toContain("crabajn");
+    expect(content).not.toContain("panxing@libiaorobot.com");
+    expect(content).toContain("未识别到你的平台账号");
+  });
+
+  it("已绑定但无项目权限：同样隐藏敏感字段并提示项目权限", () => {
+    const content = renderGroupStakeholdersMarkdown({
+      projectName: "爱尔兰DPD包裹分拣",
+      rows: [stakeholderRow()],
+      viewer: { kind: "restricted" },
+    });
+    expect(content).toContain("| 潘兴 | — | — | — | — | 立镖机器人 | 潘兴 | 研发实习生 |");
+    expect(content).toContain("未关联到有权查看本项目的平台账号");
+  });
+
+  it("有项目权限但缺联系方式权限：仅联系方式隐藏，职务和公司仍展示", () => {
+    const content = renderGroupStakeholdersMarkdown({
+      projectName: "爱尔兰DPD包裹分拣",
+      rows: [stakeholderRow()],
+      viewer: {
+        kind: "authorized",
+        authorization: {
+          userId: ACTOR_ID,
+          roleCodes: [],
+          dataScopes: ["all"],
+          permissionKeys: ["stakeholder.view"],
+        },
+      },
+    });
+    expect(content).toContain(
+      "| 潘兴 | — | — | — | 系统研发 | 立镖机器人 | 潘兴 | 研发实习生 |",
+    );
+    expect(content).toContain("部分字段因权限不足已隐藏");
+  });
+
+  it("超过行数上限：按传入的最近更新顺序截到 50 行并注明总数", () => {
+    const rows = Array.from({ length: GROUP_STAKEHOLDER_MAX_ROWS + 1 }, (_, index) =>
+      stakeholderRow({ id: "row-" + String(index), name: "干系人" + String(index) }),
+    );
+    const content = renderGroupStakeholdersMarkdown({
+      projectName: "大项目",
+      rows,
+      viewer: { kind: "anonymous" },
+    });
+    expect(content).toContain("干系人0");
+    expect(content).not.toContain("干系人50");
+    expect(content).toContain("仅显示最近更新的 50 位（共 51 位）");
   });
 });
 
@@ -1491,6 +1644,90 @@ describe("NotifyGroupService.activateFromCallback（群回调 ingest）", () => 
 
     expect(repo.observeCalls[0]!.name).toBeNull();
     expect(aibot.replies[0]!.content).toBe(GROUP_NAME_COMMAND_HINT);
+  });
+
+  it("未绑定群 + @机器人 干系人：登记候选并提示先绑定项目", async () => {
+    const { service, repo, aibot } = makeService();
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "@机器人 干系人", reqId: "req-s1" }));
+
+    expect(repo.observeCalls).toHaveLength(1);
+    expect(aibot.replies).toHaveLength(1);
+    expect(aibot.replies[0]!.content).toBe(GROUP_STAKEHOLDER_UNBOUND_HINT);
+    expect(aibot.sends).toEqual([]);
+  });
+
+  it("已绑定群 + @机器人 干系人：按系统干系人 8 列生成 markdown 表格并主动发群", async () => {
+    const { service, repo, aibot, permissions } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, name: "测试群1", activatedAt: AT }));
+    repo.projectNames.set(PROJECT_ID, "爱尔兰DPD包裹分拣");
+    repo.stakeholderRows = [stakeholderRow()];
+    repo.boundUsers.set(BOT_ID + "|user1", ACTOR_ID);
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "@机器人 干系人", reqId: "req-s2" }));
+
+    expect(repo.stakeholderQueryCalls).toEqual([PROJECT_ID]);
+    expect(permissions.resolveCalls).toEqual([{ actorId: ACTOR_ID, projectId: PROJECT_ID }]);
+    expect(aibot.replies).toEqual([]);
+    expect(aibot.sends).toHaveLength(1);
+    expect(aibot.sends[0]).toMatchObject({ chatid: CHATID, groupActivated: true });
+    expect(aibot.sends[0]!.content).toContain("**爱尔兰DPD包裹分拣 · 干系人**");
+    expect(aibot.sends[0]!.content).toContain(
+      "| 潘兴 | 123456 | crabajn | panxing@libiaorobot.com | 系统研发 | 立镖机器人 | 潘兴 | 研发实习生 |",
+    );
+  });
+
+  it("已绑定群 + 干系人关键词：未绑定本地账号时只发公共字段", async () => {
+    const { service, repo, aibot, permissions } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    repo.stakeholderRows = [stakeholderRow()];
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "@机器人 干系人", reqId: "req-s3" }));
+
+    expect(permissions.resolveCalls).toEqual([]);
+    expect(aibot.sends[0]!.content).toContain("| 潘兴 | — | — | — | — | 立镖机器人 | 潘兴 | 研发实习生 |");
+    expect(aibot.sends[0]!.content).not.toContain("panxing@libiaorobot.com");
+    expect(aibot.sends[0]!.content).toContain("未识别到你的平台账号");
+  });
+
+  it("已绑定本地账号但项目不可见：隐藏敏感字段并提示项目权限", async () => {
+    const { service, repo, aibot, permissions } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    repo.stakeholderRows = [stakeholderRow()];
+    repo.boundUsers.set(BOT_ID + "|user1", ACTOR_ID);
+    permissions.access = false;
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "@机器人 干系人", reqId: "req-s4" }));
+
+    expect(aibot.sends[0]!.content).toContain("| 潘兴 | — | — | — | — | 立镖机器人 | 潘兴 | 研发实习生 |");
+    expect(aibot.sends[0]!.content).toContain("未关联到有权查看本项目的平台账号");
+  });
+
+  it("已绑定群但项目无干系人：返回明确的空态", async () => {
+    const { service, repo, aibot, permissions } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    repo.stakeholderRows = [];
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "@机器人 干系人", reqId: "req-s5" }));
+
+    expect(aibot.sends[0]!.content).toContain("**总装输送线项目 · 干系人**");
+    expect(aibot.sends[0]!.content).toContain("该项目暂无干系人。");
+    expect(permissions.resolveCalls).toEqual([]);
+  });
+
+  it("裸 @、未 @ 关键词及非精确命令：均不返回表格", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, name: "测试群1", activatedAt: AT }));
+    repo.stakeholderRows = [stakeholderRow()];
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "@机器人", reqId: "req-s0a" }));
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "干系人", reqId: "req-s0b" }));
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "@机器人 干系人信息", reqId: "req-s0c" }));
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "@机器人 查看干系人", reqId: "req-s0d" }));
+
+    expect(repo.stakeholderQueryCalls).toEqual([]);
+    expect(aibot.replies).toEqual([]);
+    expect(aibot.sends).toEqual([]);
   });
 
   it("普通群聊：只登记候选，不回执", async () => {
