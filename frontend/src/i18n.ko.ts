@@ -1124,6 +1124,7 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "pd.files.filter.stage.search": "단계 검색",
   "pd.files.col.stage": "단계",
   "pd.files.col.task": "작업",
+  "pd.files.previewHint": "파일 행을 클릭하면 미리 볼 수 있습니다",
   "pd.files.status.before": "변경 전",
   "pd.files.status.after": "변경 후",
   "pd.files.status.material": "재발행 신청",
