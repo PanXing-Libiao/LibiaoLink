@@ -32,9 +32,10 @@
  *      （任务随定档锁定：任务 / 文件写口全 409 TASK_FINALIZED、下拉顶常驻提示、两个添加入口关闭；
  *      Push 260 补漏 · 业务口径「定档后还能删除是bug 不能删除定档后」——下拉 / 抽屉的删除入口整体下架 + recycle 409，④s2b / ④s6 / ④s7）；
  *   ⑭ 抽屉定档开关（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态 有二次提示的」；
- *      2026-11-12 入口门：任务 deliverableTypes 非空（已设定输出成果文件）才显示定档开关与「添加定档文件」）：
- *      开关在状态签旁（未定档 = 灰底「未」；已定档 = logo 黄底「已」）；点开 = 就地二次确认条（不落库）、取消 = 收条（③d 段）；
- *      确认定档 = POST …/tasks/{taskId}/finalize → tasks.finalized_at 置位（幂等 + 此后写口 409 TASK_FINALIZED，第二个任务端到端 · ④t 段）；
+ *      2026-11-12 门禁：deliverableTypes 非空只是显示入口；任务未完成 / 输出成果文件未上传时开关 blocked + disabled，
+ *      任务完成且逐类成果文件已上传后才可点开）：开关在状态签旁（未定档 = 灰底「未」；已定档 = logo 黄底「已」）；
+ *      点开 = 就地二次确认条（不落库）、取消 = 收条（③d 段验证未完成 blocked）；
+ *      确认定档 = POST …/tasks/{taskId}/finalize（服务端同门禁）→ tasks.finalized_at 置位（幂等 + 此后写口 409 TASK_FINALIZED，第二个任务端到端 · ④t 段）；
  *      Push 260 改版（业务口径「点击定档按钮应该也要计入操作记录」+「把现在的定档改成 再次点击取消定档吧」）：定档后「已」开关可**再次点击** →
  *      二段确认 → POST …/tasks/{taskId}/unfinalize 清位重开（version+1、审计「任务定档」/「取消定档」各一条；文件级定档不回退）—— ④t9~④t14 段；
  *   ⑮ 「定档」侧签（Push 252 · 业务口径演进：「不是在表格内 要在表格外部懂吗 延伸出一个小标签」→「黄色变淡」→「竖排／横排」→ 定稿「竖着的定档二字的在表格外」）：
@@ -469,30 +470,23 @@ const drawer1 = await waitDrawerFiles(1, 12000) === true ? await ev(DRAWER_FILES
 check("③b 抽屉「文件」清单 = 详情接口下发的 1 行（只出文件名，无「未定档」签）", drawer1.count === 1 && drawer1.names.indexOf(fileAName) >= 0 && drawer1.names.indexOf("未定档") < 0 && drawer1.names.indexOf("已定档") < 0, JSON.stringify(drawer1));
 check("③c 抽屉上传入口在位（＋ 上传文件 + 隐藏输入框）", drawer1.upload === "＋ 上传文件" && drawer1.input === true, JSON.stringify({ upload: drawer1.upload, input: drawer1.input }));
 
-// ③d 抽屉头部「定档」开关（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态 有二次提示的」）：
-//   开关在状态签旁（未定档 = data-task-finalize=off · 旋钮「未」）；点开 = 就地二次确认条（不落库）、取消 = 收条；
-//   确认路径（POST /finalize / 幂等 / 定档后 409）在第二个任务上端到端 —— 见 ④t 段（本任务要保持可写直到 ④s）。
+// ③d 抽屉头部「定档」开关门禁（2026-11-12 收紧）：任务未完成 / 输出成果文件未上传时开关必须 disabled（blocked），
+//   不出二次确认、不落库；本任务保持未完成到 ④s 前，完整定档路径由 ④s 的“先补成果 + 完成任务”覆盖。
 const finalizeProbe = await ev("(function(){var d=document.querySelector(" + j(DRAWER) + ");if(d===null){return null;}"
-  + "var sw=d.querySelector(" + j("[data-task-finalize]") + ");var chip=d.querySelector(" + j("[data-task-status-chip]") + ");"
-  + "if(sw===null||chip===null){return {sw:false,chip:false};}"
+  + "var sw=d.querySelector(" + j("[data-task-finalize]") + ");var hint=d.querySelector(" + j("[data-task-finalize-blocked-hint]") + ");"
+  + "var chip=d.querySelector(" + j("[data-task-status-chip]") + ");if(sw===null||chip===null){return {sw:false,chip:false};}"
   + "var rs=sw.getBoundingClientRect();var rc=chip.getBoundingClientRect();"
-  + "return {sw:true,state:sw.getAttribute(" + Q + "data-task-finalize" + Q + "),knob:sw.textContent.trim(),"
-  + "sameRow:Math.abs(Math.round(rs.top+rs.height/2)-Math.round(rc.top+rc.height/2))<=6,rightOf:rs.left>=rc.right-2};})()");
-check("③d 定档开关在任务状态签旁（未定档 = off · 旋钮「未」 · 同一行、状态签右侧）",
-  finalizeProbe !== null && finalizeProbe !== undefined && finalizeProbe.sw === true && finalizeProbe.state === "off" && finalizeProbe.knob === "未" && finalizeProbe.sameRow === true && finalizeProbe.rightOf === true,
-  JSON.stringify(finalizeProbe));
-const finalizeClicked = await clickSelector("[data-task-finalize]");
-const finalizeConfirmShown = await waitFor("document.querySelector(" + j("[data-task-finalize-confirm]") + ")!==null", 6000);
+  + "return {sw:true,state:sw.getAttribute(" + Q + "data-task-finalize" + Q + "),knob:sw.textContent.trim(),disabled:sw.disabled===true,"
+  + "title:String(sw.getAttribute(" + Q + "title" + Q + ")),hint:hint===null?null:hint.textContent.trim(),"
+  + "sameRow:Math.abs(Math.round(rs.top+rs.height/2)-Math.round(rc.top+rc.height/2))<=6,rightOf:rs.left>=rc.right-2,"
+  + "confirm:document.querySelector(" + j("[data-task-finalize-confirm]") + ")!==null};})()");
 const finalizeDbBefore = (await db.query("select finalized_at from tasks where id = $1", [taskId])).rows[0];
-check("③d2 点开关 = 就地二次确认条（data-task-finalize-confirm · 确认前不落库）",
-  finalizeClicked === true && finalizeConfirmShown === true && finalizeDbBefore.finalized_at === null,
-  JSON.stringify({ clicked: finalizeClicked, confirm: finalizeConfirmShown, finalizedAt: finalizeDbBefore.finalized_at }));
-const finalizeCancelClicked = await clickSelector("[data-task-finalize-cancel]");
-const finalizeConfirmGone = await waitFor("document.querySelector(" + j("[data-task-finalize-confirm]") + ")===null", 6000);
-const finalizeDbAfterCancel = (await db.query("select finalized_at from tasks where id = $1", [taskId])).rows[0];
-check("③d3 取消 = 收确认条、不落库（开关仍 off）",
-  finalizeCancelClicked === true && finalizeConfirmGone === true && finalizeDbAfterCancel.finalized_at === null,
-  JSON.stringify({ cancel: finalizeCancelClicked, gone: finalizeConfirmGone, finalizedAt: finalizeDbAfterCancel.finalized_at }));
+check("③d 任务未完成：状态签旁定档开关 = blocked 且禁用（同一行、状态签右侧；提示先完成任务；无确认条、不落库）",
+  finalizeProbe !== null && finalizeProbe !== undefined && finalizeProbe.sw === true && finalizeProbe.state === "blocked"
+  && finalizeProbe.knob === "未" && finalizeProbe.disabled === true && String(finalizeProbe.title).indexOf("任务完成后才可定档") >= 0
+  && String(finalizeProbe.hint).indexOf("任务完成后才可定档") >= 0 && finalizeProbe.confirm === false
+  && finalizeProbe.sameRow === true && finalizeProbe.rightOf === true && finalizeDbBefore.finalized_at === null,
+  JSON.stringify({ probe: finalizeProbe, finalizedAt: finalizeDbBefore.finalized_at }));
 // ④ 抽屉内再传一份
 await setFileInput(DRAWER_INPUT, fileBPath);
 const secondLanded = await waitForAsync(async () => (await db.query("select count(*)::int as c from files where task_id = $1", [taskId])).rows[0].c === 2, 30000);
@@ -756,6 +750,15 @@ const versionCountNoReplace = (await db.query("select count(*)::int as c from fi
 check("④r1 无替换路径 → A 版本链保持初版一行（file_versions 1 · 草稿替换已随入口撤除）",
   aVersionsBefore.length === 1 && Number(versionCountNoReplace) === 1, JSON.stringify({ before: aVersionsBefore.length, now: versionCountNoReplace }));
 
+// ④s0a 定档门禁夹具：任务 1 的输出成果类型为“技术协议”，给已上传的 A 标记该成果类型，
+//   再走真实完成接口置为 done —— 只有“已完成 + 成果文件已上传”后，下面的文件定档才允许联动任务定档。
+await db.query("update files set doc_type = $1 where id = $2", ["技术协议", fileAId]);
+const task1GateBefore = (await db.query("select version from tasks where id = $1", [taskId])).rows[0];
+const task1Complete = await api("/api/v1/projects/" + projectId + "/tasks/" + taskId + "/complete", "POST", { version: Number(task1GateBefore.version) });
+const task1GateAfter = (await db.query("select status, version from tasks where id = $1", [taskId])).rows[0];
+check("④s0a 定档前置夹具：成果 A 标记为技术协议 + 任务经真实完成接口置为 done",
+  task1Complete.status === 200 && task1GateAfter.status === "done", String(task1Complete.status) + " " + JSON.stringify(task1GateAfter));
+
 // ④s（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
 //   「＋ 添加定档文件」直点 → 传完即定档（POST /files/{id}/finalize）→ files final + tasks.finalized_at 同事务置位 + 任务定档审计；
 //   此后任务写口全 409 TASK_FINALIZED（编辑 / 删除 / 新增上传 / 改名 / 直替），下拉顶常驻提示、两个添加入口关闭（替换入口已随 Push 251 整体撤除）。
@@ -837,7 +840,13 @@ const task2Res = await api("/api/v1/projects/" + projectId + "/tasks", "POST", {
 check("④t0 夹具：第二条任务（抽屉定档开关端到端用）", task2Res.status === 201, String(task2Res.status) + " " + task2Res.text.slice(0, 140));
 const task2Id = task2Res.json === null ? "" : task2Res.json.id;
 const task2Ver0 = task2Res.json === null ? 0 : Number(task2Res.json.version);
-const finalizeStale = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id + "/finalize", "POST", { version: task2Ver0 + 5 });
+const task2GateDoc = await uploadViaApi("回放-任务文件-抽屉定档-技术协议.txt", Buffer.from("LibiaoLink 回放抽屉定档成果 " + fixtureCode + String.fromCharCode(10), "utf8"), "技术协议", task2Id, false);
+const task2Complete = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id + "/complete", "POST", { version: task2Ver0 });
+const task2GateRow = (await db.query("select status, version from tasks where id = $1", [task2Id])).rows[0];
+const task2ReadyVersion = Number(task2GateRow.version);
+check("④t0a 定档前置夹具：第二条任务已上传技术协议成果并经真实完成接口置为 done",
+  task2GateDoc.ok === true && task2Complete.status === 200 && task2GateRow.status === "done", JSON.stringify({ upload: task2GateDoc, complete: task2Complete.status, row: task2GateRow }));
+const finalizeStale = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id + "/finalize", "POST", { version: task2ReadyVersion + 5 });
 check("④t1 未定档路径 version 不匹配 → 409 VERSION_CONFLICT",
   finalizeStale.status === 409 && finalizeStale.json !== null && finalizeStale.json.code === "VERSION_CONFLICT",
   String(finalizeStale.status) + " " + finalizeStale.text.slice(0, 90));
@@ -877,7 +886,7 @@ const task2Finalized = await waitForAsync(async () => (await db.query("select fi
 const task2Row = (await db.query("select finalized_at, finalized_by, version from tasks where id = $1", [task2Id])).rows[0];
 const task2Audit = (await db.query("select count(*)::int as c, max(summary) as summary from audit_logs where object_type = $1 and object_id = $2 and summary like $3", ["task", task2Id, "%任务定档%"])).rows[0];
 check("④t4 二次确认「确认定档」→ tasks.finalized_at / finalized_by 置位（version+1 · 操作人一致）+ 任务定档审计",
-  confirm2Clicked === true && task2Finalized === true && task2Row.finalized_at !== null && task2Row.finalized_by === userRow.id && Number(task2Row.version) === task2Ver0 + 1
+  confirm2Clicked === true && task2Finalized === true && task2Row.finalized_at !== null && task2Row.finalized_by === userRow.id && Number(task2Row.version) === task2ReadyVersion + 1
   && Number(task2Audit.c) === 1 && String(task2Audit.summary).indexOf("任务定档") >= 0,
   JSON.stringify({ row: task2Row, audit: task2Audit, version0: task2Ver0 }));
 const sw2On = await waitFor("(function(){var s=document.querySelector(" + j("[data-task-finalize]") + ");return s!==null&&s.getAttribute(" + Q + "data-task-finalize" + Q + ")===" + j("on") + "&&s.disabled!==true;})()", 15000);
@@ -891,11 +900,11 @@ const finalizeAgain = await api("/api/v1/projects/" + projectId + "/tasks/" + ta
 const task2RowAfter = (await db.query("select version, finalized_at from tasks where id = $1", [task2Id])).rows[0];
 const task2AuditAgain = (await db.query("select count(*)::int as c from audit_logs where object_type = $1 and object_id = $2 and summary like $3", ["task", task2Id, "%任务定档%"])).rows[0];
 check("④t6 重复 POST /finalize 幂等（200 原样返回 · version 不再递增 · 审计不重复）",
-  finalizeAgain.status === 200 && finalizeAgain.json !== null && Number(finalizeAgain.json.version) === task2Ver0 + 1
+  finalizeAgain.status === 200 && finalizeAgain.json !== null && Number(finalizeAgain.json.version) === task2ReadyVersion + 1
   && new Date(task2RowAfter.finalized_at).toISOString() === finalizeAgain.json.finalizedAt
-  && Number(task2RowAfter.version) === task2Ver0 + 1 && Number(task2AuditAgain.c) === 1,
+  && Number(task2RowAfter.version) === task2ReadyVersion + 1 && Number(task2AuditAgain.c) === 1,
   JSON.stringify({ status: finalizeAgain.status, version: finalizeAgain.json === null ? null : finalizeAgain.json.version, dbVersion: task2RowAfter.version, audit: task2AuditAgain.c }));
-const patch2Blocked = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id, "PATCH", { version: task2Ver0 + 1, progress: 40 });
+const patch2Blocked = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id, "PATCH", { version: task2ReadyVersion + 1, progress: 40 });
 check("④t7 定档后任务写口拦（PATCH 409 TASK_FINALIZED）",
   patch2Blocked.status === 409 && patch2Blocked.json !== null && patch2Blocked.json.code === "TASK_FINALIZED",
   String(patch2Blocked.status) + " " + patch2Blocked.text.slice(0, 90));
@@ -933,14 +942,14 @@ const task2RowAfterCancel = (await db.query("select finalized_at, finalized_by, 
 const task2UnfinalAudit = (await db.query("select count(*)::int as c, max(summary) as summary from audit_logs where object_type = $1 and object_id = $2 and summary like $3", ["task", task2Id, "%取消定档%"])).rows[0];
 check("④t10 确认取消定档：finalized_at / finalized_by 清空（version+1）+ 审计「取消定档」（定档 / 取消定档都计入操作记录）",
   cancel2ConfirmClicked === true && task2Unfinalized === true && task2RowAfterCancel.finalized_at === null && task2RowAfterCancel.finalized_by === null
-  && Number(task2RowAfterCancel.version) === task2Ver0 + 2 && Number(task2UnfinalAudit.c) === 1 && String(task2UnfinalAudit.summary).indexOf("取消定档") >= 0,
+  && Number(task2RowAfterCancel.version) === task2ReadyVersion + 2 && Number(task2UnfinalAudit.c) === 1 && String(task2UnfinalAudit.summary).indexOf("取消定档") >= 0,
   JSON.stringify({ row: task2RowAfterCancel, audit: task2UnfinalAudit, version0: task2Ver0 }));
 const sw2OffAgain = await waitFor("(function(){var s=document.querySelector(" + j("[data-task-finalize]") + ");return s!==null&&s.getAttribute(" + Q + "data-task-finalize" + Q + ")===" + j("off") + "&&s.disabled!==true;})()", 15000);
 check("④t11 取消定档后开关回「未（off）」（旋钮「未」· 可再次定档）", sw2OffAgain === true, JSON.stringify({ off: sw2OffAgain }));
-const patch2Allowed = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id, "PATCH", { version: task2Ver0 + 2, note: "取消定档后写口恢复（回放）" });
+const patch2Allowed = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id, "PATCH", { version: task2ReadyVersion + 2, note: "取消定档后写口恢复（回放）" });
 const task2RowAfterPatch = (await db.query("select version, note from tasks where id = $1", [task2Id])).rows[0];
 check("④t12 取消定档后任务写口恢复：PATCH 200（version+1 · note 落库；与 ④t7 定档态 409 对照）",
-  patch2Allowed.status === 200 && task2RowAfterPatch.note === "取消定档后写口恢复（回放）" && Number(task2RowAfterPatch.version) === task2Ver0 + 3,
+  patch2Allowed.status === 200 && task2RowAfterPatch.note === "取消定档后写口恢复（回放）" && Number(task2RowAfterPatch.version) === task2ReadyVersion + 3,
   String(patch2Allowed.status) + " " + JSON.stringify(task2RowAfterPatch));
 await pressKey("Escape", "Escape", 27);
 await waitFor("document.querySelector(" + j(DRAWER) + ")===null", 8000);
@@ -950,10 +959,10 @@ const row2AfterCancel = await rowBoxOf(task2Title);
 check("④t13 取消定档后该任务的「定档」侧签消失（只剩第一个任务的 1 颗 · 竖排淡黄仍在）",
   tagsAfterCancel.length === 1 && tagStyled(tagsAfterCancel[0]) && tagOnRow(tagsAfterCancel[0], row1AfterCancel) && tagsAfterCancel.filter((tag) => tagOnRow(tag, row2AfterCancel)).length === 0,
   JSON.stringify({ tags: tagsAfterCancel, row1: row1AfterCancel, row2: row2AfterCancel }));
-const cancel2Again = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id + "/unfinalize", "POST", { version: task2Ver0 + 3 });
+const cancel2Again = await api("/api/v1/projects/" + projectId + "/tasks/" + task2Id + "/unfinalize", "POST", { version: task2ReadyVersion + 3 });
 const task2UnfinalAuditAgain = (await db.query("select count(*)::int as c from audit_logs where object_type = $1 and object_id = $2 and summary like $3", ["task", task2Id, "%取消定档%"])).rows[0];
 check("④t14 未定档重复 POST /unfinalize 幂等（200 原样返回 · 不递增版本 · 审计不重复）",
-  cancel2Again.status === 200 && cancel2Again.json !== null && Number(cancel2Again.json.version) === task2Ver0 + 3 && Number(task2UnfinalAuditAgain.c) === 1,
+  cancel2Again.status === 200 && cancel2Again.json !== null && Number(cancel2Again.json.version) === task2ReadyVersion + 3 && Number(task2UnfinalAuditAgain.c) === 1,
   JSON.stringify({ status: cancel2Again.status, version: cancel2Again.json === null ? null : cancel2Again.json.version, audit: task2UnfinalAuditAgain.c }));
 const aDetail = await api("/api/v1/files/" + fileAId);
 const finalized = await api("/api/v1/files/" + fileAId + "/finalize", "POST", { version: aDetail.json.version });
@@ -1477,7 +1486,7 @@ if (cellBox !== null && cellBox !== undefined) {
 
 // ---------- ⑥ 收尾：purge 三份文件 → 物理删临时项目 → 撤销会话 → 零残留 ----------
 const purgeResult = await purgeProjectFiles(projectId);
-check("⑤a 十份回放文件（含已回收的 B / PDF、定档的 C、已变更的 D、先定档用例的草图与任务定档后变更的目标、变更摘要附图两张）全部 purge（对象真删 + 元数据删 + 留痕）", purgeResult.total === 10 && purgeResult.purged === 10, JSON.stringify(purgeResult));
+check("⑤a 十一份回放文件（含已回收的 B / PDF、定档的 C、已变更的 D、完成任务 / 定档门禁用成果、先定档用例的草图与任务定档后变更的目标、变更摘要附图两张）全部 purge（对象真删 + 元数据删 + 留痕）", purgeResult.total === 11 && purgeResult.purged === 11, JSON.stringify(purgeResult));
 const projRow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projRow.json.version) });
 check("⑤b 临时项目物理删（200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status) + " " + delProj.text.slice(0, 120));

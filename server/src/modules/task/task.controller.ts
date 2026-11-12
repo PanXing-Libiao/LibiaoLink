@@ -230,7 +230,8 @@ export class TaskController {
   /**
    * 任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）：抽屉「已」开关再次点击 → 二次确认后调用；
    * 已定档且预计完成日期当天及之前 → 清位重新开放修改（留痕「取消定档」，文件修改仍走变更）；
-   * 预计完成日期已过（Asia/Shanghai 今天晚于 plannedEnd）→ 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；无预计完成日期不锁；
+   * 任务负责人遇到预计完成日期已过（Asia/Shanghai 今天晚于 plannedEnd）→ 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；
+   * 项目经理及其他项目编辑者仍可取消；无预计完成日期不锁；
    * 未定档 → 幂等原样返回。
    */
   @Post(":id/tasks/:taskId/unfinalize")

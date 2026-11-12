@@ -145,11 +145,11 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 
 ## 任务定档联动与写口闸（Push 249 · A2-10 / A4-05 修订）
 
-- `finalizeFile`（`POST /files/{id}/finalize`）：文件 draft → final 的同时，**同一事务**把其挂接任务定档（`repository.markTaskFinalized(taskId, at, actorId, tx)`：`isNull(finalized_at)` 幂等置位 + 任务 `version + 1`，并写一条 `object_type=task` 审计「任务定档（随文件定档：…）」）—— 任务定档后不支持任何修改（修改走变更 A4-13）；**同事务撤销该任务在途的 version 上传会话**（`abortActiveTaskUploadSessions`：只撤 version、不撤 change；条数记入任务审计 metadata）。
+- `finalizeFile`（`POST /files/{id}/finalize`）：文件 draft → final 本身仍独立生效；挂接任务存在时，同一事务先调用 `file.repository.isTaskFinalizationReady(taskId, tx)`，只有任务 `status=done`、任务自身 `deliverableTypes` 非空，且合并节点 `required_doc` / 任务成果类型后每类都有 `draft/final/changed` + `current_version_id` 非空文件时才 **同一事务** 把任务定档（`repository.markTaskFinalized(taskId, at, actorId, tx)`：`isNull(finalized_at)` 幂等置位 + 任务 `version + 1`，并写一条 `object_type=task` 审计「任务定档（随文件定档：…）」）。任务未就绪时文件仍锁为 final，但**不写任务定档、不撤任务上传会话**，避免从文件入口绕过；任务实际联动定档后不支持任何修改（修改走变更 A4-13）。file 属平台模块、task 属领域模块，边界规则禁止 file → task，故就绪判定在本模块只读 `tasks / node_requirements / files`，与 `TaskGateRepository.evaluateFinalization` 保持同一口径；两处变更必须同步并跑两侧单测。
 - `assertTaskNotFinalized(taskId)`：任务已定档时 **409 `TASK_FINALIZED`** —— 覆盖 `createUpload`（`intent=version` 且解析出的 `effectiveTaskId` 非空：新建 / 直接替换（fileId）/ 追加版本）、`completeUpload`（**事务内复核**：会话先发起、任务后被定档的绕过补漏）、`renameFile`、`rollbackFile`（普通回溯 draft）；**`intent=change` 不受影响**（唯一保留的修改通道）。
 - A4-13 change 放行口径（Push 254 续 · 业务口径「不是已经定档了吗 为什么变更申请里面还是未定档」）：change 意图目标 = 已定档（final / changed），或 **draft 但所属任务已定档**（任务定档 = 业务可见的定档动作）—— esolveUploadTarget（发起）与 completeUpload（完成）同一口径；其余状态一律 409 FILE_STATE_INVALID。
 - `file.repository.findTaskBrief` 增 `finalizedAt`（闸判定用）；回收站（recycle）/ purge **不受**任务定档影响（M4-02「任意状态可删」口径不变）。
-- 单测：`test/file-service.test.ts`（「Push 249 · 任务定档联动与写口闸」6 例，含 fake `markTaskFinalized` / `finalizedTasks`、定档撤销 `abortActiveTaskUploadSessions`、completeUpload 复核与 change 放行 2 例）。
+- 单测：`test/file-service.test.ts`（「Push 249 · 任务定档联动与写口闸」含 fake `markTaskFinalized` / `finalizedTasks`、`isTaskFinalizationReady` false 时文件独立定档但不联动任务、定档撤销 `abortActiveTaskUploadSessions`、completeUpload 复核与 change 放行等）；`markTaskFinalized` 的 SQL 另有 `tasks.status = done` 兜底。
 - 单测（Push 315 · 变更前后可填图）：`test/file-service.test.ts` 新增 3 例（摘要附图随会话落 `change_payload`（去重保序）+ 非法 id 400 `VALIDATION_FAILED`/`unknown_file` 不落会话 + complete 同事务落 `change_requests` 两列并随读面回显）；`test/change-read.test.ts` 视图断言补两字段（全量 **73 文件 / 1061 例**全绿）。
 - 单测（Push 319 · 导入遗留变更读面宽容）：`test/change-read.test.ts` 新增 3 例（列表无版本行 → `fileId` / `versionId` / `versionSeq` 给 `null` 不再被过滤；`fileId` + `versionId` 半空 → 500 `INTERNAL`；全空 → 详情 `file` / `version` 给 `null`）；`test/project-import.test.ts` 同步 +3 例（全量 **74 文件 / 1076 例**全绿）。
 

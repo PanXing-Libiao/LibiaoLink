@@ -147,6 +147,43 @@ export function isTaskDone(task: ProjectTask): boolean {
   return isCompleteStatus(task.status);
 }
 
+export type TaskFinalizeBlocker = "no-deliverables" | "not-complete" | "files-loading" | "missing-files";
+
+export type TaskFinalizeReadiness = {
+  ready: boolean;
+  blocker: TaskFinalizeBlocker | null;
+  missingDocTypes: string[];
+};
+
+/**
+ * 任务定档就绪（2026-11-12 业务口径）：必须绑定任务完成与输出成果文件。
+ * 完成态优先于文件判断；未配置成果类型不展示定档入口；files=null 表示详情清单尚未取回，按加载中处理。
+ * 上传口径与服务端门禁一致：draft / final / changed 且详情清单已过滤掉无当前版本的记录；archived 不计。
+ */
+export function taskFinalizeReadiness(
+  task: Pick<ProjectTask, "status" | "deliverableTypes">,
+  files: readonly { docType: string | null; status: string }[] | null,
+): TaskFinalizeReadiness {
+  if (task.deliverableTypes.length === 0) {
+    return { ready: false, blocker: "no-deliverables", missingDocTypes: [] };
+  }
+  if (!isCompleteStatus(task.status)) {
+    return { ready: false, blocker: "not-complete", missingDocTypes: [] };
+  }
+  if (files === null) {
+    return { ready: false, blocker: "files-loading", missingDocTypes: [] };
+  }
+  const uploadedTypes = new Set(
+    files
+      .filter((file) => file.docType !== null && (file.status === "draft" || file.status === "final" || file.status === "changed"))
+      .map((file) => file.docType as string),
+  );
+  const missingDocTypes = task.deliverableTypes.filter((docType) => !uploadedTypes.has(docType));
+  return missingDocTypes.length === 0
+    ? { ready: true, blocker: null, missingDocTypes: [] }
+    : { ready: false, blocker: "missing-files", missingDocTypes };
+}
+
 /**
  * 「是否按时交付」列的逾期标注（Push 67 业务定案；M3-07 刀 1 后半起口径来自服务端）：
  * 展示态 = 已延期（未完成且过了预计完成日期）→ 「逾期未交付」；已完成但 onTime = false → 「逾期已交付」；
@@ -221,6 +258,18 @@ export function dateOnlyText(iso: string): string {
  */
 export function isPastPlannedEnd(dueDate: string, now: Date = new Date()): boolean {
   return dueDate !== "" && dueDate < dateOnlyText(now.toISOString());
+}
+
+/**
+ * 逾期取消定档闸只锁任务负责人（2026-11-12 业务修订）：
+ * 当前账号的任务能力来源必须为 task_owner；项目经理 / 其他项目编辑者即使逾期仍可取消。
+ * 已定档且 plannedEnd 已过、能力来源为 task_owner 时返回 true。
+ */
+export function isTaskOwnerUnfinalizeLockedByPlannedEnd(
+  task: Pick<ProjectTask, "finalizedAt" | "dueDate" | "capabilities">,
+  now: Date = new Date(),
+): boolean {
+  return task.finalizedAt !== null && taskCapabilitiesOf(task).source === "task_owner" && isPastPlannedEnd(task.dueDate, now);
 }
 
 /** 预计所需天数 = 两个日期的含首尾天数（与源表口径一致：9月5日→9月22日 = 18 天）。 */

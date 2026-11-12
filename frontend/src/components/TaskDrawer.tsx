@@ -9,7 +9,8 @@ import {
   TEMP_TASK_STAGE,
   dateOnlyText,
   hasOutputDeliverables,
-  isPastPlannedEnd,
+  isTaskOwnerUnfinalizeLockedByPlannedEnd,
+  taskFinalizeReadiness,
   ownersLabel,
   daysBetweenInclusive,
   lateDeliveryLabel,
@@ -749,7 +750,16 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
   const managerChoices = memberOptionsWithExisting(managerMembers, draft.managerIds, members);
   const ownerEditable = editable && capabilities.canAssignOwners;
   const canFinalize = canFinalizeProp && capabilities.canFinalize && hasOutputDeliverables(task);
-  const unfinalizeLockedByPlannedEnd = task.finalizedAt !== null && isPastPlannedEnd(task.dueDate);
+  const finalizeReadiness = taskFinalizeReadiness(task, files);
+  const finalizeBlockedText =
+    finalizeReadiness.blocker === "not-complete"
+      ? t("drawer.finalize.blockedNotComplete")
+      : finalizeReadiness.blocker === "files-loading"
+        ? t("drawer.finalize.blockedFilesLoading")
+        : finalizeReadiness.blocker === "missing-files"
+          ? t("drawer.finalize.blockedMissingFiles", { types: finalizeReadiness.missingDocTypes.join("、") })
+          : null;
+  const unfinalizeLockedByPlannedEnd = isTaskOwnerUnfinalizeLockedByPlannedEnd(task);
   const unfinalizeAria = unfinalizeLockedByPlannedEnd ? t("drawer.finalize.afterDueAria") : onUnfinalize === undefined ? t("drawer.finalize.onAria") : t("drawer.finalize.offAria");
   const unfinalizeTitle = unfinalizeLockedByPlannedEnd ? t("drawer.finalize.afterDueTitle") : onUnfinalize === undefined ? t("drawer.finalize.onTitle") : t("drawer.finalize.offTitle");
   const visibleTabs = filesWritable ? DRAWER_TABS : DRAWER_TABS.filter((item) => item.key !== "change");
@@ -1634,7 +1644,23 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
                     </button>
                   )}
                 </span>
-              ) : !canFinalize || onFinalize === undefined ? null : (
+              ) : !canFinalize || onFinalize === undefined ? null : !finalizeReadiness.ready ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-zinc-400">{t("drawer.finalize.label")}</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked="false"
+                    aria-label={finalizeBlockedText ?? t("drawer.finalize.blockedAria")}
+                    data-task-finalize="blocked"
+                    title={finalizeBlockedText ?? t("drawer.finalize.blockedAria")}
+                    disabled
+                    className="relative inline-flex h-6 w-11 shrink-0 cursor-not-allowed items-center rounded-full bg-zinc-100 opacity-70"
+                  >
+                    <span className="pointer-events-none absolute left-[3px] top-[3px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white text-[9px] font-semibold text-zinc-400 shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all duration-200">{t("drawer.toggle.off")}</span>
+                  </button>
+                </span>
+              ) : (
                 <span className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-zinc-400">{t("drawer.finalize.label")}</span>
                   <button
@@ -1663,7 +1689,12 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
               </svg>
             </button>
           </div>
-          {canFinalize && finalizeConfirm && task.finalizedAt === null ? (
+          {canFinalize && task.finalizedAt === null && finalizeBlockedText !== null ? (
+            <p data-task-finalize-blocked-hint="true" className="mt-2 text-[11px] leading-4 text-amber-600">
+              {finalizeBlockedText}
+            </p>
+          ) : null}
+          {canFinalize && finalizeReadiness.ready && finalizeConfirm && task.finalizedAt === null ? (
             <div data-task-finalize-confirm="true" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
               <p className="text-xs leading-5 text-amber-800">{t("drawer.finalize.confirm")}</p>
               <span className="flex shrink-0 items-center gap-1">

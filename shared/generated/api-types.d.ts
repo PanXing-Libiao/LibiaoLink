@@ -1700,7 +1700,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 任务定档（抽屉开关入口 · Push 252）：未定档 → 置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回 */
+        /** 任务定档（抽屉开关入口 · Push 252）：先校验任务已完成、已配置输出成果且成果文件齐全；未就绪 409 TASK_FINALIZE_NOT_READY / 缺件 422 TASK_REQUIRED_DOC_MISSING；通过后置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回 */
         post: {
             parameters: {
                 query?: never;
@@ -1755,6 +1755,15 @@ export interface paths {
                         "application/json": components["schemas"]["ApiError"];
                     };
                 };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1772,7 +1781,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 任务取消定档（抽屉「已」开关再次点击 · Push 260）：预计完成日期当天及之前 → 清位重新开放修改（留痕「取消定档」）；预计完成日期已过 → 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；未定档 → 幂等原样返回 */
+        /** 任务取消定档（抽屉「已」开关再次点击 · Push 260）：预计完成日期当天及之前 → 清位重新开放修改（留痕「取消定档」）；预计完成日期已过且当前账号仅为任务负责人 → 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；项目经理等项目编辑者仍可取消；未定档 → 幂等原样返回 */
         post: {
             parameters: {
                 query?: never;
@@ -4776,7 +4785,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 定档（锁版；此后修改必须走变更） */
+        /** 定档（锁版；此后修改必须走变更；仅挂接任务已完成且输出成果齐全时才联动任务定档） */
         post: {
             parameters: {
                 query?: never;
@@ -11134,7 +11143,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "CSRF_FAILED" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "TASK_UNFINALIZE_AFTER_PLAN" | "REPORT_ALREADY_EXISTS" | "REPORT_GROUP_NOT_BOUND" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "IMPORT_FILE_INVALID" | "IMPORT_PARSE_FAILED" | "IMPORT_PREVIEW_EXPIRED" | "IMPORT_CANCELLED" | "RATE_LIMITED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "CSRF_FAILED" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "TASK_FINALIZE_NOT_READY" | "TASK_UNFINALIZE_AFTER_PLAN" | "REPORT_ALREADY_EXISTS" | "REPORT_GROUP_NOT_BOUND" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "IMPORT_FILE_INVALID" | "IMPORT_PARSE_FAILED" | "IMPORT_PREVIEW_EXPIRED" | "IMPORT_CANCELLED" | "RATE_LIMITED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -13033,7 +13042,7 @@ export interface components {
             /** @description 已定档（final / changed）数量，仅用于文件摘要展示；完成门禁统计已上传（draft / final / changed） */
             final: number;
         };
-        /** @description 任务定档提交（version = 抽屉当前行版本） */
+        /** @description 任务定档提交（version = 抽屉当前行版本）；任务未完成 / 未配置成果类型返回 409 TASK_FINALIZE_NOT_READY，成果文件缺件返回 422 TASK_REQUIRED_DOC_MISSING */
         TaskFinalizeBody: {
             version: components["schemas"]["Version"] & unknown;
         };
@@ -13199,7 +13208,7 @@ export interface components {
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];
         };
-        /** @description 任务取消定档提交（version = 抽屉当前行版本）；预计完成日期已过时服务端拒绝并返回 409 TASK_UNFINALIZE_AFTER_PLAN */
+        /** @description 任务取消定档提交（version = 抽屉当前行版本）；预计完成日期已过且当前账号仅为任务负责人时返回 409 TASK_UNFINALIZE_AFTER_PLAN，项目经理等项目编辑者仍可取消 */
         TaskUnfinalizeBody: {
             version: components["schemas"]["Version"] & unknown;
         };

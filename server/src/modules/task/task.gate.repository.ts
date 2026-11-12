@@ -38,6 +38,19 @@ export interface TaskDeliveryIssue {
   present: number;
 }
 
+export interface TaskFinalizationTargetRow {
+  id: string;
+  nodeId: string | null;
+  status: string;
+  deliverableTypes: string[];
+}
+
+export interface TaskFinalizationGate {
+  status: string;
+  requirements: TaskDeliveryRequirement[];
+  missing: TaskDeliveryMissing[];
+  ready: boolean;
+}
 export interface TaskDeliveryStatus {
   total: number;
   done: number;
@@ -93,6 +106,26 @@ export class TaskGateRepository {
       )
       .groupBy(files.docType);
     return toDocCountRows(rows);
+  }
+
+  /**
+   * 任务定档统一门禁（2026-11-12）：任务状态必须为 done、任务自身至少配置一类输出成果，且合并后的
+   * 节点 required_doc / 任务 deliverable_types 每类成果都已有 draft / final / changed 且 current_version_id 非空的文件。
+   * 注意：节点必交成果不能替代任务自身的输出成果配置；任务 deliverable_types 为空时一律不得定档。
+   * 任务定档与文件定档联动任务定档共用本判定，避免从文件入口绕过。
+   */
+  async evaluateFinalization(client: DbClient, task: TaskFinalizationTargetRow): Promise<TaskFinalizationGate> {
+    const nodeRequirements =
+      task.nodeId === null ? [] : await this.listNodeDocRequirements(client, task.nodeId);
+    const requirements = mergeDeliveryRequirements(nodeRequirements, task.deliverableTypes);
+    const uploaded = await this.countUploadedFiles(client, { taskId: task.id, nodeId: task.nodeId });
+    const missing = missingDeliveryRequirements(requirements, uploaded);
+    return {
+      status: task.status,
+      requirements,
+      missing,
+      ready: task.status === "done" && task.deliverableTypes.length > 0 && missing.length === 0,
+    };
   }
 
   /** 未定档（draft）计数：放行提示 warning 与 R02 触发用。 */

@@ -35,7 +35,8 @@ export function shanghaiToday(now: Date): string {
 
 /**
  * 取消定档时间闸（2026-11-12 业务口径）：预计完成日期当天及之前可取消；业务今天（Asia/Shanghai）
- * 已晚于 plannedEnd 时只能定档，不能取消定档。plannedEnd 为空 = 无期限，始终可取消。
+ * 已晚于 plannedEnd 时，任务负责人只能定档、不能取消；项目经理等项目编辑者不受此闸限制。
+ * 调用方必须先用共享能力投影判定 source=task_owner。plannedEnd 为空 = 无期限，始终可取消。
  */
 export function isUnfinalizeLockedByPlannedEnd(plannedEnd: string | null, today: string): boolean {
   return plannedEnd !== null && plannedEnd < today;

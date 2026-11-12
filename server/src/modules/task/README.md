@@ -126,13 +126,13 @@
 
 ## 任务定档（Push 249 · A2-10 / A4-05 修订）
 
-- 字段：`tasks.finalized_at timestamptz` / `tasks.finalized_by uuid → users(id)`（迁移 `0044_task_finalize.sql`；成对 CHECK `ck_tasks_finalized_pair`：同 null 或同非 null）—— **任务侧定档两个入口（Push 252）**：① **显式入口** `POST /api/v1/projects/{id}/tasks/{taskId}/finalize`（`TaskFinalizeBodySchema` = `{ version }`；乐观锁，已定档重复提交幂等短路、不写库不审计；outbox `task.finalized`）—— 抽屉头部「定档」开关走它；② **随文件定档**：`file.service.finalizeFile` 在同一事务内 `repository.markTaskFinalized`，`isNull` 幂等置位 + `version + 1`，并写一条 `object_type=task` 审计「任务定档（随文件定档：…）」）。两个入口定档时均**同事务撤销该任务在途的 version 上传会话**（`abortActiveTaskUploadSessions`：只撤 version、不撤 change，条数进审计 metadata）。
+- 字段：`tasks.finalized_at timestamptz` / `tasks.finalized_by uuid → users(id)`（迁移 `0044_task_finalize.sql`；成对 CHECK `ck_tasks_finalized_pair`：同 null 或同非 null）—— **任务侧定档两个入口（Push 252；2026-11-12 统一门禁）**：① **显式入口** `POST /api/v1/projects/{id}/tasks/{taskId}/finalize`（`TaskFinalizeBodySchema` = `{ version }`；权限 → 已定档幂等短路 → version → 门禁）；② **随文件定档**：`file.service.finalizeFile` 在文件 draft → final 的同事务内先以同一口径判断挂接任务是否就绪，只有就绪才 `repository.markTaskFinalized`（`isNull` 幂等置位 + 任务 `version + 1`，并写一条 `object_type=task` 审计「任务定档（随文件定档：…）」）。统一门禁（`TaskGateRepository.evaluateFinalization`）= 任务 `status=done` + 任务自身 `deliverableTypes` 非空 + 合并节点 `required_doc` 与任务成果类型后每类至少一份 `draft/final/changed` 且 `current_version_id` 非空；未完成 / 未配置任务成果 → 409 `TASK_FINALIZE_NOT_READY`，成果缺件 → 422 `TASK_REQUIRED_DOC_MISSING`；文件仍可独立锁版，但任务不就绪时不联动任务定档。两个入口在任务实际定档时均**同事务撤销该任务在途的 version 上传会话**（`abortActiveTaskUploadSessions`：只撤 version、不撤 change，条数进审计 metadata）。
 - 写口闸 `assertTaskMutable`：任务已定档（`finalized_at` 非空）时 **409 `TASK_FINALIZED`**（新错误码；details `code: task_finalized` / `path: finalizedAt`）—— 覆盖 `applyUpdate`（编辑 / 批量：批量失败码映射 `TASK_FINALIZED → finalized`）、`remove`、`adjustLockedFields`、`updateProgress`、`complete`。
 - 读面：`toTaskView` 下发 `finalizedAt`（ISO）/ `finalizedBy`；`TaskListItem` 经 spread 同口径（前端 `ProjectTask.finalizedAt` 据此出「已定档」提示与入口闸）。
 - 唯一保留的修改通道 = 对已定档文件的变更（A4-13 申请即通过，`intent=change`）。
 - 防绕过补漏（定档时）：`file.service.completeUpload` 事务内复核任务定档（会话先发起、任务后被定档 → 409 `TASK_FINALIZED`，change 意图放行）；漏网会话（如并发发起）由该复核兜住。
-- 取消定档时间闸（2026-11-12）：已定档任务的 `planned_end` 早于业务今天（Asia/Shanghai，`shanghaiToday(at)`）→ `unfinalize` 409 `TASK_UNFINALIZE_AFTER_PLAN`（details `path: plannedEnd`）；当天及未来、空日期仍可取消。未定档重复 `unfinalize` 的幂等短路优先（已过期也返回 200）；`finalize` / 随文件定档不受影响。
-- 单测：`test/task-service.test.ts`（「任务定档写口闸」4 例 + `finalize` 撤销会话 / 审计 metadata 断言 + 取消定档时间闸过期 409 / 当天放行 / 未定档幂等返回 / 过期仍可定档）+ `test/task-rules.test.ts`（时间闸边界）+ `task-remove` / `task-locked-fields` 各 1 例；其余 task 测试夹具补 `finalizedAt: null, finalizedBy: null`。
+- 取消定档时间闸（2026-11-12，同日按业务修订）：已定档任务 `planned_end` 早于业务今天（Asia/Shanghai，`shanghaiToday(at)`）时，**仅 `capabilities.source=task_owner`** 调用 `unfinalize` 返回 409 `TASK_UNFINALIZE_AFTER_PLAN`（details `path: plannedEnd`）；项目经理及其他项目编辑者仍可取消。当天及未来、空日期不锁；未定档重复 `unfinalize` 的幂等短路优先；`finalize` / 文件定档不受该时间闸影响。
+- 单测：`test/task-service.test.ts`（任务完成 / 成果类型 / 节点必交成果 / 文件缺件四类定档门禁，`finalize` 撤销会话与审计 metadata，逾期取消仅锁任务负责人 / 项目经理仍可取消 / 当天放行 / 未定档幂等返回 / 过期仍可定档）+ `test/task-rules.test.ts`（时间闸边界）+ `task-remove` / `task-locked-fields` 各 1 例；其余 task 测试夹具补 `finalizedAt: null, finalizedBy: null`。
 
 ## 边界与后续（差异登记）
 
