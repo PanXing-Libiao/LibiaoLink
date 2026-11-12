@@ -4129,6 +4129,85 @@
         ],
         "description": "文件（v0.2 §5.2；定档后不可覆盖，修改必须走变更）"
       },
+      "FileArchiveItem": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "versionId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "entryName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "ZIP 内显示名（可选）；服务端清洗路径字符并强制使用该版本对象键的真实扩展名"
+          }
+        },
+        "required": [
+          "fileId",
+          "versionId"
+        ],
+        "description": "批量 ZIP 的文件版本选择项"
+      },
+      "FileArchiveRequest": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileArchiveItem"
+            },
+            "minItems": 1,
+            "maxItems": 50,
+            "description": "待打包的版本列表；按提交顺序入包，相同 (fileId, versionId) 只保留首次出现项"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "description": "项目文件批量 ZIP 请求（单批最多 50 个版本）"
+      },
+      "FileArchiveResponse": {
+        "type": "object",
+        "properties": {
+          "batchId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "fileName": {
+            "type": "string",
+            "description": "ZIP 下载文件名（含项目编号 / 名称与 .zip 扩展名）"
+          },
+          "url": {
+            "type": "string",
+            "description": "短时签名 ZIP 下载地址；前端只触发一次下载，不读取整包字节"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "生成的 ZIP 文件大小（压缩后）"
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "itemCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "实际入包的唯一版本数"
+          }
+        },
+        "required": [
+          "batchId",
+          "fileName",
+          "url",
+          "sizeBytes",
+          "expiresAt",
+          "itemCount"
+        ],
+        "description": "项目文件批量 ZIP 生成结果"
+      },
       "FileDetail": {
         "allOf": [
           {
@@ -18451,6 +18530,77 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/files/download-archive": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "项目文件批量打包 ZIP（服务端生成临时归档并返回单次短时签名地址）",
+        "description": "单批最多 50 个版本、单文件不超过 200 MB、解压后总量不超过 2 GB；任一文件或版本校验失败、对象读取失败、超限或写包失败时整批失败（全有或全无）。同一 (fileId, versionId) 仅入包一次，按首次提交顺序排列；要求 file.download 权限并逐文件写 download 审计。",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileArchiveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ZIP 已生成，返回单次短时签名下载地址",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileArchiveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "同一账号已有打包任务在进行（RATE_LIMITED）",
             "content": {
               "application/json": {
                 "schema": {

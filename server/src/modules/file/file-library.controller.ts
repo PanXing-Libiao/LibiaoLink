@@ -1,8 +1,18 @@
-import { Controller, Get, Param, Query, UseGuards } from "@nestjs/common";
-import { FileListQuerySchema, FileListResponseSchema, UuidSchema, z } from "@libiaolink/contracts";
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Res, UseGuards } from "@nestjs/common";
+import type { Response } from "express";
+import {
+  FileArchiveRequestSchema,
+  FileArchiveResponseSchema,
+  FileListQuerySchema,
+  FileListResponseSchema,
+  UuidSchema,
+  z,
+} from "@libiaolink/contracts";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
-import { CsrfGuard, SessionGuard } from "../identity/index.js";
+import { AppError } from "../../common/errors/app-error.js";
+import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { ProjectAccessGuard } from "../permission/index.js";
+import { FileArchiveService } from "./file-archive.service.js";
 import { FileService } from "./file.service.js";
 
 type FileListQuery = z.infer<typeof FileListQuerySchema>;
@@ -18,7 +28,10 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 @Controller("api/v1/projects")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
 export class FileLibraryController {
-  constructor(private readonly files: FileService) {}
+  constructor(
+    private readonly files: FileService,
+    private readonly archives: FileArchiveService,
+  ) {}
 
   /** 文件库列表：状态 / 类型 / 节点 / 任务 / 上传人筛选 + 文件名关键字 + 白名单排序 + 分页。 */
   @Get(":id/files")
@@ -27,5 +40,27 @@ export class FileLibraryController {
     @Query(new ZodValidationPipe(FileListQuerySchema)) query: FileListQuery,
   ): Promise<z.infer<typeof FileListResponseSchema>> {
     return this.files.listProjectFiles(id, query);
+  }
+
+  /** 批量打包下载：单批最多 50 个版本，服务端生成临时 ZIP 后返回单次短时签名地址。 */
+  @Post(":id/files/download-archive")
+  @HttpCode(200)
+  async downloadArchive(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(FileArchiveRequestSchema)) body: z.infer<typeof FileArchiveRequestSchema>,
+    @CurrentActorId() actorId: string,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<z.infer<typeof FileArchiveResponseSchema>> {
+    const abort = new AbortController();
+    const abortOnDisconnect = (): void => {
+      if (!response.writableEnded) abort.abort(new AppError("INTERNAL", "文件打包已取消"));
+    };
+    response.once("close", abortOnDisconnect);
+    if (response.destroyed) abortOnDisconnect();
+    try {
+      return await this.archives.createArchive(id, body, actorId, abort.signal);
+    } finally {
+      response.off("close", abortOnDisconnect);
+    }
   }
 }

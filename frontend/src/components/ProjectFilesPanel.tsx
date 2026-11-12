@@ -3,6 +3,7 @@ import { ApiError } from "../api";
 import { PROJECT_STAGES } from "../data/projects";
 import { TEMP_TASK_STAGE, type ProjectTask } from "../data/tasks";
 import {
+  createFileArchive,
   ensurePreviewOutcome,
   fetchChangeRequest,
   fetchDownloadUrl,
@@ -14,6 +15,7 @@ import {
   recycleFile,
   triggerDownload,
   type ApiChangeRequest,
+  type FileArchiveItem,
   type FileLibraryItem,
   type FilePreviewKind,
   type PreviewViewerConfig,
@@ -52,6 +54,12 @@ import { Toast } from "./Toast";
  * 无任务的历史任务文件显示「未关联阶段」，仅变更文件显示「变更文件」。
  */
 const PAGE_LIMIT = 50;
+const BULK_LIMIT = 50;
+const BULK_DOWNLOAD_INTERVAL_MS = 150;
+const BULK_CONTROL_CLASS =
+  "inline-flex h-8 items-center justify-center rounded-lg border border-zinc-300 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300";
+const BULK_PRIMARY_CLASS =
+  "inline-flex h-8 items-center justify-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400";
 const CURRENT_FILE_STATUSES = ["draft", "final", "changed", "archived"] as const;
 const FILE_STATUS_FILTERS = ["draft", "final", "before", "after", "material", "archived"] as const;
 const CHANGED_STAGE = "__changed";
@@ -113,8 +121,40 @@ function versionIdOfRow(row: ProjectFileRow): string | undefined {
   return row.changeSide === null ? undefined : row.versionId ?? undefined;
 }
 
+function resolvedVersionIdOfRow(row: ProjectFileRow): string | undefined {
+  return row.changeSide === null ? row.file.currentVersionId ?? undefined : row.versionId ?? undefined;
+}
+
 function rowHasVersion(row: ProjectFileRow): boolean {
-  return row.changeSide === null || row.versionId !== null;
+  return resolvedVersionIdOfRow(row) !== undefined;
+}
+
+function archiveItemOfRow(row: ProjectFileRow): FileArchiveItem | null {
+  const versionId = resolvedVersionIdOfRow(row);
+  return versionId === undefined ? null : { fileId: row.file.id, versionId, entryName: row.name };
+}
+
+/** 批量请求按 (fileId, versionId) 去重，同时保留用户首次选择顺序。 */
+function uniqueDownloadRows(rows: readonly ProjectFileRow[]): ProjectFileRow[] {
+  const seen = new Set<string>();
+  const result: ProjectFileRow[] = [];
+  for (const row of rows) {
+    const item = archiveItemOfRow(row);
+    if (item === null) {
+      continue;
+    }
+    const key = item.fileId + ":" + item.versionId;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(row);
+  }
+  return result;
+}
+
+function waitMs(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function isMaterialReissueDocument(row: ProjectFileRow): boolean {
@@ -122,6 +162,12 @@ function isMaterialReissueDocument(row: ProjectFileRow): boolean {
 }
 
 type Notice = { kind: "ok" | "error"; text: string };
+
+type BulkBusy =
+  | { kind: "separate"; done: number; total: number; current: string }
+  | { kind: "archive"; total: number };
+
+type BulkMessage = { kind: "ok" | "error" | "info"; text: string };
 
 function changeTimestampOf(change: ApiChangeRequest): number {
   const applied = Date.parse(change.appliedAt);
@@ -266,6 +312,10 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
   const [deleteBusy, setDeleteBusy] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState<BulkBusy | null>(null);
+  const [bulkMessage, setBulkMessage] = useState<BulkMessage | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -313,6 +363,32 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
   useEffect(() => {
     setPage(1);
   }, [keyword, stageFilter, statusFilter, projectId]);
+
+  /** 筛选或项目变化后，旧选择不再对应可见集合，必须清空，避免批量操作命中已隐藏行。 */
+  useEffect(() => {
+    setSelectedRowKeys(new Set());
+    setBulkMessage(null);
+  }, [keyword, stageFilter, statusFilter, projectId]);
+
+  /** 实时刷新 / 回收后剔除已不存在或已无版本的选中行；加载中暂不清空。 */
+  useEffect(() => {
+    if (state.kind !== "ready") {
+      return;
+    }
+    const availableKeys = new Set(state.rows.filter(rowHasVersion).map((row) => row.key));
+    setSelectedRowKeys((previous) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const key of previous) {
+        if (availableKeys.has(key)) {
+          next.add(key);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : previous;
+    });
+  }, [state]);
 
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task] as const)), [tasks]);
   const rows = state.kind === "ready" ? state.rows : [];
@@ -434,6 +510,98 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
   const stageFileCount = new Set(rows.filter((row) => row.file.taskId !== null).map((row) => row.file.id)).size;
   const changedFileCount = new Set(rows.filter((row) => row.changed).map((row) => row.file.id)).size;
   const hasFilter = normalizedKeyword !== "" || stageFilter !== "" || statusFilter !== "";
+  const rowByKey = new Map(rows.map((row) => [row.key, row] as const));
+  const selectableRows = rows.filter(rowHasVersion);
+  const selectedRows = [...selectedRowKeys].flatMap((key) => {
+    const row = rowByKey.get(key);
+    return row === undefined ? [] : [row];
+  });
+  const selectedDownloadRows = uniqueDownloadRows(selectedRows);
+  const selectablePageRows = pageRows.filter(rowHasVersion);
+  const selectedPageCount = selectablePageRows.filter((row) => selectedRowKeys.has(row.key)).length;
+  const allPageSelected = selectablePageRows.length > 0 && selectedPageCount === selectablePageRows.length;
+  const somePageSelected = selectedPageCount > 0 && !allPageSelected;
+  const bulkBusyActive = bulkBusy !== null;
+
+  const enterBulkMode = (): void => {
+    if (selectableRows.length === 0) {
+      return;
+    }
+    setBulkMode(true);
+    setSelectedRowKeys(new Set());
+    setBulkMessage(null);
+  };
+
+  const exitBulkMode = (): void => {
+    if (bulkBusyActive) {
+      return;
+    }
+    setBulkMode(false);
+    setSelectedRowKeys(new Set());
+    setBulkMessage(null);
+  };
+
+  const toggleRowSelection = (row: ProjectFileRow): void => {
+    if (!bulkMode || bulkBusyActive || !rowHasVersion(row)) {
+      return;
+    }
+    if (selectedRowKeys.has(row.key)) {
+      setSelectedRowKeys((previous) => {
+        const next = new Set(previous);
+        next.delete(row.key);
+        return next;
+      });
+      setBulkMessage(null);
+      return;
+    }
+    if (selectedRowKeys.size >= BULK_LIMIT) {
+      setBulkMessage({ kind: "error", text: t("pd.files.bulk.limit") });
+      return;
+    }
+    setSelectedRowKeys((previous) => new Set(previous).add(row.key));
+    setBulkMessage(null);
+  };
+
+  const toggleCurrentPageSelection = (): void => {
+    if (bulkBusyActive || selectablePageRows.length === 0) {
+      return;
+    }
+    if (allPageSelected) {
+      const pageKeys = new Set(selectablePageRows.map((row) => row.key));
+      setSelectedRowKeys((previous) => {
+        const next = new Set(previous);
+        for (const key of pageKeys) {
+          next.delete(key);
+        }
+        return next;
+      });
+      setBulkMessage(null);
+      return;
+    }
+    const additions = selectablePageRows.filter((row) => !selectedRowKeys.has(row.key));
+    const availableSlots = Math.max(0, BULK_LIMIT - selectedRowKeys.size);
+    if (availableSlots === 0) {
+      setBulkMessage({ kind: "error", text: t("pd.files.bulk.limit") });
+      return;
+    }
+    const accepted = additions.slice(0, availableSlots);
+    setSelectedRowKeys((previous) => {
+      const next = new Set(previous);
+      for (const row of accepted) {
+        next.add(row.key);
+      }
+      return next;
+    });
+    setBulkMessage(accepted.length < additions.length ? { kind: "info", text: t("pd.files.bulk.limit") } : null);
+  };
+
+  const clearBulkSelection = (): void => {
+    if (bulkBusyActive) {
+      return;
+    }
+    setSelectedRowKeys(new Set());
+    setBulkMessage(null);
+  };
 
   const openPreview = async (row: ProjectFileRow): Promise<void> => {
     if (previewBusy !== null || !rowHasVersion(row)) {
@@ -497,7 +665,7 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
   };
 
   async function downloadFile(row: ProjectFileRow): Promise<void> {
-    if (downloadBusy !== null || !rowHasVersion(row)) {
+    if (downloadBusy !== null || bulkBusyActive || !rowHasVersion(row)) {
       return;
     }
     setDownloadBusy(row.key);
@@ -516,8 +684,94 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
     }
   }
 
+  async function downloadSelectedSeparately(): Promise<void> {
+    if (bulkBusyActive) {
+      return;
+    }
+    if (selectedDownloadRows.length === 0) {
+      setBulkMessage({ kind: "info", text: t("pd.files.bulk.needSelection") });
+      return;
+    }
+    setNotice(null);
+    setBulkMessage(null);
+    let success = 0;
+    let failed = 0;
+    for (let index = 0; index < selectedDownloadRows.length; index += 1) {
+      const row = selectedDownloadRows[index];
+      if (row === undefined) {
+        continue;
+      }
+      setBulkBusy({
+        kind: "separate",
+        done: index + 1,
+        total: selectedDownloadRows.length,
+        current: row.name,
+      });
+      try {
+        const versionId = resolvedVersionIdOfRow(row);
+        if (versionId === undefined) {
+          throw new Error(t("pd.files.bulk.unavailable"));
+        }
+        const signed = await fetchDownloadUrl(row.file.id, versionId);
+        await triggerDownload(signed.url, signed.fileName);
+        success += 1;
+      } catch {
+        failed += 1;
+      }
+      setBulkBusy({
+        kind: "separate",
+        done: index + 1,
+        total: selectedDownloadRows.length,
+        current: row.name,
+      });
+      if (index < selectedDownloadRows.length - 1) {
+        await waitMs(BULK_DOWNLOAD_INTERVAL_MS);
+      }
+    }
+    setBulkBusy(null);
+    setBulkMessage({
+      kind: failed === 0 ? "ok" : "error",
+      text:
+        failed === 0
+          ? t("pd.files.bulk.separateDone", { success })
+          : t("pd.files.bulk.separateFailed", { success, failed }),
+    });
+  }
+
+  async function downloadSelectedArchive(): Promise<void> {
+    if (bulkBusyActive) {
+      return;
+    }
+    const items = selectedDownloadRows.flatMap((row) => {
+      const item = archiveItemOfRow(row);
+      return item === null ? [] : [item];
+    });
+    if (items.length === 0) {
+      setBulkMessage({ kind: "info", text: t("pd.files.bulk.needSelection") });
+      return;
+    }
+    setNotice(null);
+    setBulkMessage(null);
+    setBulkBusy({ kind: "archive", total: items.length });
+    try {
+      const archive = await createFileArchive(projectId, items);
+      await triggerDownload(archive.url, archive.fileName);
+      setBulkMessage({ kind: "ok", text: t("pd.files.bulk.archiveStarted", { name: archive.fileName }) });
+    } catch (error) {
+      setBulkMessage({
+        kind: "error",
+        text:
+          error instanceof Error && error.message !== ""
+            ? error.message
+            : t("pd.files.bulk.archiveFailed"),
+      });
+    } finally {
+      setBulkBusy(null);
+    }
+  }
+
   async function deleteMaterialReissue(row: ProjectFileRow): Promise<void> {
-    if (!canEdit || deleteBusy !== null || !isMaterialReissueDocument(row)) {
+    if (!canEdit || deleteBusy !== null || bulkBusyActive || !isMaterialReissueDocument(row)) {
       return;
     }
     setPendingDelete(null);
@@ -557,6 +811,7 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
             onChange={setKeyword}
             placeholder={t("pd.files.search")}
             className="w-full"
+            disabled={bulkBusyActive}
           />
         </span>
         <span data-project-files-filter="stage" className="w-40 shrink-0">
@@ -568,6 +823,7 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
             onChange={setStageFilter}
             placeholder={t("pd.files.filter.stage.all")}
             searchPlaceholder={t("pd.files.filter.stage.search")}
+            disabled={bulkBusyActive}
           />
         </span>
         <span data-project-files-filter="status" className="w-40 shrink-0">
@@ -579,6 +835,7 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
             onChange={setStatusFilter}
             placeholder={t("lib.filter.status.placeholder")}
             searchPlaceholder={t("lib.filter.status.search")}
+            disabled={bulkBusyActive}
           />
         </span>
         {hasFilter ? (
@@ -589,12 +846,124 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
               setStageFilter("");
               setStatusFilter("");
             }}
-            className="rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+            disabled={bulkBusyActive}
+            className="rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-300"
           >
             {t("lib.clear")}
           </button>
         ) : null}
+        <div
+          data-project-files-bulk=""
+          className="ml-auto mr-1 flex flex-wrap items-center justify-end gap-1.5"
+        >
+          {bulkMode ? (
+            <>
+              <span
+                data-project-files-bulk-selected={selectedRowKeys.size}
+                aria-live="polite"
+                className="whitespace-nowrap px-1 text-xs font-medium text-zinc-600"
+              >
+                {t("pd.files.bulk.selected", { n: selectedRowKeys.size })}
+              </span>
+              <button
+                type="button"
+                data-project-files-bulk-action="page"
+                disabled={bulkBusyActive || selectablePageRows.length === 0}
+                aria-label={allPageSelected ? t("pd.files.bulk.unselectPageAria") : t("pd.files.bulk.selectPageAria")}
+                onClick={toggleCurrentPageSelection}
+                className={BULK_CONTROL_CLASS}
+              >
+                {allPageSelected ? t("pd.files.bulk.unselectPage") : t("pd.files.bulk.selectPage")}
+              </button>
+              <button
+                type="button"
+                data-project-files-bulk-action="clear"
+                disabled={bulkBusyActive || selectedRowKeys.size === 0}
+                onClick={clearBulkSelection}
+                className={BULK_CONTROL_CLASS}
+              >
+                {t("pd.files.bulk.clear")}
+              </button>
+              <button
+                type="button"
+                data-project-files-bulk-action="separate"
+                disabled={bulkBusyActive || selectedDownloadRows.length === 0}
+                aria-busy={bulkBusy?.kind === "separate"}
+                onClick={() => { void downloadSelectedSeparately(); }}
+                className={BULK_CONTROL_CLASS}
+              >
+                {t("pd.files.bulk.separate")}
+              </button>
+              <button
+                type="button"
+                data-project-files-bulk-action="archive"
+                disabled={bulkBusyActive || selectedDownloadRows.length === 0}
+                aria-busy={bulkBusy?.kind === "archive"}
+                onClick={() => { void downloadSelectedArchive(); }}
+                className={BULK_PRIMARY_CLASS}
+              >
+                {bulkBusy?.kind === "archive" ? t("pd.files.bulk.archiving") : t("pd.files.bulk.archive")}
+              </button>
+              <button
+                type="button"
+                data-project-files-bulk-toggle="exit"
+                disabled={bulkBusyActive}
+                onClick={exitBulkMode}
+                className={BULK_CONTROL_CLASS}
+              >
+                {t("pd.files.bulk.exit")}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              data-project-files-bulk-toggle="enter"
+              disabled={state.kind !== "ready" || selectableRows.length === 0}
+              title={state.kind === "ready" && selectableRows.length === 0 ? t("pd.files.bulk.noneAvailable") : undefined}
+              onClick={enterBulkMode}
+              className={BULK_PRIMARY_CLASS}
+            >
+              {t("pd.files.bulk.entry")}
+            </button>
+          )}
+        </div>
       </div>
+
+      {bulkBusy?.kind === "separate" ? (
+        <div
+          data-project-files-bulk-progress="separate"
+          role="status"
+          aria-live="polite"
+          className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800"
+        >
+          <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-blue-500" aria-hidden="true" />
+          <span className="min-w-0">
+            {t("pd.files.bulk.separateProgress", {
+              done: bulkBusy.done,
+              total: bulkBusy.total,
+              name: bulkBusy.current,
+            })}
+          </span>
+        </div>
+      ) : null}
+
+      {bulkMessage === null ? null : (
+        <div
+          data-project-files-bulk-message={bulkMessage.kind}
+          role={bulkMessage.kind === "error" ? "alert" : "status"}
+          aria-live={bulkMessage.kind === "error" ? "assertive" : "polite"}
+          className={
+            "rounded-xl border px-3 py-2 text-xs " +
+            (bulkMessage.kind === "ok"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : bulkMessage.kind === "error"
+                ? "border-rose-200 bg-rose-50 text-rose-700"
+                : "border-sky-200 bg-sky-50 text-sky-800")
+          }
+        >
+          {bulkMessage.text}
+        </div>
+      )}
 
       {notice === null ? null : (
         <Toast
@@ -637,16 +1006,43 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
       {state.kind === "ready" && total > 0 ? (
         <>
           <div data-project-files-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
-            <table className="w-full min-w-[1120px] border-collapse text-left text-sm">
+            <table className={"w-full border-collapse text-left text-sm " + (bulkMode ? "min-w-[1168px]" : "min-w-[1120px]")}>
               <thead className="bg-zinc-50 text-zinc-500">
                 <tr>
-                  <th className="border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.file")}</th>
+                  {bulkMode ? (
+                    <th className="w-12 border-b border-zinc-200 px-3 py-3 font-medium">
+                      <input
+                        type="checkbox"
+                        checked={allPageSelected}
+                        ref={(input) => {
+                          if (input !== null) {
+                            input.indeterminate = somePageSelected;
+                          }
+                        }}
+                        disabled={bulkBusyActive || selectablePageRows.length === 0}
+                        aria-label={allPageSelected ? t("pd.files.bulk.unselectPageAria") : t("pd.files.bulk.selectAllAria")}
+                        aria-checked={somePageSelected ? "mixed" : allPageSelected}
+                        onChange={toggleCurrentPageSelection}
+                        className="h-4 w-4 cursor-pointer rounded border-zinc-300 accent-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
+                      />
+                    </th>
+                  ) : null}
+                  <th className="border-b border-zinc-200 px-4 py-3 font-medium">
+                    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                      {t("lib.col.file")}
+                      <span data-project-files-preview-hint="" className="text-[11px] font-normal text-zinc-400">
+                        {t("pd.files.previewHint")}
+                      </span>
+                    </span>
+                  </th>
                   <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("pd.files.col.stage")}</th>
                   <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("pd.files.col.task")}</th>
                   <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.status")}</th>
                   <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.uploader")}</th>
                   <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.createdAt")}</th>
-                  <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.actions")}</th>
+                  <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 text-right font-medium">
+                    <span className="inline-flex w-16 items-center justify-center">{t("lib.col.actions")}</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -700,6 +1096,31 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
                         (row.changeSide === "before" ? " bg-zinc-50/40" : "")
                       }
                     >
+                      {bulkMode ? (
+                        <td
+                          data-project-file-select={row.key}
+                          data-mobile-label={t("pd.files.bulk.selectColumn")}
+                          className="align-middle border-b border-zinc-100 px-3 py-3"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedRowKeys.has(row.key)}
+                            disabled={
+                              !available ||
+                              bulkBusyActive ||
+                              (!selectedRowKeys.has(row.key) && selectedRowKeys.size >= BULK_LIMIT)
+                            }
+                            aria-label={
+                              available
+                                ? t("pd.files.bulk.selectRow", { name: row.name })
+                                : t("pd.files.bulk.unavailable")
+                            }
+                            title={available ? undefined : t("pd.files.bulk.unavailable")}
+                            onChange={() => { toggleRowSelection(row); }}
+                            className="h-4 w-4 cursor-pointer rounded border-zinc-300 accent-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
+                          />
+                        </td>
+                      ) : null}
                       <td data-mobile-label={t("lib.col.file")} className="align-middle border-b border-zinc-100 px-4 py-3">
                         <span className="flex min-w-0 items-center gap-2.5">
                           <FileTypeIcon name={row.name} className="h-5 w-5 shrink-0" />
@@ -781,7 +1202,7 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
                           <button
                             type="button"
                             data-project-file-download={row.key}
-                            disabled={downloadBusy !== null || deleteBusy !== null || !available}
+                            disabled={downloadBusy !== null || deleteBusy !== null || bulkBusyActive || !available}
                             onClick={() => {
                               void downloadFile(row);
                             }}
@@ -824,6 +1245,32 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
             </div>
           </footer>
         </>
+      ) : null}
+
+      {bulkBusy?.kind === "archive" ? (
+        <div
+          data-project-files-bulk-overlay=""
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-950/35 p-4 backdrop-blur-[1px]"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-files-archive-title"
+            aria-describedby="project-files-archive-description"
+            aria-busy="true"
+            className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white px-6 py-7 text-center shadow-[0_24px_70px_-24px_rgba(15,23,42,0.5)]"
+          >
+            <div className="flex justify-center">
+              <Loader />
+            </div>
+            <h3 id="project-files-archive-title" className="mt-4 text-base font-semibold text-zinc-900">
+              {t("pd.files.bulk.archiveProgress", { n: bulkBusy.total })}
+            </h3>
+            <p id="project-files-archive-description" className="mt-2 text-sm leading-6 text-zinc-500">
+              {t("pd.files.bulk.archiveWait")}
+            </p>
+          </div>
+        </div>
       ) : null}
 
       {preview === null ? null : (

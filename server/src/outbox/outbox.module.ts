@@ -12,7 +12,13 @@ import {
   AutomationRunRepository,
 } from "../modules/automation/index.js";
 import { CalendarModule, CalendarService } from "../modules/calendar/index.js";
-import { FileModule, PREVIEW_JOB_TOPIC, PreviewService } from "../modules/file/index.js";
+import {
+  FILE_ARCHIVE_CLEANUP_JOB_KIND,
+  FileArchiveCleanupHandler,
+  FileModule,
+  PREVIEW_JOB_TOPIC,
+  PreviewService,
+} from "../modules/file/index.js";
 import {
   channelOfNotifyPayload,
   NOTIFY_GROUP_TOPIC,
@@ -131,7 +137,8 @@ export class OutboxModule {
             database: DatabaseService,
             rules: AutomationRuleRepository,
             runs: AutomationRunRepository,
-          ) => buildJobsRegistry(env, dailyDigest, subjects, clock, calendar, database, rules, runs),
+            archiveCleanup: FileArchiveCleanupHandler,
+          ) => buildJobsRegistry(env, dailyDigest, subjects, clock, calendar, database, rules, runs, archiveCleanup),
           inject: [
             OutboxDailyDigestService,
             AutomationSubjectReader,
@@ -140,6 +147,7 @@ export class OutboxModule {
             DatabaseService,
             AutomationRuleRepository,
             AutomationRunRepository,
+            FileArchiveCleanupHandler,
           ],
         },
         OutboxDailyDigestRepository,
@@ -217,8 +225,12 @@ export function buildJobsRegistry(
   database: DatabaseService,
   rules: AutomationRuleRepository,
   runs: AutomationRunRepository,
+  archiveCleanup: OutboxJobHandler,
 ): Map<string, OutboxJobHandler> {
-  const registry = new Map<string, OutboxJobHandler>([[OUTBOX_DAILY_DIGEST_JOB_KIND, dailyDigest]]);
+  const registry = new Map<string, OutboxJobHandler>([
+    [OUTBOX_DAILY_DIGEST_JOB_KIND, dailyDigest],
+    [FILE_ARCHIVE_CLEANUP_JOB_KIND, archiveCleanup],
+  ]);
   if (env.AUTOMATION_WIRING_ENABLED === "true") {
     registry.set(
       AUTOMATION_SCHEDULE_JOB_KIND,

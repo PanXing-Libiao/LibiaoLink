@@ -4140,6 +4140,79 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/files/download-archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 项目文件批量打包 ZIP（服务端生成临时归档并返回单次短时签名地址）
+         * @description 单批最多 50 个版本、单文件不超过 200 MB、解压后总量不超过 2 GB；任一文件或版本校验失败、对象读取失败、超限或写包失败时整批失败（全有或全无）。同一 (fileId, versionId) 仅入包一次，按首次提交顺序排列；要求 file.download 权限并逐文件写 download 审计。
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["FileArchiveRequest"];
+                };
+            };
+            responses: {
+                /** @description ZIP 已生成，返回单次短时签名下载地址 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FileArchiveResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 同一账号已有打包任务在进行（RATE_LIMITED） */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/files/uploads": {
         parameters: {
             query?: never;
@@ -11170,6 +11243,31 @@ export interface components {
             recycledAt: components["schemas"]["DateTime"] & (string | null);
             recycledBy: components["schemas"]["Uuid"] & (string | null);
             recycledFromStatus: components["schemas"]["FileStatus"] & (string | null);
+        };
+        /** @description 批量 ZIP 的文件版本选择项 */
+        FileArchiveItem: {
+            fileId: components["schemas"]["Uuid"];
+            versionId: components["schemas"]["Uuid"];
+            /** @description ZIP 内显示名（可选）；服务端清洗路径字符并强制使用该版本对象键的真实扩展名 */
+            entryName?: string;
+        };
+        /** @description 项目文件批量 ZIP 请求（单批最多 50 个版本） */
+        FileArchiveRequest: {
+            /** @description 待打包的版本列表；按提交顺序入包，相同 (fileId, versionId) 只保留首次出现项 */
+            items: components["schemas"]["FileArchiveItem"][];
+        };
+        /** @description 项目文件批量 ZIP 生成结果 */
+        FileArchiveResponse: {
+            batchId: components["schemas"]["Uuid"];
+            /** @description ZIP 下载文件名（含项目编号 / 名称与 .zip 扩展名） */
+            fileName: string;
+            /** @description 短时签名 ZIP 下载地址；前端只触发一次下载，不读取整包字节 */
+            url: string;
+            /** @description 生成的 ZIP 文件大小（压缩后） */
+            sizeBytes: number;
+            expiresAt: components["schemas"]["DateTime"];
+            /** @description 实际入包的唯一版本数 */
+            itemCount: number;
         };
         /** @description 文件详情（含当前版本；版本链走 /files/{id}/versions） */
         FileDetail: components["schemas"]["File"] & {
