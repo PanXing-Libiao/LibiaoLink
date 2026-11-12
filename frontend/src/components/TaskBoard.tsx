@@ -70,7 +70,7 @@ export const TABLE_COLUMNS: ColumnDef[] = [
   { key: "deliverable", label: "输出成果文件", width: "0.86fr", min: 86 },
   { key: "files", label: "文件", width: "0.96fr", min: 96 },
   { key: "note", label: "项目进展描述", width: "0.9fr", min: 90 },
-  { key: "start", label: "开始日期", width: "0.7fr", min: 70 }, // 日期文案（「9月12日」）最小宽下也要完整：66 → 70
+  { key: "start", label: "开始日期", width: "0.7fr", min: 86 }, // 行内日期按钮左右内衬约 14px；两位数日期「12月17日」在 70px 下会截成省略号：抬到与预计完成日期同宽
   { key: "days", label: "预计所需天数", width: "56px", min: 56, header: "" },
   { key: "due", label: "预计完成日期", width: "0.86fr", min: 86 },
   { key: "headcount", label: "预计所需施工人数", width: "1.08fr", min: 108 },
