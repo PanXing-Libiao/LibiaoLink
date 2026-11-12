@@ -1,3 +1,9 @@
+> **2026-11-12 15:42 项目总览「变更记录」按钮移除（正式机前端增量 · PR #833 / e71d598b）**：项目总览标签栏右侧工具区仅保留「导出 PDF」与「筛选」，旧项目级变更弹窗与按钮入口删除；任务表「变更关联」列头、行内气泡及任务抽屉「变更记录」页保留。基于正式机当前前端 `79c907f2`（`prod-20261112-1402-px-narrow-start-date-79c907f2`）叠加 PR #833 补丁，不引入 main 中尚未部署的项目文件批量下载等前端功能。
+>
+> **发布件 / 正式机**：release = `prod-20261112-1539-px-remove-change-records-e71d598b`，previous = `prod-20261112-1519-px-permission-audit-ed4c8281`；staging `/srv/data/deploy-prod-20261112-1539-px-remove-change-records-e71d598b`，备份 `/srv/data/backups/before-prod-20261112-1539-px-remove-change-records-e71d598b/`（4 个 `.before` + `backup-files.sha256` 362 B · `aa6ecb95…`）。`frontend-dist.tar.gz` 665,848 B · `694db886…`、`build-info.json` 876 B · `5d9ebcbc…`、`release-files.sha256` 260 B · `d42c8df2…`；新 manifest 8,907 B · `e6dc716c…`，`activeIncrementalRelease` 已切到本 release，owner `libiao:libiao` / `0644`。
+>
+> **验收 / 回滚**：公网 `index.html` 522 B · `93b4a9d4…`、`assets/index-uC1FX-Jq.js` 2,222,082 B · `01a33dc5…`、`assets/index-Dnmq5NdO.css` 214,881 B · `30dabf83…` 与安装件一致；3 / 3 文件哈希通过，`/`、`/healthz`、`/readyz` 200，四探针全 true，未登录 API 401，8 / 8 容器 healthy，旧按钮 `data-project-change-records-open` 与 `project.changeRecords.open` 均 0 命中。回滚点同上；无需重启容器或数据库回滚。仅替换 3 个前端文件与 manifest，未改 server / shared / API 契约 / 数据库 / DDL / 迁移 / CAD / Compose / env / Secret。
+
 > **2026-11-12 13:06 正式机最终线上状态（wmj 1300 合并携带归档修复）**：13:02 归档版本上线后，wmj 于 13:02 并发发布 `prod-20261112-1300-wmj-stage-add-card-cdc9a661`，明确以 `prod-20261112-1256-px-archive-task-complete-7551b71d` 为 previous，保留本次 1256 归档服务端热修与四语文案，并合入 stage-add-card。
 >
 > **最终线上**：release = `prod-20261112-1300-wmj-stage-add-card-cdc9a661`；`index.html` 522 B · `e71c16c7…`、主 JS `assets/index-BXYRQqOn.js` 2,236,514 B · `d474841f…`；新归档提示命中 1 次、旧提示 0 次，`deliverableTypes` 保留。当前 manifest 7,032 B · `6d9bbdb9…`，`activeIncrementalRelease` 指向 wmj release。
