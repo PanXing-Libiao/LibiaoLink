@@ -1,6 +1,6 @@
 import { useLiveRefresh } from "../useLiveRefresh";
 import { keepLiveOrder } from "../liveSync";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { addedNodeKey } from "../data/tasks";
 import type { TemplatePresetNode } from "../data/templatePresets";
@@ -210,7 +210,9 @@ type StageAddCardProps = {
     tasks: readonly { id: string; title: string }[];
   };
   onClose: () => void;
-  /** 卡片落点（由 TaskBoard 量表格算出来：表头正下方、贴表格右边缘）；不传时回落到右上角悬浮。 */
+  /** 项目总览的卡片固定在视口内，可从标题区或拖动柄移动。 */
+  viewportDraggable?: boolean;
+  /** 初始落点由调用方提供；不传时回落到右上角。 */
   style?: CSSProperties;
 };
 
@@ -220,7 +222,7 @@ type StageAddCardProps = {
  * 其余每个标签 = 这个阶段的一块模板（按预设顺序预览、可鼠标滚动，也能逐条 / 整套加）。
  * 关卡片 = 右上 × / `Esc` / **点卡片外的空白处** / **再点同一个阶段标签**；换阶段标签或换项目时也会自动关掉（由 TaskBoard 控制）。
  */
-export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, onAddNodes, placement, onClose, style }: StageAddCardProps) {
+export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, onAddNodes, placement, onClose, viewportDraggable = false, style }: StageAddCardProps) {
   const t = useT();
   const locale = useLocale();
   const localize = useLocalizedTranslator();
@@ -249,14 +251,91 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
   const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [templatesRetry, setTemplatesRetry] = useState(0);
   const [activeTab, setActiveTab] = useState("nodes");
+  const [nodeQuery, setNodeQuery] = useState("");
+  const listRef = useRef<HTMLUListElement | null>(null);
   const cardRef = useRef<HTMLElement | null>(null);
+  const [viewportPosition, setViewportPosition] = useState<{ top: number; left: number } | null>(null);
+  const dragRef = useRef<{ pointerId: number; x: number; y: number; top: number; left: number } | null>(null);
+  const userMovedRef = useRef(false);
   /** 键盘焦点陷阱（Push 264 追订）：面板开着时焦点进面板、Tab 在面板内循环、关闭还原到阶段标签。 */
   useFocusTrapFor(cardRef);
 
-  // 换阶段（点了别的阶段标签）时回到第一个标签（Push 207：原「收起临时任务表单」随入口下架）
+  /** 卡片默认居中；手动移动后只限制边界，列表加载或窗口缩小时仍保持可见。 */
+  const boundedPosition = (top: number, left: number, rect: DOMRect) => ({
+    top: Math.max(8, Math.min(top, window.innerHeight - rect.height - 8)),
+    left: Math.max(8, Math.min(left, window.innerWidth - rect.width - 8)),
+  });
+  const moveCard = (top: number, left: number) => {
+    const card = cardRef.current;
+    if (card === null) return;
+    const next = boundedPosition(top, left, card.getBoundingClientRect());
+    setViewportPosition((current) => current?.top === next.top && current.left === next.left ? current : next);
+  };
+  useLayoutEffect(() => {
+    if (!viewportDraggable || cardRef.current === null) return;
+    const card = cardRef.current;
+    const keepVisible = () => {
+      const rect = card.getBoundingClientRect();
+      const top = userMovedRef.current ? rect.top : (window.innerHeight - rect.height) / 2;
+      const left = userMovedRef.current ? rect.left : (window.innerWidth - rect.width) / 2;
+      const next = boundedPosition(top, left, rect);
+      setViewportPosition((current) => current?.top === next.top && current.left === next.left ? current : next);
+    };
+    keepVisible();
+    const observer = new ResizeObserver(keepVisible);
+    observer.observe(card);
+    window.addEventListener("resize", keepVisible);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", keepVisible);
+    };
+  }, [viewportDraggable]);
+
+  const startDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || !event.isPrimary || cardRef.current === null) return;
+    event.preventDefault();
+    const rect = cardRef.current.getBoundingClientRect();
+    dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, top: rect.top, left: rect.left };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setArmed(null);
+  };
+  const drag = (event: ReactPointerEvent<HTMLElement>) => {
+    const start = dragRef.current;
+    if (start === null || start.pointerId !== event.pointerId) return;
+    if (event.clientX !== start.x || event.clientY !== start.y) userMovedRef.current = true;
+    moveCard(start.top + event.clientY - start.y, start.left + event.clientX - start.x);
+  };
+  const endDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+  };
+  const dragHandlers = viewportDraggable ? {
+    onPointerDown: startDrag,
+    onPointerMove: drag,
+    onPointerUp: endDrag,
+    onPointerCancel: endDrag,
+    onLostPointerCapture: endDrag,
+  } : {};
+  const moveWithKeyboard = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const offsets: Record<string, [number, number]> = {
+      ArrowUp: [-16, 0], ArrowDown: [16, 0], ArrowLeft: [0, -16], ArrowRight: [0, 16],
+    };
+    const offset = offsets[event.key];
+    if (offset === undefined || cardRef.current === null) return;
+    event.preventDefault();
+    userMovedRef.current = true;
+    const rect = cardRef.current.getBoundingClientRect();
+    moveCard(rect.top + offset[0], rect.left + offset[1]);
+  };
+
+  // 换阶段时回到节点标签并清空搜索词，避免沿用上个阶段的筛选。
   useEffect(() => {
     setActiveTab("nodes");
+    setNodeQuery("");
   }, [stage]);
+
+  useEffect(() => {
+    if (listRef.current !== null) listRef.current.scrollTop = 0;
+  }, [nodeQuery, activeTab, stage]);
 
   useLiveRefresh(["templates"], async () => {
     const [nextNodes, nextTemplates] = await Promise.all([fetchStageNodes(stage), fetchStageTemplates(stage)]);
@@ -362,6 +441,9 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
   const currentTemplate = templates.find((item) => item.id === activeTab);
   const isNodesTab = currentTemplate === undefined;
   const items = currentTemplate?.nodes ?? nodes;
+  const normalizedQuery = nodeQuery.trim().toLowerCase();
+  const visibleItems = items.map((node, index) => ({ node, index })).filter(({ node }) =>
+    normalizedQuery === "" || (node.title + "\n" + node.titleEn).toLowerCase().includes(normalizedQuery));
   /** 这条节点加过没有（M3-07 刀 3）：先看来源 id（精确），再回落「同阶段同名」（本刀之前的旧行 / 手工同名任务）。 */
   const isAdded = (node: TemplatePresetNode): boolean =>
     addedNodeIds.has(node.id) || addedNodeKeys.has(addedNodeKey(stage, node.title));
@@ -420,21 +502,38 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
     setArmed({ nodes: picked, anchor, templateId: currentTemplate?.id });
   };
 
-  return (
+  const card = (
     <aside
       ref={cardRef}
       role="dialog"
       aria-label={t("sac.aria", { stage: stageText(locale, stage) })}
-      style={style ?? { top: 112, right: 24 }}
+      style={viewportDraggable ? { ...style, ...viewportPosition } : style ?? { top: 112, right: 24 }}
       className="absolute z-40 flex max-h-[72vh] w-[400px] max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.98),rgba(255,255,255,0.94))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_12px_40px_rgba(15,23,42,0.22)] backdrop-blur-2xl backdrop-saturate-150"
     >
       <div className="flex shrink-0 items-start justify-between gap-2">
-        <div className="min-w-0">
+        <div className={"min-w-0 " + (viewportDraggable ? "flex-1 touch-none cursor-grab select-none active:cursor-grabbing" : "")} {...dragHandlers}>
           <p className="truncate text-sm font-semibold text-zinc-800">{stageText(locale, stage)}</p>
           <p className="mt-0.5 text-[11px] text-zinc-500">
             {t("sac.summary", { nodes: nodes.length, templates: templates.length })}
           </p>
         </div>
+        {viewportDraggable ? (
+          <button
+            type="button"
+            data-stage-card-drag-handle="true"
+            aria-label={t("sac.dragAria")}
+            title={t("sac.dragAria")}
+            {...dragHandlers}
+            onKeyDown={moveWithKeyboard}
+            className="touch-none shrink-0 cursor-grab rounded p-0.5 text-zinc-400 transition hover:bg-white/70 hover:text-zinc-700 active:cursor-grabbing"
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" className="h-3.5 w-3.5">
+              <circle cx="5" cy="4" r="1" /><circle cx="11" cy="4" r="1" />
+              <circle cx="5" cy="8" r="1" /><circle cx="11" cy="8" r="1" />
+              <circle cx="5" cy="12" r="1" /><circle cx="11" cy="12" r="1" />
+            </svg>
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onClose}
@@ -482,6 +581,28 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
         })}
       </div>
 
+      <div className="relative mt-2 shrink-0">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" />
+        </svg>
+        <input
+          type="text"
+          value={nodeQuery}
+          onChange={(event) => { userMovedRef.current = true; setNodeQuery(event.target.value); }}
+          placeholder={t("tpl.nodes.searchPlaceholder")}
+          aria-label={t("tpl.nodes.searchAria")}
+          className="w-full rounded-lg border border-white/70 bg-white/55 py-1.5 pl-8 pr-8 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 hover:bg-white/70 focus:border-zinc-300 focus:bg-white/80"
+        />
+        {nodeQuery === "" ? null : (
+          <button type="button" onClick={() => setNodeQuery("")} aria-label={t("tpl.nodes.clear")} title={t("tpl.nodes.clear")} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-zinc-400 transition hover:bg-white/70 hover:text-zinc-700">
+            <svg aria-hidden="true" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" className="h-3.5 w-3.5">
+              <path d="M4 4l7 7M11 4l-7 7" />
+            </svg>
+          </button>
+        )}
+      </div>
+
       <div className="mt-2 flex shrink-0 items-center justify-between gap-2">
         <span className="text-[11px] text-zinc-500">
           {isNodesTab ? "" : t("sac.previewPrefix")}{t("sac.added", { n: addedCount })}
@@ -517,9 +638,11 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
             </button>
           )}
         </p>
+      ) : normalizedQuery !== "" && visibleItems.length === 0 ? (
+        <p className="mt-2 rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-xs text-zinc-500">{t("tpl.nodes.empty")}</p>
       ) : (
-      <ul className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
-        {items.map((node, index) => {
+      <ul ref={listRef} className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+        {visibleItems.map(({ node, index }) => {
           const added = isAdded(node);
           return (
             <li key={node.id}>
@@ -563,4 +686,5 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
       )}
     </aside>
   );
+  return viewportDraggable ? createPortal(card, document.body) : card;
 }
