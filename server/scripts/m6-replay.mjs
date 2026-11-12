@@ -444,8 +444,8 @@ try {
   const archiveRead = await call("GET", API + "/archive");
   check("A5", "归档清单读面：GET /archive 200（与写面同形；未归档项目 404 见单测）", "200 同 id / 同 projectId / 同任务数", archiveRead.status + " " + short({ id: archiveRead.body?.id, tasks: archiveRead.body?.snapshot?.tasks?.total }, 140), archiveRead.status === 200 && archiveRead.body?.id === archived.body?.id && archiveRead.body?.projectId === cleanup.projectId && archiveRead.body?.snapshot?.tasks?.total === archivedSnapshot?.tasks?.total);
 
-  const afterConfirmVersion = afterConfirm.body?.version;
-  const patchArchived = await call("PATCH", API, { version: afterConfirmVersion, status: "archived" });
+  const afterArchiveVersion = afterArchive.body?.version;
+  const patchArchived = await call("PATCH", API, { version: afterArchiveVersion, status: "archived" });
   check("A6", "契约收紧反证：PATCH 项目不再接受 status=archived（归档只能走归档端点）", "400 VALIDATION_FAILED", patchArchived.status + " " + (patchArchived.body?.code ?? "-"), patchArchived.status === 400 && patchArchived.body?.code === "VALIDATION_FAILED");
 
   const archivedYear = Number(today.slice(0, 4));
