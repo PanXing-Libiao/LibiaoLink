@@ -1399,6 +1399,7 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "sac.addedTitle": "プロジェクトに追加済み",
   "sac.summary": "{nodes} ノード · {templates} テンプレート",
   "sac.closeAria": "閉じる",
+  "sac.dragAria": "パネルを移動（矢印キーでも移動できます）",
   "sac.tab.nodes": "タスクノード",
   "sac.previewPrefix": "テンプレートプレビュー · ",
   "sac.added": "{n} を追加しました",

@@ -949,7 +949,7 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
   const [tempFormOpen, setTempFormOpen] = useState(false);
   /** 键盘焦点陷阱（Push 264 追订）：临时任务新建浮层开着时焦点进浮层、Tab 在浮层内循环。 */
   const tempFormTrapRef = useFocusTrap<HTMLDivElement>(tempFormOpen && onCreateTempTask !== undefined);
-  /** 卡片的落点（Push 67：固定在表格表头正下方、左边缘对齐「项目经理」列，不浮在页面右上角、也不跟着点击跑）。 */
+  /** 临时任务表单仍相对表格定位；阶段添加卡片在视口内居中打开。 */
   const [cardBox, setCardBox] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const boardWrapRef = useRef<HTMLDivElement | null>(null);
   const boardCardRef = useRef<HTMLDivElement | null>(null);
@@ -981,10 +981,7 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
     setTempFormOpen(false);
   }, [viewStage]);
 
-  /**
-   * 量落点（Push 67，业务定稿版）：卡片**顶部与所点阶段的分组头在同一水平线**（卡顶 = 分组头顶，卡片正好贴在这一阶段左边，
-   * 页面滚到哪都保持这条水平线），左边缘对齐「项目经理」列（该列被列显隐关掉时回落到表格右边、始终夹在表格内）。
-   */
+  /** 测量临时任务表单在表格中的落点。 */
   const measureCardBox = (stage: string) => {
     const wrap = boardWrapRef.current;
     const board = boardCardRef.current;
@@ -1013,14 +1010,13 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
     };
   };
 
-  /** 点阶段标签：再点同一个 = 关掉；开的时候先量好落点，避免卡片先闪在旧位置。 */
+  /** 点阶段标签：再点同一个 = 关掉；新卡片在视口内居中打开。 */
   const toggleCard = (stage: string) => {
     if (cardStage === stage) {
       setCardStage(null);
       return;
     }
     setTempFormOpen(false);
-    setCardBox(measureCardBox(stage));
     setCardStage(stage);
   };
 
@@ -1035,8 +1031,8 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
     setTempFormOpen(true);
   };
 
-  /** 当前该量的浮层（Push 197）：「临时任务」新建表单开着就量它，否则量阶段卡片 —— 两者共用同一个落点。 */
-  const measureStage = tempFormOpen ? TEMP_TASK_STAGE : cardStage;
+  /** 临时任务表单继续随表格测量；阶段添加卡片打开后独立停在视口内。 */
+  const measureStage = tempFormOpen ? TEMP_TASK_STAGE : null;
   // 表格尺寸变化（列显隐 / 阶段折叠 / 换项目）与窗口缩放时重新量落点
   useEffect(() => {
     if (measureStage === null) {
@@ -1380,7 +1376,8 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
           // Push 207 撤（业务口径「临时任务不应该存在于阶段里面新建」）：阶段卡片不再收「临时任务」入口 ——
           // 临时任务的新建仍走本表底部「临时任务」分组头（见下方常驻入口）与看板列底「添加」菜单
           onClose={() => setCardStage(null)}
-          style={cardBox === null ? { top: 10, left: 24 } : cardBox}
+          viewportDraggable
+          style={{ position: "fixed", top: 0, left: 0 }}
         />
       ) : null}
       </div>
