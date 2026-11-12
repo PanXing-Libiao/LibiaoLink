@@ -1,3 +1,5 @@
+> **2026-11-12 项目文件批量 ZIP（无 DDL / 迁移）**：新增 `POST /api/v1/projects/{id}/files/download-archive`（`file.download`），复用 `SessionGuard` / `CsrfGuard` / `ProjectAccessGuard`。服务端按 `(fileId, versionId)` 去重并保持首次顺序，限制 50 个唯一版本、单文件 200 MB、解压后总量 2 GB；逐项校验项目 / 回收站 / 版本归属，流式写临时 ZIP 并校验实际大小与 SHA-256，全有或全无。上传到 `temp/file-archives/{batchId}.zip` 后返回单次短时签名地址；同账号 advisory lock 保证同时只有一个打包任务。生成超时 4 分钟，客户端断开通过 `AbortSignal` 中止，临时目录与已上传对象立即 best-effort 清理，`jobs` 清理任务在签名 TTL + 10 分钟兜底删除。每个入包版本写一条 `download` 审计，metadata 含 `versionId` / `batchId` / `archive=true` / `itemCount`；日志和清理任务留痕不输出对象键或服务器绝对路径。
+
 > **2026-11-10 Pro 逐人文件权限（无迁移）**：项目编辑者可写整个项目的任务文件；当前任务负责人仅可写挂接在本人未删除任务上的文件（上传、追加版本、改名、删除、定档 / 取消定档联动任务），项目级无任务归属文件不向任务负责人开放。任务负责人只读浏览项目其他文件；文件定档与任务定档同口径，由项目编辑者或该任务当前负责人裁决。
 
 > **2026-11-09 物料变更补发群图片**：补发提交事务内新增一条 `notify.group`（模板码 `MATERIAL_REISSUE_GROUP`，`refId` = 变更 id）；提交成功后企微机器人先发摘要，再按同一 `materialReissue` 快照生成补发/补货申请表 PNG 发群。通知与图片失败只走 outbox 重试 / 日志，不回滚变更记录、项目文件与 DOCX。
@@ -34,9 +36,9 @@ CAD 异常审计（2026-10-23，F-03）：解析失败、资源超限、超时�
 | 字段 | 内容 |
 |---|---|
 | 类型 | 平台模块（platform） |
-| 职责 | 文件、版本、定档、变更（申请即通过）、预览编排（含产物对象清理收口）、下载（短时签名）、在线查看（ONLYOFFICE 受控端点）、回收站 |
+| 职责 | 文件、版本、定档、变更（申请即通过）、预览编排（含产物对象清理收口）、单文件 / 批量 ZIP 下载（短时签名）、在线查看（ONLYOFFICE 受控端点）、回收站 |
 | 主责 | lan（团队分工.md §2 后端平台） |
-| 预留对外接口 | FileService、PreviewService、PreviewReadService、PreviewContentService、FileDownloadService、ChangeService |
+| 预留对外接口 | FileService、PreviewService、PreviewReadService、PreviewContentService、FileDownloadService、ChangeService、FileArchiveCleanupHandler |
 | 依据 | 系统功能书 A4-01~A4-18 / D2；技术设计v0.2 §5.1-5.3；契约 shared/src/modules/files.ts；ADR-006（对象键形态）/ ADR-022（不触发 projects.updated_at） |
 
 > 项目导出（project-export，2026-10-21）：`FileService.listExportFileRefs(projectId, fileIds)` 按项目裁出文件当前版本的最小引用（名称 / MIME / 大小 / 对象键），供导出模块生成文件超链接与内嵌图片；不返回二进制、不反向外依赖导出模块。
@@ -45,7 +47,7 @@ CAD 异常审计（2026-10-23，F-03）：解析失败、资源超限、超时�
 
 ```text
 file.controller.ts   # HTTP 面：/api/v1/files（会话 + CSRF 守卫；权限在服务层判定）
-file-library.controller.ts  # HTTP 面：/api/v1/projects/{id}/files 文件库列表（会话 + CSRF + ProjectAccessGuard）
+file-library.controller.ts  # HTTP 面：/api/v1/projects/{id}/files 文件库列表 + /files/download-archive 批量 ZIP（会话 + CSRF + ProjectAccessGuard）
 change.controller.ts # HTTP 面：/api/v1/change-requests/{id} 变更详情（会话 + CSRF；可见性在服务层按变更所属项目判定，非成员 404）
 change-library.controller.ts # HTTP 面：/api/v1/projects/{id}/change-requests 变更记录列表（会话 + CSRF + ProjectAccessGuard）
 change.query.ts      # 变更列表查询解析（纯函数）：阶段（多值 / 九阶段字典校验）/ 节点 / 变更文件 / 申请人 / 关键字 / 排序白名单；非法一律 400
@@ -66,6 +68,11 @@ onlyoffice.jwt.ts    # ONLYOFFICE JWT 原语（S3 · 安全定稿 §3.2）：HS2
 preview-content.service.ts # 受控预览内容端点服务（S3 · H1 · S2 安全响应类型）：鉴权先于库 / 存储 → 404 同形 → 凭据直读对象（无预签名 / 无重定向）→ 精确白名单 MIME + inline，SVG / HTML / 未知类型强制 octet-stream + attachment + nosniff；存储故障 503 / 502 fail-closed
 preview-content.controller.ts # HTTP 面（S3）：GET /files/{id}/versions/{versionId}/preview-content（`@All` 仅 GET、其余 405；不挂 SessionGuard / CSRF —— 服务间调用）
 file-download.service.ts # 下载切片（M4-05f · H1 · S2）：GET /files/{id}/versions/{versionId}/download-url —— 原对象一律签名响应为 octet-stream + attachment；file.download 权限 / download 审计
+file-archive.constants.ts # 批量 ZIP 限制、临时前缀、清理任务种类与对象键校验
+file-archive.repository.ts # 批量 ZIP 只读项目 / 文件 / 版本查询 + jobs 一次性清理任务
+file-archive.concurrency.ts # 同账号 PG advisory lock（多 API 实例生效）
+file-archive.cleanup.ts # outbox 一次性清理处理器：签名 TTL 后删除临时 ZIP，留痕只含批次号
+file-archive.service.ts # 批量 ZIP：逐项校验 / 全有或全无流式写包 / 上传 / 签名 / 审计 / 请求断开中止 / 清理
 index.ts             # 唯一公开出口（跨模块只允许 import 本文件）
 ```
 
@@ -89,8 +96,19 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 | `POST /api/v1/files/{id}/restore` | 恢复（回到进入前状态） | 200 | `file.upload` |
 | `POST /api/v1/files/{id}/purge` | 彻底删除（仅管理员；仅回收站文件；对象 + 元数据一并清） | 200 / 403 | 部门权限管理员（`groupAccessAdmin`） |
 | `GET /api/v1/projects/{id}/files` | 文件库列表（筛选 / 关键字 / 白名单排序 / 分页；默认排除 recycled；行随附 `createdByName`） | 200 | 项目可见即可 |
+| `POST /api/v1/projects/{id}/files/download-archive` | 批量 ZIP（最多 50 个唯一版本；流式生成临时对象并返回单次短时签名地址；逐文件 download 审计） | 200 / 400 / 403 / 404 / 429 | 项目可见 + `file.download` |
 | `GET /api/v1/projects/{id}/change-requests` | 变更记录列表（阶段 / 节点 / 变更文件 / 申请人筛选 + 关键字 + 白名单排序 + 分页） | 200 | 项目可见即可 |
 | `GET /api/v1/change-requests/{id}` | 变更详情（变更记录 + 变更后文件 + 变更后版本） | 200 | 项目可见即可（服务层判定，非成员 404） |
+
+## 项目文件批量 ZIP（2026-11-12）
+
+- 入口：`FileLibraryController.downloadArchive`，请求契约 `FileArchiveRequestSchema`，响应 `FileArchiveResponseSchema`；生成物见 `shared/generated/openapi.json` / `api-types.d.ts`。
+- 选择：`(fileId, versionId)` 去重并保持首次顺序；`entryName` 仅为显示名，服务端按 `versionFileName(file.name, version.objectKey)` 强制扩展名，清洗 `/`、`\`、控制字符、首尾点 / 空格并限制长度；重名追加 `_2`、`_3`。
+- 边界：50 个唯一版本、单文件 200 MB、解压后总量 2 GB、生成超时 4 分钟；大小以 `file_versions.size_bytes` 为准。全有或全无，任何文件 / 版本不存在、属于其他项目、已回收、对象缺失、大小 / 哈希不符、超限或写包失败都整批失败。
+- 临时对象：`temp/file-archives/{batchId}.zip`；签名 TTL 沿用 `S3_DOWNLOAD_URL_TTL_SECONDS`；`file.download-archive.cleanup` 一次性任务在 TTL + 10 分钟清理，任务留痕只写批次号。
+- 安全：同账号 PG advisory lock，重复打包 429 `RATE_LIMITED`；客户端断开把 `AbortSignal` 传入流式写包并立即 best-effort 清理；日志不含对象键、绝对路径、下载地址或文件内容。
+- 审计：成功生成并签发后，在一个事务内按每个入包版本写 `action=download`、`objectType=file`，metadata 至少含 `versionId`、`batchId`、`archive=true`、`itemCount`；失败路径不写成功下载审计。
+- 测试：`server/test/file-archive.test.ts` 覆盖权限、50 项、200 MB / 2 GB、跨项目 / 回收站 / 错误版本、去重顺序、重名 / 路径清洗、对象缺失 / 哈希不符、上传 / 签名 / 审计失败清理、同账号并发、请求断开和清理留痕脱敏；`zip-writer.test.ts` 覆盖公共 writer 的 UTF-8 名称、压缩 / 存储模式、大小上限与临时文件清理；`project-export.test.ts` 回归现有导出链路。
 
 ## 内容寻址、项目内秒传与断点续传（2026-11-03）
 

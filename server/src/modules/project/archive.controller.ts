@@ -18,7 +18,7 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 export class ArchiveController {
   constructor(private readonly archive: ArchiveService) {}
 
-  /** 归档：门禁（验收完成 + 成果文件齐全性检查）；缺项 422 返回清单，confirm=true 确认越过后归档并生成清单。 */
+  /** 归档：仅校验项目内未删除任务全部完成（否则 409 ARCHIVE_NOT_READY，confirm 不可越过）；通过后置位并生成清单。 */
   @Post(":id/archive")
   @HttpCode(200)
   @RequirePermission("project.archive")

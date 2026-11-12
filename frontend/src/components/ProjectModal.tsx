@@ -39,7 +39,7 @@ export type ProjectDraft = {
   status: ProjectStatusValue;
 };
 
-/** 弹窗提交结果（Push 262）：ok = 成功（父层关窗）；error = 提示文案；archive-confirm = 归档缺项，弹窗内二次确认。 */
+/** 弹窗提交结果（Push 262）：ok = 成功（父层关窗）；error = 提示文案；archive-confirm = 旧服务端 422 归档缺项兼容。 */
 export type ProjectSubmitResult =
   | { kind: "ok" }
   | { kind: "error"; message: string }
@@ -60,7 +60,7 @@ type ProjectModalProps = {
   /** 是否持有 project.archive（Push 262）：决定「已归档」选项的呈现（服务端仍是最终裁决）。 */
   canArchive?: boolean;
   onClose: () => void;
-  /** 提交（Push 262 起返回结构化结果）：ok = 成功（父层负责关窗 / 刷新列表）；error = 失败提示；archive-confirm = 归档缺项，弹窗内二次确认。 */
+  /** 提交（Push 262 起返回结构化结果）：ok = 成功（父层负责关窗 / 刷新列表）；error = 失败提示；archive-confirm = 旧服务端 422 缺项兼容。 */
   onSubmit: (draft: ProjectDraft, options?: { archiveConfirm?: boolean; version?: number }) => Promise<ProjectSubmitResult>;
 };
 
@@ -255,7 +255,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
     applyResult(result);
   };
 
-  /** 归档缺项二次确认（Push 262）：带 confirm=true 重试归档（缺项随归档清单留痕）。 */
+  /** 归档缺项二次确认（仅旧服务端 422 滚动升级兼容）：带 confirm=true 重试归档。 */
   const handleArchiveConfirm = async (): Promise<void> => {
     if (pending) {
       return;

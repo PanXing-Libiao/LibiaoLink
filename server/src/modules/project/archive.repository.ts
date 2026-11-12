@@ -4,7 +4,6 @@ import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { changeRequests } from "../../db/schema/change.js";
 import { files, fileVersions, uploadSessions } from "../../db/schema/files.js";
-import { projectNodes } from "../../db/schema/flow.js";
 import { users } from "../../db/schema/identity.js";
 import { projectArchives, projects, projectStages } from "../../db/schema/projects.js";
 import { dailyReports, issues } from "../../db/schema/reports.js";
@@ -23,14 +22,6 @@ export interface ArchiveUnfinishedTaskRow {
   id: string;
   title: string;
   stageKey: string | null;
-  status: string;
-}
-
-/** 未定档文件行（门禁缺项：文件清单逐条）。 */
-export interface ArchiveDraftFileRow {
-  id: string;
-  name: string;
-  docType: string | null;
   status: string;
 }
 
@@ -55,7 +46,7 @@ export interface ArchiveChangeRow {
 }
 
 /**
- * 归档数据访问（M7-04 · ADR-027）：项目行锁、验收阶段、门禁清单查询、清单快照聚合与 project_archives 读写收敛在本层。
+ * 归档数据访问（M7-04 · ADR-027）：项目行锁、当前阶段、未完成任务、清单快照聚合与 project_archives 读写收敛在本层。
  */
 @Injectable()
 export class ArchiveRepository {
@@ -67,41 +58,23 @@ export class ArchiveRepository {
     return rows[0] ?? null;
   }
 
-  /** 验收阶段行（硬前置：status 必须 done）。 */
-  async findAcceptanceStage(client: DbClient, projectId: string) {
+  /** 项目当前阶段行（归档清单记录阶段快照；不再作为归档硬前置）。 */
+  async findStage(client: DbClient, projectId: string, stageKey: string) {
     const rows = await client
       .select()
       .from(projectStages)
-      .where(and(eq(projectStages.projectId, projectId), eq(projectStages.stageKey, "acceptance")))
+      .where(and(eq(projectStages.projectId, projectId), eq(projectStages.stageKey, stageKey)))
       .limit(1);
     return rows[0] ?? null;
   }
 
-  /** 未完成任务（项目内、未软删、非 done；含未分组）—— 门禁缺项与确认留痕的来源。 */
+  /** 未完成任务（项目内、未软删、非 done；含未分组）—— 归档硬前置。 */
   async listUnfinishedTasks(client: DbClient, projectId: string): Promise<ArchiveUnfinishedTaskRow[]> {
     return client
       .select({ id: tasks.id, title: tasks.title, stageKey: tasks.stageKey, status: tasks.status })
       .from(tasks)
       .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt), ne(tasks.status, "done")))
       .orderBy(asc(tasks.stageKey), asc(tasks.sortIndex), asc(tasks.id));
-  }
-
-  /** 未定档文件（status = draft）—— 门禁缺项。 */
-  async listDraftFiles(client: DbClient, projectId: string): Promise<ArchiveDraftFileRow[]> {
-    return client
-      .select({ id: files.id, name: files.name, docType: files.docType, status: files.status })
-      .from(files)
-      .where(and(eq(files.projectId, projectId), eq(files.status, "draft"), isNotNull(files.currentVersionId)))
-      .orderBy(asc(files.name), asc(files.id));
-  }
-
-  /** 项目全部在册节点（未软删）—— 成果文件齐全性检查（A4-20）逐节点跑 GateService。 */
-  async listProjectNodes(client: DbClient, projectId: string) {
-    return client
-      .select({ id: projectNodes.id, nodeKey: projectNodes.nodeKey, name: projectNodes.name })
-      .from(projectNodes)
-      .where(and(eq(projectNodes.projectId, projectId), isNull(projectNodes.deletedAt)))
-      .orderBy(asc(projectNodes.seq), asc(projectNodes.id));
   }
 
   /** 任务数按状态分组（清单：任务数与状态分布）。 */

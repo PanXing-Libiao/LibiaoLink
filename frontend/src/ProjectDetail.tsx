@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { keepLiveOrder } from "./liveSync";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { AppHeader } from "./components/AppHeader";
-import { ChangeRecordsModal } from "./components/ChangeRecordsModal";
 import { ColumnPicker } from "./components/ColumnPicker";
 import { DailySubMenu } from "./components/DailySubMenu";
 import { ExportOverviewButton } from "./components/ExportOverviewButton";
@@ -962,14 +961,6 @@ export default function ProjectDetail({ me, project, view, dailySub, dailyDate, 
 
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const [tableOverflow, setTableOverflow] = useState(false);
-  /** 项目级变更记录弹窗：null = 从工具区打开；taskId = 行内气泡「查看全部」定位到该任务。 */
-  const [changeRecordsOpen, setChangeRecordsOpen] = useState(false);
-  const [changeRecordsTaskId, setChangeRecordsTaskId] = useState<string | null>(null);
-  const openChangeRecords = (taskId: string | null = null): void => {
-    setChangeRecordsTaskId(taskId);
-    setChangeRecordsOpen(true);
-  };
-
   const [visibleColumns, setVisibleColumns] = useState<VisibleColumns>(() => ({ ...DEFAULT_VISIBLE_COLUMNS }));
   // 列显隐偏好异步到达：只在首次拿到时套用（之后以用户自己的勾选为准，不被回写覆盖）；保存失败的提示条见 toolError
   const appliedColumnPrefsRef = useRef(false);
@@ -1163,20 +1154,6 @@ export default function ProjectDetail({ me, project, view, dailySub, dailyDate, 
                 {/* 导出 PDF（业务口径 2026-10-09 · §6.16）：数据 = 页面已取到的 project / tasks / summary，
                     生成 A4 横版报告后在系统打印窗口里另存为 PDF；
                     任务数据加载中 / 加载失败时置灰 —— 导出的报告必须和页面数据一致，宁可不给点。 */}
-                <button
-                  type="button"
-                  data-project-change-records-open="true"
-                  disabled={project === null}
-                  onClick={() => { openChangeRecords(null); }}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-3.5 w-3.5">
-                    <path d="M5 5h7M5 10h5M5 15h7" />
-                    <path d="M15 8.5h4v10h-4z" />
-                    <path d="M16.5 11h1M16.5 14h1" />
-                  </svg>
-                  {t("project.changeRecords.open")}
-                </button>
                 {projectEditable ? (
                   <ExportOverviewButton input={{ project, tasks, summary }} stages={exportStageOptions} disabled={dataLoading || dataError !== null} busy={exportingOverview} onExport={(options) => { void exportOverview(options); }} />
                 ) : null}
@@ -1365,16 +1342,6 @@ export default function ProjectDetail({ me, project, view, dailySub, dailyDate, 
       ) : null}
 
       {/* 导出等待浮层（§6.16 ⑳ / ㉑）：真在等（翻译 / 生成超过 250ms）才显示小车动画 + 预计秒数；打印窗口唤起前收起。 */}
-      {changeRecordsOpen && project !== null ? (
-        <ChangeRecordsModal
-          projectId={project.id}
-          tasks={tasks}
-          members={members}
-          initialTaskId={changeRecordsTaskId}
-          onClose={() => { setChangeRecordsOpen(false); }}
-        />
-      ) : null}
-
       {exportOverlayVisible ? <ExportProgressOverlay progress={exportTranslateProgress} /> : null}
 
       {/* 任务行内删除的第二下确认（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：与「删除项目 / 模板 / 日报」同款

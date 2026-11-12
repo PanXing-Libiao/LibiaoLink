@@ -705,6 +705,21 @@ export async function fetchDownloadUrl(fileId: string, versionId?: string): Prom
   return { url: signed.url, fileName: signed.fileName };
 }
 
+/** 项目文件批量 ZIP 单项（契约 FileArchiveItem）。entryName 只影响 ZIP 内显示名。 */
+export type FileArchiveItem = { fileId: string; versionId: string; entryName?: string };
+
+/** 服务端生成临时 ZIP 并返回单次签名下载地址；前端不读取整包字节。 */
+export async function createFileArchive(
+  projectId: string,
+  items: readonly FileArchiveItem[],
+): Promise<{ batchId: string; url: string; fileName: string; itemCount: number; sizeBytes: number; expiresAt: string }> {
+  return apiSend(
+    "/api/v1/projects/" + encodeURIComponent(projectId) + "/files/download-archive",
+    "POST",
+    { items },
+  );
+}
+
 /** 版本链摘要（Push 255 · 变更记录「变更前 / 变更后」行）：GET /files/{id}/versions —— 只追加的版本链按 seq 反查上一版。 */
 export type FileVersionBrief = { id: string; seq: number; sizeBytes: number; uploadedAt: string };
 
@@ -944,6 +959,7 @@ export type FileLibraryItem = {
   docType: string | null;
   name: string;
   status: string;
+  currentVersionId: string | null;
   version: number;
   createdBy: string;
   /** 上传人姓名（服务端按 users.display_name 返回；停用 / 离职历史账号仍可取值，用户行缺失时为空）。 */

@@ -206,6 +206,8 @@ import {
   MaterialReissueResultSchema,
   ChangeRequestListQuerySchema,
   ChangeRequestListResponseSchema,
+  FileArchiveRequestSchema,
+  FileArchiveResponseSchema,
   FileDetailSchema,
   FileDownloadUrlResponseSchema,
   FileFinalizeBodySchema,
@@ -265,7 +267,7 @@ const calendarDayParams = z.object({ date: DateOnlySchema });
  * /api/v1 契约唯一入口：由各模块 Zod schema 注册而来。
  * 生成物（generated/openapi.json 与 generated/api-types.d.ts）由 npm run generate 产出，禁止手改（CONTRIBUTING §14）。
  */
-export function buildOpenApiDocument() {
+export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generateDocument"]> {
   const registry = new OpenAPIRegistry();
   registry.register("ResourceInvalidationPayload", ResourceInvalidationPayloadSchema);
 
@@ -418,7 +420,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/projects/{id}/archive",
     tags: ["projects"],
-    summary: "项目归档（门禁：验收阶段完成 + 成果文件齐全性检查；缺项 422 返回清单，confirm=true 确认越过后归档并生成清单）",
+    summary: "项目归档（门禁：项目内未删除任务全部完成；有未完成任务 409 ARCHIVE_NOT_READY 且 confirm 不可越过；通过后置位并生成引用式清单）",
     request: { params: idParams, body: json(ProjectArchiveBodySchema) },
     responses: {
       200: { description: "归档记录与清单（项目进入只读保护：写路径 409 PROJECT_ARCHIVED）", ...json(ProjectArchiveViewSchema) },
@@ -1187,6 +1189,23 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "文件列表", ...json(FileListResponseSchema) },
       404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/files/download-archive",
+    tags: ["files"],
+    summary: "项目文件批量打包 ZIP（服务端生成临时归档并返回单次短时签名地址）",
+    description:
+      "单批最多 50 个版本、单文件不超过 200 MB、解压后总量不超过 2 GB；任一文件或版本校验失败、对象读取失败、超限或写包失败时整批失败（全有或全无）。" +
+      "同一 (fileId, versionId) 仅入包一次，按首次提交顺序排列；要求 file.download 权限并逐文件写 download 审计。",
+    request: { params: idParams, body: json(FileArchiveRequestSchema) },
+    responses: {
+      200: { description: "ZIP 已生成，返回单次短时签名下载地址", ...json(FileArchiveResponseSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      429: errorResponse("同一账号已有打包任务在进行（RATE_LIMITED）"),
     },
   });
 

@@ -712,7 +712,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** 项目归档（门禁：验收阶段完成 + 成果文件齐全性检查；缺项 422 返回清单，confirm=true 确认越过后归档并生成清单） */
+        /** 项目归档（门禁：项目内未删除任务全部完成；有未完成任务 409 ARCHIVE_NOT_READY 且 confirm 不可越过；通过后置位并生成引用式清单） */
         post: {
             parameters: {
                 query?: never;
@@ -4143,6 +4143,79 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/files/download-archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 项目文件批量打包 ZIP（服务端生成临时归档并返回单次短时签名地址）
+         * @description 单批最多 50 个版本、单文件不超过 200 MB、解压后总量不超过 2 GB；任一文件或版本校验失败、对象读取失败、超限或写包失败时整批失败（全有或全无）。同一 (fileId, versionId) 仅入包一次，按首次提交顺序排列；要求 file.download 权限并逐文件写 download 审计。
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["FileArchiveRequest"];
+                };
+            };
+            responses: {
+                /** @description ZIP 已生成，返回单次短时签名下载地址 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FileArchiveResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 同一账号已有打包任务在进行（RATE_LIMITED） */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -11180,6 +11253,31 @@ export interface components {
             recycledBy: components["schemas"]["Uuid"] & (string | null);
             recycledFromStatus: components["schemas"]["FileStatus"] & (string | null);
         };
+        /** @description 批量 ZIP 的文件版本选择项 */
+        FileArchiveItem: {
+            fileId: components["schemas"]["Uuid"];
+            versionId: components["schemas"]["Uuid"];
+            /** @description ZIP 内显示名（可选）；服务端清洗路径字符并强制使用该版本对象键的真实扩展名 */
+            entryName?: string;
+        };
+        /** @description 项目文件批量 ZIP 请求（单批最多 50 个版本） */
+        FileArchiveRequest: {
+            /** @description 待打包的版本列表；按提交顺序入包，相同 (fileId, versionId) 只保留首次出现项 */
+            items: components["schemas"]["FileArchiveItem"][];
+        };
+        /** @description 项目文件批量 ZIP 生成结果 */
+        FileArchiveResponse: {
+            batchId: components["schemas"]["Uuid"];
+            /** @description ZIP 下载文件名（含项目编号 / 名称与 .zip 扩展名） */
+            fileName: string;
+            /** @description 短时签名 ZIP 下载地址；前端只触发一次下载，不读取整包字节 */
+            url: string;
+            /** @description 生成的 ZIP 文件大小（压缩后） */
+            sizeBytes: number;
+            expiresAt: components["schemas"]["DateTime"];
+            /** @description 实际入包的唯一版本数 */
+            itemCount: number;
+        };
         /** @description 文件详情（含当前版本；版本链走 /files/{id}/versions） */
         FileDetail: components["schemas"]["File"] & {
             currentVersion: components["schemas"]["FileVersion"];
@@ -12285,19 +12383,19 @@ export interface components {
             deletedAt: components["schemas"]["DateTime"] & (string | null);
             deletedBy: components["schemas"]["Uuid"] & (string | null);
         };
-        /** @description 归档请求：version 必带；缺项越过分两步（先 422 拿清单，再 confirm=true 重试） */
+        /** @description 归档请求：version 必带；confirm 仅兼容旧客户端，当前忽略 */
         ProjectArchiveBody: {
             version: components["schemas"]["Version"] & unknown;
             /**
-             * @description 缺项确认：false（缺省）= 有缺项即 422；true = 确认带缺项归档（缺项入清单 acknowledgedMissing）
+             * @description 旧契约兼容字段：当前忽略；归档只校验任务是否全部完成，true 不能绕过 ARCHIVE_NOT_READY
              * @default false
              */
             confirm: boolean;
         };
-        /** @description 归档缺项条目（确认越过时原样入清单 acknowledgedMissing） */
+        /** @description 归档缺项条目（历史兼容；2026-11-12 起新归档 acknowledgedMissing 恒为空） */
         ProjectArchiveMissing: {
             /**
-             * @description 缺项类型：task_not_done 未完成任务 / file_not_final 未定档文件 / doc_missing 必交成果缺件（A4-20 口径）
+             * @description 缺项类型：task_not_done 未完成任务；file_not_final / doc_missing 仅用于读取历史归档记录，新归档不再产生
              * @enum {string}
              */
             code: "task_not_done" | "file_not_final" | "doc_missing";
@@ -12311,7 +12409,7 @@ export interface components {
         ProjectArchiveSnapshot: {
             stage: {
                 stageKey: components["schemas"]["StageKey"];
-                /** @description 阶段状态（归档时点；验收阶段应为 done） */
+                /** @description 阶段状态（仅归档时点快照；不再要求已完成） */
                 status: string;
                 advancedAt: components["schemas"]["DateTime"] & (string | null);
             };
@@ -12376,7 +12474,7 @@ export interface components {
             /** @description 归档操作人姓名（users.display_name；取不到 = null） */
             archivedByName: string | null;
             snapshot: components["schemas"]["ProjectArchiveSnapshot"];
-            /** @description 确认越过的缺项清单（无缺项 = 空数组） */
+            /** @description 旧流程缺项留痕（历史兼容；2026-11-12 起新归档恒为空数组） */
             acknowledgedMissing: components["schemas"]["ProjectArchiveMissing"][];
         };
         /** @description 创建项目：项目序号 seqNo 不接受传入，由服务端分配并随响应返回 */

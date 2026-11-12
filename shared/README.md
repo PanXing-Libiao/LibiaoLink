@@ -1,3 +1,5 @@
+> **2026-11-12 项目归档行为修订（服务端 wmj 线）**：项目归档门禁改为「项目内未删除任务全部 done 即可」，不再要求验收阶段推进、文件定档或必交成果齐全。有未完成任务返回 409 `ARCHIVE_NOT_READY`，`confirm=true` 不可越过；`confirm` 仅保留为旧客户端兼容字段，新归档 `acknowledgedMissing` 恒为空数组。422 `ARCHIVE_GATE_NOT_PASSED` 与 `file_not_final` / `doc_missing` 枚举仅用于读取历史归档记录。
+
 > **2026-11-09 物料变更补发字段扩展**：`MaterialReissueBodySchema` 增加可选 `emailTitle`（1–500 字）与 `customerName`（≤200 字，可空）覆盖字段；`MaterialReissueSnapshotSchema` 固化实际 `emailTitle`（旧记录可缺省）和 `customerName: string | null`。服务端 / DOCX 使用实际快照值，客户名称不回写项目主数据。生成物已重出，`npm run check` 零漂移。
 
 > **2026-11-09 物料变更补发契约（模板版）**：`files.ts` 新增 `ChangeType`、补发类别 / 申请部门 / 责任归属部门 / 运费 / 审批选项、`MaterialReissueBodySchema`、`CreateMaterialReissueBodySchema`、`MaterialReissueSnapshotSchema`、`MaterialReissueResultSchema`；申请部门收窄为模板三项 `project / after_sales / other`，责任归属部门保留七项。`ChangeRequest` 增加 `changeType` 与 `materialReissue`。`openapi.ts` 注册 `POST /api/v1/projects/{id}/change-requests/material-reissue`（201 返回变更记录 + DOCX 文件 + v1 版本）。生成物已重出，`npm run check` 零漂移。
@@ -226,7 +228,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 干系人 | 新增 `/stakeholders`（台账 + 批量导入 + 导出；隐私字段走字段级权限） | 端点 |
 | 工作台（A6-01 / A6-03 · M6-05 第一刀） | **已入并 HTTP 落地（Push 166）**：`GET /api/v1/workspace`（跨项目个人读面：我的任务三组 today / upcoming / overdue + 我的问题两栏 handling / raised；无项目路径参数、仅会话；`Workspace*` 五 schema；「我参与的任务」口径未定 · 本刀不含，差异登记） | 端点 |
 | 待办（C2-06） | 新增 `/todos` | 端点 |
-| 归档（C4-02 / C4-03） | **已入并 HTTP 落地（Push 167）**：`POST /projects/{id}/archive`（门禁 = 验收完成硬前置 + 缺项清单；缺项首次 422 经 `confirm=true` 确认越过、随清单留痕）+ `GET /projects/{id}/archive`（引用式清单读面）；`Project.archivedAt` / `archivedBy` + 列表 `filter[archivedYear]`（C4-07 检索）；写保护 `PROJECT_ARCHIVED`（ADR-027）；清单导出随 M7-03、搜索投影随 M7-01 | 端点 / 字段 / 错误码 |
+| 归档（C4-02 / C4-03） | **已入并 HTTP 落地（Push 167；2026-11-12 行为修订）**：`POST /projects/{id}/archive`（门禁 = 项目内未删除任务全部 done；有未完成任务 409 `ARCHIVE_NOT_READY` 不可越过；`confirm` 仅兼容旧客户端）+ `GET /projects/{id}/archive`（引用式清单读面）；文件定档 / 必交成果不再阻断；`Project.archivedAt` / `archivedBy` + 列表 `filter[archivedYear]`（C4-07 检索）；写保护 `PROJECT_ARCHIVED`（ADR-027）；清单导出随 M7-03、搜索投影随 M7-01 | 端点 / 字段 / 错误码 |
 
 ### M7 搜索 / 仪表盘 / 导出
 
