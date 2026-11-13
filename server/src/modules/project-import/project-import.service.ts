@@ -32,7 +32,6 @@ import type { UserRow } from "../identity/index.js";
 import { PermissionService, ProjectManagerEligibilityService } from "../permission/index.js";
 import { FlowService, ProjectMemberRepository, ProjectRepository } from "../project/index.js";
 import { TaskNodeRepository } from "../template/index.js";
-import type { TaskNodeRow } from "../template/index.js";
 import { TranslateService } from "../translate/index.js";
 import { convertLegacyWorkbook } from "./legacy.js";
 import type {
@@ -56,6 +55,8 @@ import type {
   ImportTaskInsert,
 } from "./project-import.repository.js";
 import { ImportAdmissionGate } from "./import-admission.gate.js";
+import { ImportNodeMatcher } from "./import-node-matcher.js";
+import type { ImportLibraryNode } from "./import-node-matcher.js";
 import { ZipArchive, parseWorkbook, parseWorkbookFile } from "./xlsx.js";
 import type { ParsedWorkbook } from "./xlsx.js";
 
@@ -70,8 +71,8 @@ import type { ParsedWorkbook } from "./xlsx.js";
  * 口径铁律：
  * 1. 照原值导入 + 提醒（日期笔误 / 三档提醒见 legacy.ts 的 seeds；不因提醒阻断）；
  * 2. 五档进度 = 0 / 0.25 / 0.5 / 0.75 / 1（进行中封顶 75%；完成日期未填 = 不算完成）；
- * 3. 任务节点：节点库已有一致标题 → 直接挂；未匹配按文件原名导入，addMissingNodes 勾选时补进节点库（仅阶段范围内；
- *    阶段外 = 临时任务 stage_key 为空，不补）；
+ * 3. 任务节点：同阶段精确 / 语义匹配复用并采用标准名称；不确定项人工确认，新节点由开关决定是否补库；
+ *    阶段外为临时任务，多任务指向同一节点时人工选择一条关联并保留其他任务；
  * 4. 账号：只对账不建号 —— 测试环境缺号需先在账号体系建号并登录一次（面板列出 isNew 账号）；正式环境用户目录完整、
  *    全部直接命中，无需任何建号动作（业务口径 2026-10-14：自动创号仅测试环境需要）。提交时账号仍不存在不阻断 ——
  *    项目经理回落导入人（提醒）、任务负责人留空（提醒）、日报作者回落导入人（提醒）；
@@ -117,7 +118,9 @@ interface NodeGroup {
   stageKey: string | null;
   title: string;
   titleEn: string | null;
+  sourceTitleEn: string | null;
   matched: boolean;
+  matchKind: "exact" | "semantic" | "new" | "uncertain" | "temporary";
   libraryId: string | null;
   inStageScope: boolean;
   taskCount: number;
@@ -151,6 +154,7 @@ interface ImportPreviewPayload {
   file: { name: string; size: number };
   parse: LegacyParse;
   accounts: ImportAccount[];
+  nodeSnapshot: { groups: NodeGroup[]; groupIndexByTask: number[]; library: ImportLibraryNode[] };
 }
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -176,6 +180,7 @@ export class ProjectImportService implements OnModuleInit {
     private readonly storage: ObjectStorage,
     private readonly translate: TranslateService,
     private readonly admission: ImportAdmissionGate,
+    private readonly nodeMatcher: ImportNodeMatcher,
   ) {}
 
   /** 启动清掉上次进程崩溃遗留的导入临时目录（按前缀 + mtime 保龄，不碰活跃请求）。 */
@@ -221,7 +226,45 @@ export class ProjectImportService implements OnModuleInit {
     }
     const extraSeeds: LegacyIssueSeed[] = [];
     const resolution = await this.resolveAccounts(collectPeople(parse));
-    const { groups } = await this.buildNodeGroups(parse.tasks);
+    const { groups, groupIndexByTask, library } = await this.buildNodeGroups(parse.tasks);
+    const candidates = groups.flatMap((group, index) =>
+      group.matchKind === "uncertain" && group.stageKey !== null
+        ? [{ index, stageKey: group.stageKey, title: group.title, titleEn: group.titleEn }]
+        : [],
+    );
+    const matches = await this.nodeMatcher.match(candidates, library);
+    for (const [index, match] of matches) {
+      const group = groups[index]!;
+      group.matchKind = match.kind;
+      group.matched = match.kind === "semantic";
+      group.libraryId = match.nodeId;
+      if (match.nodeId !== null) group.titleEn = library.find((node) => node.id === match.nodeId)?.titleEn ?? group.titleEn;
+    }
+    const missingEnglish: Array<{ index: number; title: string }> = [];
+    groups.forEach((group, index) => {
+      group.sourceTitleEn ??= group.taskIndexes.map((taskIndex) => parse.tasks[taskIndex]!.titleEn).find((value) => value !== null && value.trim() !== "") ?? null;
+      if (group.sourceTitleEn !== null) return;
+      const exact = group.matchKind === "exact" ? library.find((node) => node.id === group.libraryId) : undefined;
+      if (exact?.titleEn) group.sourceTitleEn = exact.titleEn;
+      else if (/^[\x20-\x7e]+$/.test(group.title)) group.sourceTitleEn = group.title;
+      else missingEnglish.push({ index, title: group.title });
+    });
+    groups.forEach((group, index) => {
+      const selected = library.find((node) => node.id === group.libraryId);
+      if (selected && !selected.titleEn && nodeKey(selected.title) !== nodeKey(group.title)) {
+        if (!/^[\x20-\x7e]+$/.test(selected.title)) missingEnglish.push({ index: groups.length + index, title: selected.title });
+      }
+    });
+    const uniqueEnglish = [...new Map(missingEnglish.map((item) => [nodeKey(item.title), item])).values()];
+    const generatedEnglish = await this.nodeMatcher.translateNames(uniqueEnglish);
+    const englishByTitle = new Map(uniqueEnglish.map((item) => [nodeKey(item.title), generatedEnglish.get(item.index)]));
+    groups.forEach((group) => {
+      group.sourceTitleEn ??= englishByTitle.get(nodeKey(group.title)) ?? null;
+      const selected = library.find((node) => node.id === group.libraryId);
+      group.titleEn = selected === undefined ? group.sourceTitleEn : selected.titleEn ?? englishByTitle.get(nodeKey(selected.title)) ??
+        (/^[\x20-\x7e]+$/.test(selected.title) ? selected.title : nodeKey(selected.title) === nodeKey(group.title) ? group.sourceTitleEn : null);
+      for (const taskIndex of group.taskIndexes) parse.tasks[taskIndex]!.titleEn ??= group.sourceTitleEn;
+    });
     const previewId = randomUUID();
     const objectKey = "imports/" + previewId + "/source." + extensionOf(fileName);
     await this.putSource(objectKey, input, sizeBytes);
@@ -231,6 +274,7 @@ export class ProjectImportService implements OnModuleInit {
       file: { name: fileName, size: sizeBytes },
       parse,
       accounts: resolution.accounts,
+      nodeSnapshot: { groups, groupIndexByTask, library },
     };
     const row = await this.previews.insertPreview(
       {
@@ -253,7 +297,7 @@ export class ProjectImportService implements OnModuleInit {
       imagesManual: parse.manualFiles.length,
       stakeholders: parse.stakeholders.length,
       accountsNew: resolution.accounts.filter((account) => account.isNew).length,
-      nodesNew: groups.filter((group) => !group.matched && group.inStageScope).length,
+      nodesNew: groups.filter((group) => group.matchKind === "new").length,
     };
     if (parse.stakeholderSheetName === null) {
       extraSeeds.push(stakeholderSheetMissingSeed());
@@ -285,7 +329,8 @@ export class ProjectImportService implements OnModuleInit {
       counts,
       accounts: resolution.accounts,
       imagesManual: parse.manualFiles.map((file, index) => manualImageOf(file, index, input.locale)),
-      nodes: groups.map(contractNodeOf),
+      nodes: groups.map((group, index) => contractNodeOf(group, index, parse.tasks)),
+      nodeLibrary: library,
       issues,
     };
   }
@@ -388,9 +433,32 @@ export class ProjectImportService implements OnModuleInit {
     }
     const projectType = body.projectType.trim() === "" ? (placement.projectType ?? "未分类") : body.projectType.trim();
 
-    // 账号 / 节点对账（与预览同一套函数；30 分钟窗口内账号可能刚好建好，这一步按最新库内状态挂人）。
+    // 节点采用预览时的匹配快照，人工选择与冲突处理在上传图片和写入前校验。
     const resolution = await this.resolveAccounts(collectPeople(parse));
-    const { groups, groupIndexByTask } = await this.buildNodeGroups(parse.tasks);
+    if (payload.nodeSnapshot === undefined) throw new AppError("VALIDATION_FAILED", "导入预览已更新，请重新选择文件解析");
+    const { groups, groupIndexByTask } = payload.nodeSnapshot;
+    const nodePlan = resolveNodePlan(payload.nodeSnapshot, body, await this.nodes.list(null));
+    // 人工改选的标准节点可能没有英文；按最终名称生成，避免沿用不同源任务的译文。
+    const selectedEnglish = new Map<string, string>();
+    const missingSelected = new Map<string, { index: number; title: string }>();
+    nodePlan.groups.forEach((plan, index) => {
+      const node = plan.node;
+      if (node === null || node.titleEn || selectedEnglish.has(node.id) || missingSelected.has(node.id)) return;
+      if (node.id === groups[index]!.libraryId && groups[index]!.titleEn) {
+        selectedEnglish.set(node.id, groups[index]!.titleEn!);
+      } else if (nodeKey(node.title) === nodeKey(groups[index]!.title) && groups[index]!.sourceTitleEn) {
+        selectedEnglish.set(node.id, groups[index]!.sourceTitleEn!);
+      } else if (/^[\x20-\x7e]+$/.test(node.title)) {
+        selectedEnglish.set(node.id, node.title);
+      } else {
+        missingSelected.set(node.id, { index, title: node.title });
+      }
+    });
+    const translatedSelected = await this.nodeMatcher.translateNames([...missingSelected.values()]);
+    for (const [id, item] of missingSelected) {
+      const english = translatedSelected.get(item.index);
+      if (english !== undefined) selectedEnglish.set(id, english);
+    }
     const eligibleManagerIds = await this.managerEligibility.eligibleUserIds();
     const managerIds: string[] = [];
     const ineligibleManagerNames: string[] = [];
@@ -538,7 +606,7 @@ export class ProjectImportService implements OnModuleInit {
         await this.members.upsert(projectRow.id, actorId, "project_member", at, tx);
       }
 
-      // 任务节点补库（业务口径：无对应任务节点按文件原名导入 + 问用户是否补进节点库；阶段外 = 临时任务不补）。
+      // 经用户确认的新节点按开关补库；阶段外任务不补。
       const nodeIdByGroup = new Map<number, string | null>();
       let nodesAdded = 0;
       if (body.addMissingNodes) {
@@ -546,13 +614,13 @@ export class ProjectImportService implements OnModuleInit {
         for (let index = 0; index < groups.length; index += 1) {
           throwIfCancelled(signal);
           const group = groups[index]!;
-          if (group.matched || !group.inStageScope || group.stageKey === null) continue;
+          if (nodePlan.groups[index]!.action !== "new" || group.stageKey === null) continue;
           let seq = seqCursor.get(group.stageKey);
           if (seq === undefined) seq = await this.nodes.maxSeq(group.stageKey, tx);
           seq += 10;
           seqCursor.set(group.stageKey, seq);
           const nodeRow = await this.nodes.insert(
-            { stageKey: group.stageKey, seq, title: clipText(group.title, 200), titleEn: clipNullable(group.titleEn, 200) },
+            { stageKey: group.stageKey, seq, title: clipText(group.title, 200), titleEn: clipNullable(group.sourceTitleEn, 200) },
             tx,
           );
           nodesAdded += 1;
@@ -579,6 +647,7 @@ export class ProjectImportService implements OnModuleInit {
       const taskRows: ImportTaskInsert[] = parse.tasks.map((task, taskIndex) => {
         const groupIndex = groupIndexByTask[taskIndex]!;
         const group = groups[groupIndex]!;
+        const nodeChoice = nodePlan.groups[groupIndex]!;
         const ownerIds: string[] = [];
         for (const owner of task.ownerNames) {
           const base = stripParen(owner);
@@ -594,9 +663,11 @@ export class ProjectImportService implements OnModuleInit {
         sortCursor.set(groupKey, sortIndex + 1);
         return {
           stageKey: task.stageKey,
-          taskNodeId: group.matched ? group.libraryId : (nodeIdByGroup.get(groupIndex) ?? null),
-          title: clipText(task.title, 200),
-          titleEn: clipNullable(task.titleEn, 200),
+          taskNodeId: nodeChoice.key !== null && nodePlan.linkedTaskByKey.get(nodeChoice.key) === taskIndex
+            ? (nodeChoice.node?.id ?? nodeIdByGroup.get(groupIndex) ?? null) : null,
+          title: clipText(nodeChoice.node?.title ?? task.title, 200),
+          titleEn: clipNullable(nodeChoice.node === null ? task.titleEn : nodeChoice.node.titleEn ?? selectedEnglish.get(nodeChoice.node.id) ??
+            (nodeKey(nodeChoice.node.title) === nodeKey(task.title) ? task.titleEn : null), 200),
           ownerIds,
           managerIds,
           status: task.baseStatus,
@@ -933,35 +1004,34 @@ export class ProjectImportService implements OnModuleInit {
     return { accounts, byName, unknownNames };
   }
 
-  /** 节点分组：按 阶段 + 规范化标题 归并；matched = 节点库已有同名（任意阶段），inStageScope = 任务落在九阶段内。 */
-  private async buildNodeGroups(tasks: readonly LegacyTask[]): Promise<{ groups: NodeGroup[]; groupIndexByTask: number[] }> {
-    const library = await this.nodes.list(null);
-    const byStageTitle = new Map<string, TaskNodeRow>();
-    const byTitle = new Map<string, TaskNodeRow>();
-    for (const row of library) {
-      const titleKey = nodeKey(row.title);
-      byStageTitle.set(row.stageKey + "\\n" + titleKey, row);
-      if (!byTitle.has(titleKey)) byTitle.set(titleKey, row);
-    }
+  /** 按阶段和规范化标题归组；跨阶段节点不可自动关联。 */
+  private async buildNodeGroups(tasks: readonly LegacyTask[]): Promise<{
+    groups: NodeGroup[];
+    groupIndexByTask: number[];
+    library: ImportLibraryNode[];
+  }> {
+    const library = (await this.nodes.list(null)).map(({ id, stageKey, title, titleEn, version }) =>
+      ({ id, stageKey, title, titleEn, version }));
+    const byStageTitle = new Map<string, ImportLibraryNode>();
+    for (const node of library) byStageTitle.set(JSON.stringify([node.stageKey, nodeKey(node.title)]), node);
     const index = new Map<string, number>();
     const groups: NodeGroup[] = [];
     const groupIndexByTask: number[] = [];
     tasks.forEach((task, taskIndex) => {
-      const key = (task.stageKey ?? "") + "\\n" + nodeKey(task.title);
+      const key = JSON.stringify([task.stageKey, nodeKey(task.title)]);
       let groupIndex = index.get(key);
       if (groupIndex === undefined) {
-        const titleKey = nodeKey(task.title);
-        const sameStage = task.stageKey === null ? null : (byStageTitle.get(task.stageKey + "\\n" + titleKey) ?? null);
-        const hit = sameStage ?? byTitle.get(titleKey) ?? null;
-        const libraryRow = hit;
+        const hit = task.stageKey === null ? null : (byStageTitle.get(key) ?? null);
         groupIndex = groups.length;
         index.set(key, groupIndex);
         groups.push({
           stageKey: task.stageKey,
           title: task.title,
-          titleEn: (libraryRow === null ? null : libraryRow.titleEn) ?? task.titleEn ?? null,
+          titleEn: hit?.titleEn ?? task.titleEn,
+          sourceTitleEn: task.titleEn,
           matched: hit !== null,
-          libraryId: hit === null ? null : hit.id,
+          matchKind: task.stageKey === null ? "temporary" : hit === null ? "uncertain" : "exact",
+          libraryId: hit?.id ?? null,
           inStageScope: task.stageKey !== null,
           taskCount: 0,
           taskIndexes: [],
@@ -972,7 +1042,7 @@ export class ProjectImportService implements OnModuleInit {
       group.taskIndexes.push(taskIndex);
       groupIndexByTask.push(groupIndex);
     });
-    return { groups, groupIndexByTask };
+    return { groups, groupIndexByTask, library };
   }
 
   /**
@@ -1125,14 +1195,109 @@ function buildManualTargets(
   });
 }
 
-function contractNodeOf(group: NodeGroup): ImportTaskNode {
+function contractNodeOf(group: NodeGroup, groupIndex: number, tasks: readonly LegacyTask[]): ImportTaskNode {
   return {
     name: group.title,
     nameEn: group.titleEn,
+    sourceNameEn: group.sourceTitleEn,
     matched: group.matched,
+    groupIndex,
+    stageKey: group.stageKey,
+    matchKind: group.matchKind,
+    libraryId: group.libraryId,
+    tasks: group.taskIndexes.map((index) => ({ index, row: tasks[index]!.row })),
     inStageScope: group.inStageScope,
     taskCount: group.taskCount,
   };
+}
+
+type NodePlanGroup = {
+  action: "existing" | "new" | "standalone";
+  node: ImportLibraryNode | null;
+  key: string | null;
+};
+
+/** 核对人工选择与预览快照，并要求逐个确认会违反同项目节点唯一约束的任务。 */
+function resolveNodePlan(
+  snapshot: ImportPreviewPayload["nodeSnapshot"],
+  body: ProjectImportCommitBody,
+  currentLibrary: readonly ImportLibraryNode[],
+): { groups: NodePlanGroup[]; linkedTaskByKey: Map<string, number> } {
+  const choices = new Map<number, NonNullable<ProjectImportCommitBody["nodeDecisions"]>[number]>();
+  for (const choice of body.nodeDecisions ?? []) {
+    if (choices.has(choice.groupIndex) || snapshot.groups[choice.groupIndex] === undefined) {
+      throw new AppError("VALIDATION_FAILED", "节点处理选择无效，请重新确认导入预览");
+    }
+    choices.set(choice.groupIndex, choice);
+  }
+  const snapshotNodes = new Map(snapshot.library.map((node) => [node.id, node]));
+  const currentNodes = new Map(currentLibrary.map((node) => [node.id, node]));
+  const tasksByKey = new Map<string, number[]>();
+  const groups = snapshot.groups.map((group, groupIndex): NodePlanGroup => {
+    const choice = choices.get(groupIndex);
+    if (group.stageKey === null) {
+      if (choice !== undefined && choice.action !== "standalone") {
+        throw new AppError("VALIDATION_FAILED", "阶段外任务不能关联或新增任务节点");
+      }
+      return { action: "standalone", node: null, key: null };
+    }
+    const action = choice?.action ?? (
+      group.matchKind === "exact" || group.matchKind === "semantic" ? "existing" :
+      group.matchKind === "new" ? "new" : null
+    );
+    if (action === null) throw new AppError("VALIDATION_FAILED", "请先处理待人工确认的任务节点");
+    if (choice !== undefined && action !== "existing" && choice.nodeId !== null) {
+      throw new AppError("VALIDATION_FAILED", "节点处理选择无效，请重新确认");
+    }
+    let node: ImportLibraryNode | null = null;
+    let key: string | null = null;
+    if (action === "existing") {
+      const nodeId = choice === undefined ? group.libraryId : choice.nodeId;
+      const expected = nodeId === null ? undefined : snapshotNodes.get(nodeId);
+      const current = nodeId === null ? undefined : currentNodes.get(nodeId);
+      if (expected === undefined || expected.stageKey !== group.stageKey) {
+        throw new AppError("VALIDATION_FAILED", "请选择预览中的同阶段任务节点");
+      }
+      if (current === undefined || current.version !== expected.version || current.stageKey !== expected.stageKey) {
+        throw new AppError("VERSION_CONFLICT", "任务节点库已变化，请重新选择文件解析");
+      }
+      node = current;
+      key = "existing:" + current.id;
+    } else if (action === "new" && body.addMissingNodes) {
+      if (currentLibrary.some((item) => item.stageKey === group.stageKey && nodeKey(item.title) === nodeKey(group.title))) {
+        throw new AppError("VERSION_CONFLICT", "节点库已有同名节点，请重新选择文件解析");
+      }
+      key = "new:" + String(groupIndex);
+    }
+    if (key !== null) {
+      const indexes = tasksByKey.get(key) ?? [];
+      for (const taskIndex of group.taskIndexes) indexes.push(taskIndex);
+      tasksByKey.set(key, indexes);
+    }
+    return { action, node, key };
+  });
+
+  const conflictChoices = new Map<string, number>();
+  for (const choice of body.conflictChoices ?? []) {
+    if (conflictChoices.has(choice.key)) throw new AppError("VALIDATION_FAILED", "节点冲突选择重复");
+    conflictChoices.set(choice.key, choice.taskIndex);
+  }
+  const linkedTaskByKey = new Map<string, number>();
+  for (const [key, indexes] of tasksByKey) {
+    if (indexes.length === 1) {
+      linkedTaskByKey.set(key, indexes[0]!);
+    } else {
+      const selected = conflictChoices.get(key);
+      if (selected === undefined || !indexes.includes(selected)) {
+        throw new AppError("VALIDATION_FAILED", "多条任务匹配同一节点，请先选择要关联节点的任务");
+      }
+      linkedTaskByKey.set(key, selected);
+    }
+  }
+  for (const key of conflictChoices.keys()) {
+    if ((tasksByKey.get(key)?.length ?? 0) <= 1) throw new AppError("VALIDATION_FAILED", "节点冲突选择已变化，请重新确认");
+  }
+  return { groups, linkedTaskByKey };
 }
 
 /** 标题归一化（逐字一致口径）：折叠空白 + 小写（英文标题大小写不敏感）。 */

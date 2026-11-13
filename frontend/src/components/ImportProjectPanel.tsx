@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ApiError } from "../api";
 import { DICT_ACCENT_PALETTE, accentOfItem, dictLabel, type Dicts } from "../dicts";
 import type { DictTools } from "../dictTools";
-import { fieldText, projectTypeText, useLocale, useT } from "../i18n";
+import { fieldText, projectTypeText, stageText, useLocale, useT } from "../i18n";
+import { stageNameOf } from "../taskApi";
 import {
   attachManualChangeFile,
   commitProjectImport,
@@ -11,6 +12,7 @@ import {
   type ImportIssue,
   type ImportManualImage,
   type ImportManualTarget,
+  type ImportTaskNode,
   type ProjectImportPreview,
   type ProjectImportResult,
 } from "../importApi";
@@ -26,7 +28,7 @@ import { useFocusTrap } from "./useFocusTrap";
  * 选文件 → ① 解析（不写库）→ ② 校验预览（项目落位 / 条数统计 / 提醒清单 / 需手动导入文件 / 账号 / 未匹配节点）
  * → ③ 确认导入 → ④ 完成（提醒复述）。面板挂在项目空间内（fixed 全屏遮罩），不动路由、不刷新页面。
  * 口径（业务已回执）：解析不写库；完成日期未填不算完成；进度五档（进行中封顶 75%）；日期笔误照原值 + 提醒；
- * 任务节点按文件原名（可勾选补进节点库）；微盘图片出清单人工上传；账号初始密码 123456。
+ * 节点按同阶段精确 / 语义匹配，未命中可确认补库；微盘图片出清单人工上传。
  * 写入中可取消（Push 321）：「取消写入」/ 刷新 / 关页 = 断开请求 → 服务端单事务回滚（零残留），票据保留可再次确认。
  * 干系人（Push 324）：「干系人」表随导入落台账。
  * 手动文件就地补传（Push 396）：预览清单每行可选本地文件，确认导入后按提交结果的任务 / 变更目标一并直传；失败可重试。
@@ -53,6 +55,8 @@ type ManualUploadOutcome = {
 
 /** 一项待上传的补充附件（id = 预览清单 id；fileId 给出 = 只重挂变更）。 */
 type ManualUploadItem = { id: string; name: string; file: File | null; fileId: string | null };
+
+type NodeCategory = "ai" | "review" | "new" | "manual";
 
 type Phase =
   | { kind: "parsing" }
@@ -283,8 +287,14 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   const [region, setRegion] = useState("");
   /** 项目类型：解析按源表关键字给默认（如 AIRROB → 飞箱）；空串 = 未指定（可留空，导入后也能改）。 */
   const [projectType, setProjectType] = useState("");
-  /** 节点补库开关（业务口径：无对应任务节点按文件原名导入，同时问用户是否补进「任务节点」）。 */
+  /** 用户确认的新节点是否补进公共节点库。 */
   const [addMissingNodes, setAddMissingNodes] = useState(true);
+  const [nodeChoices, setNodeChoices] = useState<Record<number, string>>({});
+  const [selectedNodeCategory, setSelectedNodeCategory] = useState<NodeCategory | null>(null);
+  const nodeTabId = useId();
+  const [nodePickerIndex, setNodePickerIndex] = useState<number | null>(null);
+  const [nodeQuery, setNodeQuery] = useState("");
+  const [conflictChoices, setConflictChoices] = useState<Record<string, number>>({});
   /** 「需手动导入」清单就地选中的文件（id → File；确认导入后一并直传并挂任务 / 变更）。 */
   const [manualSelections, setManualSelections] = useState<Record<string, File>>({});
   /** 地区小窗开着时按 Esc 只关小窗（再按一次才关面板，与项目弹窗同口径）。 */
@@ -315,6 +325,11 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
       setRegion("");
       setProjectType("");
       setAddMissingNodes(true);
+      setNodeChoices({});
+      setSelectedNodeCategory(null);
+      setNodePickerIndex(null);
+      setNodeQuery("");
+      setConflictChoices({});
       setManualSelections({});
       setCommitCancelled(false);
     }
@@ -350,13 +365,18 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
       if (event.key !== "Escape" || regionPopoverOpen || busy) {
         return;
       }
+      if (nodePickerIndex !== null) {
+        setNodePickerIndex(null);
+        setNodeQuery("");
+        return;
+      }
       onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [busy, onClose, regionPopoverOpen]);
+  }, [busy, onClose, regionPopoverOpen, nodePickerIndex]);
 
   // 面板打开期间锁背景滚动（与项目弹窗同款：经典滚动条占位补回，锁滚动不横向跳动）。
   useEffect(() => {
@@ -437,7 +457,18 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
       .map((image) => ({ id: image.id, name: manualSelections[image.id]!.name, file: manualSelections[image.id]!, fileId: null }));
     setPhase({ kind: "committing", preview });
     commitProjectImport(
-      { previewId: preview.previewId, region: region, projectType: projectType, addMissingNodes: addMissingNodes },
+      {
+        previewId: preview.previewId, region, projectType, addMissingNodes,
+        nodeDecisions: preview.nodes.filter((node) => node.inStageScope).map((node) => {
+          const choice = nodeChoice(node);
+          return {
+            groupIndex: node.groupIndex,
+            action: choice.startsWith("existing:") ? "existing" as const : choice === "new" ? "new" as const : "standalone" as const,
+            nodeId: choice.startsWith("existing:") ? choice.slice("existing:".length) : null,
+          };
+        }),
+        conflictChoices: conflicts.map(([key]) => ({ key, taskIndex: conflictChoices[key]! })),
+      },
       controller.signal,
     )
       .then((result) => {
@@ -485,8 +516,55 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
       : null;
   const visibleIssues = preview === null ? [] : preview.issues.filter((issue) => !(issue.code === "REGION_UNRESOLVED" && region !== ""));
   const blockingCount = visibleIssues.filter((issue) => issue.level === "error").length;
-  const unmatchedNodes = preview === null ? [] : preview.nodes.filter((node) => !node.matched);
-  const canCommit = phase.kind === "preview" && blockingCount === 0 && region !== "";
+  const nodeChoice = (node: ImportTaskNode): string => nodeChoices[node.groupIndex] ?? (
+    node.matchKind === "exact" || node.matchKind === "semantic" ? "existing:" + node.libraryId :
+    node.matchKind === "new" ? "new" :
+    node.matchKind === "temporary" ? "standalone" : ""
+  );
+  const nodeEnglish = (node: ImportTaskNode): string | null => {
+    const choice = nodeChoice(node);
+    const selected = choice.startsWith("existing:") ? preview?.nodeLibrary.find((item) => "existing:" + item.id === choice) : undefined;
+    if (selected === undefined) return node.sourceNameEn;
+    if (selected.titleEn) return selected.titleEn;
+    if (selected.id === node.libraryId) return node.nameEn;
+    return selected.title.replace(/\s+/g, "").toLowerCase() === node.name.replace(/\s+/g, "").toLowerCase() ? node.sourceNameEn : null;
+  };
+  const scopedNodes = preview?.nodes.filter((node) => node.inStageScope) ?? [];
+  const reviewNodes = scopedNodes.filter((node) => nodeChoice(node) === "");
+  const newNodes = scopedNodes.filter((node) => nodeChoice(node) === "new");
+  const resolvedNodes = scopedNodes.filter((node) => nodeChoice(node) !== "" && nodeChoice(node) !== "new");
+  const exactMatches = resolvedNodes.filter((node) => node.matchKind === "exact" && nodeChoice(node) === "existing:" + node.libraryId);
+  const aiMatchedNodes = resolvedNodes.filter((node) => node.matchKind === "semantic" && nodeChoice(node) === "existing:" + node.libraryId);
+  const otherResolvedNodes = resolvedNodes.filter((node) => node.matchKind !== "semantic" || nodeChoice(node) !== "existing:" + node.libraryId);
+  const manualNodes = otherResolvedNodes.filter((node) => node.matchKind !== "exact" || nodeChoice(node) !== "existing:" + node.libraryId);
+
+  const nodesByCategory: Record<NodeCategory, ImportTaskNode[]> = {
+    ai: aiMatchedNodes, review: reviewNodes, new: newNodes, manual: manualNodes,
+  };
+  const hasCategorizedNodes = aiMatchedNodes.length + reviewNodes.length + newNodes.length + manualNodes.length > 0;
+  const currentNodeCategory: NodeCategory = selectedNodeCategory ??
+    (aiMatchedNodes.length > 0 ? "ai" : reviewNodes.length > 0 ? "review" : newNodes.length > 0 ? "new" : manualNodes.length > 0 ? "manual" : "ai");
+  const nodeCategoryTabs: Array<{ category: NodeCategory; label: string }> = [
+    { category: "ai", label: t("import.nodes.summaryAi", { n: aiMatchedNodes.length }) },
+    { category: "review", label: t("import.nodes.summaryReview", { n: reviewNodes.length }) },
+    { category: "new", label: t("import.nodes.summaryNew", { n: newNodes.length }) },
+  ];
+  if (manualNodes.length > 0 || currentNodeCategory === "manual") {
+    nodeCategoryTabs.push({ category: "manual", label: t("import.nodes.summaryManual", { n: manualNodes.length }) });
+  }
+  const conflictBuckets = new Map<string, { name: string; tasks: Array<{ index: number; row: number; name: string }> }>();
+  for (const node of scopedNodes) {
+    const choice = nodeChoice(node);
+    const key = choice.startsWith("existing:") ? choice : choice === "new" && addMissingNodes ? "new:" + node.groupIndex : null;
+    if (key === null) continue;
+    const existingName = preview?.nodeLibrary.find((item) => "existing:" + item.id === key)?.title;
+    const bucket = conflictBuckets.get(key) ?? { name: existingName ?? node.name, tasks: [] };
+    for (const task of node.tasks) bucket.tasks.push({ ...task, name: node.name });
+    conflictBuckets.set(key, bucket);
+  }
+  const conflicts = [...conflictBuckets.entries()].filter(([, bucket]) => bucket.tasks.length > 1);
+  const canCommit = phase.kind === "preview" && blockingCount === 0 && region !== "" && reviewNodes.length === 0 &&
+    conflicts.every(([key, bucket]) => bucket.tasks.some((task) => task.index === conflictChoices[key]));
   const selectedManualCount = preview === null ? 0 : preview.imagesManual.filter((image) => manualSelections[image.id] !== undefined).length;
   const doneManualPending =
     phase.kind === "done" ? phase.preview.imagesManual.filter((image) => !phase.upload.completedIds.includes(image.id)) : [];
@@ -514,6 +592,107 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   const failedNotReady = failedStatus === 404 || failedStatus === 501;
 
   const secondaryButtonClass = "rounded-lg border border-zinc-300 px-3.5 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100";
+  const applyNodeChoice = (node: ImportTaskNode, choice: string): void => {
+    const destination: NodeCategory | null = choice === "new" ? "new" : choice === "standalone" ? "manual" :
+      node.matchKind === "exact" && choice === "existing:" + node.libraryId ? null :
+      node.matchKind === "semantic" && choice === "existing:" + node.libraryId ? "ai" : "manual";
+    if (destination !== currentNodeCategory && nodesByCategory[currentNodeCategory].length === 1) {
+      setSelectedNodeCategory(destination);
+    }
+    setNodeChoices((current) => ({ ...current, [node.groupIndex]: choice }));
+    setConflictChoices({});
+    setNodePickerIndex(null);
+    setNodeQuery("");
+  };
+  const renderNodeRows = (nodes: ImportTaskNode[]) => (
+    <ul className="mt-3 space-y-2">
+      {nodes.map((node) => {
+        const choice = nodeChoice(node);
+        const selected = choice.startsWith("existing:")
+          ? preview?.nodeLibrary.find((item) => "existing:" + item.id === choice)
+          : undefined;
+        const pickerOpen = nodePickerIndex === node.groupIndex;
+        const query = nodeQuery.trim().toLocaleLowerCase();
+        const stageNodes = pickerOpen ? (preview?.nodeLibrary ?? []).filter((item) => item.stageKey === node.stageKey) : [];
+        const visibleNodes = stageNodes.filter((item) =>
+          item.title.toLocaleLowerCase().includes(query) || (item.titleEn ?? "").toLocaleLowerCase().includes(query));
+        const actionClass = (active: boolean): string =>
+          "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
+          (active ? "border-zinc-800 bg-zinc-800 text-white" : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-400 hover:bg-zinc-50");
+        return (
+          <li key={node.groupIndex} className="rounded-lg border border-zinc-100 bg-white px-3 py-3 text-xs" data-import-node={node.groupIndex}>
+            <div className="flex flex-wrap items-center justify-between gap-1">
+              <span className="min-w-0"><span className="block font-medium text-zinc-800">{node.name}</span>
+                {nodeEnglish(node) === null || nodeEnglish(node) === "" ? <span className="text-amber-600">{t("import.nodes.nameEnMissing")}</span> : <span className="text-zinc-400">{nodeEnglish(node)}</span>}
+              </span>
+              <span className="text-zinc-500">{stageText(locale, stageNameOf(node.stageKey))} · {t("import.nodes.count", { n: node.taskCount })}</span>
+            </div>
+            {selected === undefined ? null : (
+              <p className="mt-2 text-xs text-emerald-700">{t("import.nodes.current", { name: selected.title })}</p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" aria-expanded={pickerOpen} className={actionClass(selected !== undefined)}
+                onClick={() => { setNodePickerIndex(pickerOpen ? null : node.groupIndex); setNodeQuery(""); }}
+                data-import-choose-existing={node.groupIndex}>
+                {t("import.nodes.existing")}
+              </button>
+              <button type="button" aria-pressed={choice === "new"} disabled={node.matchKind === "exact"}
+                className={actionClass(choice === "new") + " disabled:cursor-not-allowed disabled:opacity-40"}
+                onClick={() => applyNodeChoice(node, "new")} data-import-choose-new={node.groupIndex}>
+                {t("import.nodes.asNew")}
+              </button>
+              <button type="button" aria-pressed={choice === "standalone"} className={actionClass(choice === "standalone")}
+                onClick={() => applyNodeChoice(node, "standalone")} data-import-choose-standalone={node.groupIndex}>
+                {t("import.nodes.standalone")}
+              </button>
+            </div>
+            {!pickerOpen ? null : (
+              <div className="mt-3 rounded-xl border border-zinc-200 bg-zinc-50/70 p-3" data-import-node-picker="">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="border-b-2 border-zinc-900 pb-1.5 text-xs font-semibold text-zinc-900">
+                    {t("sac.tab.nodes")} <span className="font-normal text-zinc-400">{stageNodes.length}</span>
+                  </span>
+                  <button type="button" className="text-xs text-zinc-500 hover:text-zinc-900"
+                    onClick={() => { setNodePickerIndex(null); setNodeQuery(""); }}>{t("import.nodes.collapse")}</button>
+                </div>
+                <div className="relative mt-2">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400">
+                    <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+                  </svg>
+                  <input type="search" value={nodeQuery} onChange={(event) => setNodeQuery(event.target.value)}
+                    placeholder={t("tpl.nodes.searchPlaceholder")} aria-label={t("tpl.nodes.searchAria")}
+                    className="w-full rounded-lg border border-zinc-200 bg-white py-2 pl-8 pr-3 text-xs text-zinc-700 outline-none focus:border-zinc-400" />
+                </div>
+                {visibleNodes.length === 0 ? (
+                  <p className="py-5 text-center text-xs text-zinc-500">{t("tpl.nodes.empty")}</p>
+                ) : (
+                  <ul className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+                    {visibleNodes.map((item) => {
+                      const isSelected = selected?.id === item.id;
+                      return (
+                        <li key={item.id}>
+                          <button type="button" aria-pressed={isSelected}
+                            className="flex w-full items-center gap-3 rounded-lg border border-transparent bg-white px-3 py-2 text-left transition hover:border-zinc-300"
+                            onClick={() => applyNodeChoice(node, "existing:" + item.id)} data-import-node-option={item.id}>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs font-medium text-zinc-700">{item.title}</span>
+                              {item.titleEn ? <span className="mt-0.5 block text-[10px] text-zinc-400">{item.titleEn}</span> : null}
+                            </span>
+                            <span className="shrink-0 text-[11px] font-medium text-emerald-700">{t(isSelected ? "import.nodes.selected" : "import.nodes.select")}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+
   const primaryButtonClass =
     "rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400 disabled:shadow-none";
 
@@ -756,7 +935,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                       caption={phase.preview.counts.imagesManual === 0 ? undefined : t("import.stats.images.manual", { n: phase.preview.counts.imagesManual })}
                     />
                     <StatTile label={t("import.stats.accountsNew")} value={phase.preview.counts.accountsNew} />
-                    <StatTile label={t("import.stats.nodesNew")} value={phase.preview.counts.nodesNew} />
+                    <StatTile label={t("import.stats.nodesNew")} value={addMissingNodes ? newNodes.length : 0} />
                   </dl>
                 </section>
 
@@ -785,32 +964,124 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                   </section>
                 )}
 
-                {unmatchedNodes.length === 0 ? null : (
-                  <section className="rounded-2xl border border-zinc-200 bg-white p-5" data-import-unmatched-nodes="">
-                    <h3 className="text-sm font-semibold text-zinc-900">{t("import.nodes.title", { n: unmatchedNodes.length })}</h3>
-                    <p className="mt-1 text-xs text-zinc-500">{t("import.nodes.hint")}</p>
-                    <label className="mt-3 flex items-start gap-2 text-sm text-zinc-700">
-                      <input
-                        type="checkbox"
-                        checked={addMissingNodes}
-                        onChange={(event) => setAddMissingNodes(event.target.checked)}
-                        className="mt-0.5 h-4 w-4"
-                        data-import-add-nodes=""
-                      />
-                      <span>{t("import.nodes.toggle")}</span>
-                    </label>
-                    <ul className="mt-3 space-y-1.5">
-                      {unmatchedNodes.map((node, index) => (
-                        <li key={index} className="flex items-center gap-2 rounded-lg border border-zinc-100 px-2.5 py-1.5 text-xs">
-                          <span className="min-w-0 flex-1">
-                            <span className="block font-medium text-zinc-800">{node.name}</span>
-                            {node.nameEn === null || node.nameEn === "" ? (
-                              <span className="mt-0.5 block text-[11px] text-amber-600">{t("import.nodes.nameEnMissing")}</span>
-                            ) : (
-                              <span className="mt-0.5 block text-[11px] text-zinc-400">{node.nameEn}</span>
-                            )}
-                          </span>
-                          <span className="shrink-0 text-[11px] text-zinc-400">{t("import.nodes.count", { n: node.taskCount })}</span>
+                {scopedNodes.length === 0 ? null : (
+                  <section className="rounded-2xl border border-zinc-200 bg-white p-5" data-import-node-summary="">
+                    <h3 className="text-sm font-semibold text-zinc-900">{t("import.nodes.summaryTitle")}</h3>
+                    <p className="mt-1 text-xs text-zinc-500">{t("import.nodes.summaryHint")}</p>
+                    <p className="mt-3 text-xs font-medium text-zinc-700" data-import-auto-matched="">
+                      {t("import.nodes.autoMatched", { n: exactMatches.length })}
+                    </p>
+                    {!hasCategorizedNodes ? null : (<>
+                    <div
+                      role="tablist"
+                      aria-label={t("import.nodes.summaryTitle")}
+                      className="mt-3 flex flex-wrap gap-2 text-xs"
+                      onKeyDown={(event) => {
+                        const index = nodeCategoryTabs.findIndex((tab) => tab.category === currentNodeCategory);
+                        const next = event.key === "ArrowRight" ? (index + 1) % nodeCategoryTabs.length :
+                          event.key === "ArrowLeft" ? (index + nodeCategoryTabs.length - 1) % nodeCategoryTabs.length :
+                          event.key === "Home" ? 0 : event.key === "End" ? nodeCategoryTabs.length - 1 : -1;
+                        if (next < 0) return;
+                        event.preventDefault();
+                        setSelectedNodeCategory(nodeCategoryTabs[next]!.category);
+                        setNodePickerIndex(null);
+                        setNodeQuery("");
+                        event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+                      }}
+                    >
+                      {nodeCategoryTabs.map((tab) => {
+                        const selected = currentNodeCategory === tab.category;
+                        return (
+                          <button
+                            key={tab.category}
+                            id={nodeTabId + "-tab-" + tab.category}
+                            type="button"
+                            role="tab"
+                            aria-selected={selected}
+                            aria-controls={nodeTabId + "-panel"}
+                            tabIndex={selected ? 0 : -1}
+                            onClick={() => { setSelectedNodeCategory(tab.category); setNodePickerIndex(null); setNodeQuery(""); }}
+                            className={"rounded-lg border px-2.5 py-1.5 font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 " +
+                              (selected ? "border-blue-400 bg-blue-50 text-blue-800" : "border-transparent bg-zinc-100 text-zinc-600 hover:bg-zinc-200")}
+                            data-import-node-tab={tab.category}
+                          >
+                            {tab.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div
+                      id={nodeTabId + "-panel"}
+                      role="tabpanel"
+                      aria-labelledby={nodeTabId + "-tab-" + currentNodeCategory}
+                      className={"mt-4 rounded-xl border p-4 " +
+                        (currentNodeCategory === "ai" ? "border-blue-200 bg-blue-50/50" :
+                          currentNodeCategory === "review" ? "border-amber-200 bg-amber-50/60" : "border-zinc-200 bg-zinc-50/50")}
+                      data-import-node-category={currentNodeCategory}
+                    >
+                      {nodesByCategory[currentNodeCategory].length === 0 ? (
+                        <p className="py-4 text-center text-xs text-zinc-500">{t("import.nodes.categoryEmpty")}</p>
+                      ) : (
+                        <>
+                          <h4 className={"text-sm font-semibold " +
+                            (currentNodeCategory === "ai" ? "text-blue-900" : currentNodeCategory === "review" ? "text-amber-900" : "text-zinc-900")}>
+                            {currentNodeCategory === "ai" ? t("import.nodes.aiMatchesTitle", { n: aiMatchedNodes.length }) :
+                              currentNodeCategory === "review" ? t("import.nodes.reviewTitle", { n: reviewNodes.length }) :
+                              currentNodeCategory === "new" ? t("import.nodes.title", { n: newNodes.length }) :
+                              t("import.nodes.manualTitle", { n: manualNodes.length })}
+                          </h4>
+                          <p className={"mt-1 text-xs " +
+                            (currentNodeCategory === "ai" ? "text-blue-800" : currentNodeCategory === "review" ? "text-amber-800" : "text-zinc-500")}>
+                            {currentNodeCategory === "ai" ? t("import.nodes.aiMatchesHint") :
+                              currentNodeCategory === "review" ? t("import.nodes.reviewHint") :
+                              currentNodeCategory === "new" ? t("import.nodes.hint") : t("import.nodes.manualHint")}
+                          </p>
+                          {currentNodeCategory !== "new" ? null : (
+                            <label className="mt-3 flex items-start gap-2 text-sm text-zinc-700">
+                              <input
+                                type="checkbox"
+                                checked={addMissingNodes}
+                                onChange={(event) => { setAddMissingNodes(event.target.checked); setConflictChoices({}); }}
+                                className="mt-0.5 h-4 w-4"
+                                data-import-add-nodes=""
+                              />
+                              <span>{t("import.nodes.toggle")}</span>
+                            </label>
+                          )}
+                          {renderNodeRows(nodesByCategory[currentNodeCategory])}
+                        </>
+                      )}
+                    </div>
+                    </>)}
+                  </section>
+                )}
+
+                {conflicts.length === 0 ? null : (
+                  <section className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5" data-import-node-conflicts="">
+                    <h3 className="text-sm font-semibold text-amber-900">{t("import.nodes.conflictsTitle", { n: conflicts.length })}</h3>
+                    <p className="mt-1 text-xs text-amber-800">{t("import.nodes.conflictsHint")}</p>
+                    <ul className="mt-3 space-y-3">
+                      {conflicts.map(([key, bucket]) => (
+                        <li key={key} className="rounded-lg border border-amber-200 bg-white p-3 text-xs">
+                          <p className="font-medium text-zinc-800">{bucket.name}</p>
+                          <select
+                            aria-label={t("import.nodes.conflictAria", { name: bucket.name })}
+                            className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5"
+                            value={conflictChoices[key] === undefined ? "" : String(conflictChoices[key])}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setConflictChoices((current) => {
+                                const next = { ...current };
+                                if (value === "") delete next[key]; else next[key] = Number(value);
+                                return next;
+                              });
+                            }}
+                          >
+                            <option value="">{t("import.nodes.conflictPick")}</option>
+                            {bucket.tasks.map((task) => (
+                              <option key={task.index} value={task.index}>{t("import.nodes.conflictRow", { row: task.row, name: task.name })}</option>
+                            ))}
+                          </select>
                         </li>
                       ))}
                     </ul>

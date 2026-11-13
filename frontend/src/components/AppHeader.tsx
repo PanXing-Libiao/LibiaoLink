@@ -7,7 +7,7 @@ import { clearLegacyPlanBoard } from "../myPlan";
 import { hasPageAccess, useMyPermissions } from "../permissions";
 import { useInboxBadge } from "../inbox";
 import { resetWecomBindingStatus, useWecomBindingBound } from "../wecomBindingStatus";
-import { ACCESS_BASE_HASH, AUDIT_BASE_HASH, FILES_BASE_HASH, HUB_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
+import { ACCESS_BASE_HASH, AUDIT_BASE_HASH, FILES_BASE_HASH, HUB_HASH, MODEL_SETTINGS_BASE_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
 import { firstAllowedHref } from "../accessRoutes";
 import { MobileNav } from "./MobileNav";
 import { TopNav } from "./TopNav";
@@ -580,6 +580,13 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                     className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                   >
                     {t("header.access")}
+                  </a>
+                ) : null}
+                {canManageAccess ? (
+                  <a role="menuitem" data-account-models="true" href={MODEL_SETTINGS_BASE_HASH}
+                    onClick={() => setMenuOpen(false)}
+                    className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900">
+                    {t("header.models")}
                   </a>
                 ) : null}
                 <a

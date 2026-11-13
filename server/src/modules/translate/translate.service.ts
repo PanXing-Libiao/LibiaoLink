@@ -20,6 +20,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import type { TranslateLang } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
+import { ModelConfigService, type ActiveModelConnection } from "../model-config/index.js";
 import { TranslateRepository } from "./translate.repository.js";
 import { finalizeTranslation, protectGlossary } from "./translate.text.js";
 
@@ -56,6 +57,7 @@ export class TranslateService {
   constructor(
     private readonly config: AppConfig,
     private readonly repository: TranslateRepository,
+    private readonly models: ModelConfigService,
   ) {}
 
   /** 单条翻译（译文库优先；未命中调引擎后落库）。 */
@@ -173,6 +175,11 @@ export class TranslateService {
    * `local` = 本地引擎直连（TRANSLATE_ORIGIN）。术语保护对两种通道一致：出引擎前占位符化（translate.text.ts），回包规整 + 回换。
    */
   private async callEngine(q: string, source: TranslateLang, target: TranslateLang): Promise<EngineOutput> {
+    const active = await this.models.active();
+    if (active !== null) {
+      const translatedText = await this.callOpenAiModel(active.modelId, q, source, target, active);
+      return { translatedText, engine: "api:" + active.modelId };
+    }
     if (this.config.env.TRANSLATE_PROVIDER === "openai") {
       try {
         const result = await this.callOpenAiApi(q, source, target);
@@ -243,16 +250,15 @@ export class TranslateService {
   }
 
   /** 单次 OpenAI 兼容请求（POST {base}/chat/completions；密钥 = TRANSLATE_API_KEY 可空）。失败一律 AppError INTERNAL。 */
-  private async callOpenAiModel(model: string, q: string, source: TranslateLang, target: TranslateLang): Promise<string> {
+  private async callOpenAiModel(model: string, q: string, source: TranslateLang, target: TranslateLang, active?: ActiveModelConnection): Promise<string> {
     const env = this.config.env;
     const { protectedText, tokens } = protectGlossary(q, target);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if ((env.TRANSLATE_API_KEY ?? "") !== "") {
-      headers["Authorization"] = "Bearer " + env.TRANSLATE_API_KEY;
-    }
+    const apiKey = active?.apiKey ?? env.TRANSLATE_API_KEY ?? "";
+    if (apiKey !== "") headers["Authorization"] = "Bearer " + apiKey;
     let response: Response;
     try {
-      response = await fetch(joinApiUrl(env.TRANSLATE_API_BASE_URL, "/chat/completions"), {
+      response = await fetch(joinApiUrl(active?.baseUrl ?? env.TRANSLATE_API_BASE_URL, "/chat/completions"), {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -263,6 +269,7 @@ export class TranslateService {
           ],
           temperature: 0,
         }),
+        redirect: "error",
         signal: AbortSignal.timeout(env.TRANSLATE_TIMEOUT_MS),
       });
     } catch (error) {

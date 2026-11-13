@@ -7,6 +7,7 @@ import { AccessControlPage } from "./AccessControlPage";
 import { AuditLogPage } from "./AuditLogPage";
 import { FileLibraryPage } from "./FileLibraryPage";
 import { SettingsPage } from "./SettingsPage";
+import { ModelManagementPage } from "./ModelManagementPage";
 import Hub from "./Hub";
 import Home from "./Home";
 import PlaceholderPage from "./PlaceholderPage";
@@ -848,7 +849,7 @@ export default function App() {
     );
   }
 
-  if (permissions === null && !permissionsSettled && (blocksWhenLoginOnly(route) || route.kind === "access")) {
+  if (permissions === null && !permissionsSettled && (blocksWhenLoginOnly(route) || route.kind === "access" || route.kind === "model-settings")) {
     return (
       <main className="page">
         <Loader />
@@ -857,7 +858,7 @@ export default function App() {
   }
 
   const accessDenied = route.kind === "access" && permissions !== null && !permissions.groupAccessAdmin;
-  if (accessDenied) {
+  if (accessDenied || (route.kind === "model-settings" && permissions?.groupAccessAdmin !== true)) {
     return <PageAccessDenied me={state.me} backHref={firstAllowedHref(permissions)} />;
   }
   if (permissions !== null && blocksWhenLoginOnly(route) && permissions.groupProjectAccess === "denied") {
@@ -1068,6 +1069,10 @@ export default function App() {
         {bottomBars}
       </>
     );
+  }
+
+  if (route.kind === "model-settings") {
+    return <><ModelManagementPage me={state.me} />{bottomBars}</>;
   }
 
   if (route.kind === "settings") {

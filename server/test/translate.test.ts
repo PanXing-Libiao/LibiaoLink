@@ -87,7 +87,7 @@ const openAiModelFallbackSameConfig = {
 
 function makeServiceWith(cfg: AppConfig): { repository: FakeTranslationRepository; service: TranslateService } {
   const repository = new FakeTranslationRepository();
-  const service = new TranslateService(cfg, repository as unknown as TranslateRepository);
+  const service = new TranslateService(cfg, repository as unknown as TranslateRepository, { active: async () => null } as never);
   return { repository, service };
 }
 

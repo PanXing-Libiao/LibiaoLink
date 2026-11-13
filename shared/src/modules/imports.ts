@@ -7,7 +7,7 @@ import { DateTimeSchema, UuidSchema } from "../common/conventions.ts";
  *   解析导入表 + 口径校验，不写库；返回预览票据（previewId + 有效期）。
  * - POST /api/v1/project-imports/commit：JSON（previewId + 落位确认）→ 单事务建项目并写入全量数据。
  * 已固化口径：完成日期未填 = 不算完成（进度按进行中封顶 75%）；进度五档（0 / 0.25 / 0.5 / 0.75 / 1）；
- * 日期笔误（完成早于开始）照原值导入 + 提醒；任务节点无对应按文件原名导入（阶段外 = 临时任务）；
+ * 日期笔误照原值导入 + 提醒；任务节点精确 / 语义匹配复用，待确认项人工处理（阶段外 = 临时任务）；
  * 变更阶段映射：实施 → install、发货 → assembly；账号 = 拼音登录名 + 中文名（测试账号加 -test）显示名；
  * 微盘 / 本地路径文件出「需手动导入」清单（表内嵌图随导入挂日报）；干系人（Push 324）：「干系人」表随导入落台账
  * *（stakeholders + project_stakeholders）—— 导入表含该表直接解析；
@@ -77,7 +77,7 @@ export const ImportManualImageSchema = z
   .openapi("ImportManualImage", { description: "需手动导入的图片 / 文件清单（面板可就地选文件，确认导入后一并上传）" });
 export type ImportManualImage = z.infer<typeof ImportManualImageSchema>;
 
-/** 任务节点匹配：matched = 节点库已有（逐字一致）；未匹配按文件原名导入，勾选后补进节点库。 */
+/** 导入节点的精确匹配、语义匹配、新节点或待人工确认结果。 */
 export const ImportTaskNodeSchema = z
   .object({
     name: z.string().min(1).max(200).openapi({ description: "节点名（源表原文 / 节点库标题）" }),
@@ -85,13 +85,27 @@ export const ImportTaskNodeSchema = z
       .string()
       .max(200)
       .nullable()
-      .openapi({ description: "节点英文名（源表英文列 / 节点库 title_en）；源表没英文 = null（面板标「英文名待补」）" }),
-    matched: z.boolean().openapi({ description: "是否已在任务节点库（规范化逐字一致）" }),
+      .openapi({ description: "节点英文名（优先节点库，其次源表或 AI 补全）；无法生成时为 null" }),
+    sourceNameEn: z.string().max(200).nullable().openapi({ description: "源表英文名或 AI 补全的英文，人工改选新节点时使用" }),
+    matched: z.boolean().openapi({ description: "是否匹配已有节点（精确或语义匹配）" }),
+    groupIndex: z.number().int().min(0),
+    stageKey: z.string().max(32).nullable(),
+    matchKind: z.enum(["exact", "semantic", "new", "uncertain", "temporary"]),
+    libraryId: UuidSchema.nullable(),
+    tasks: z.array(z.object({ index: z.number().int().min(0), row: z.number().int().min(1) })).max(200000),
     inStageScope: z.boolean().openapi({ description: "是否落在阶段范围内（false = 临时任务，不补节点库）" }),
     taskCount: z.number().int().min(0).openapi({ description: "关联任务条数" }),
   })
-  .openapi("ImportTaskNode", { description: "任务节点匹配行（预览左栏「任务节点未匹配」清单）" });
+  .openapi("ImportTaskNode", { description: "来源任务节点分组及匹配结果" });
 export type ImportTaskNode = z.infer<typeof ImportTaskNodeSchema>;
+
+export const ImportNodeLibraryItemSchema = z.object({
+  id: UuidSchema,
+  stageKey: z.string().min(1).max(32),
+  title: z.string().min(1).max(200),
+  titleEn: z.string().max(200).nullable(),
+  version: z.number().int().min(1),
+});
 
 export const ImportFileMetaSchema = z
   .object({
@@ -156,12 +170,13 @@ export const ProjectImportPreviewSchema = z
     accounts: z.array(ImportAccountSchema).max(300),
     imagesManual: z.array(ImportManualImageSchema).max(2000),
     nodes: z.array(ImportTaskNodeSchema).max(2000),
+    nodeLibrary: z.array(ImportNodeLibraryItemSchema).max(10000),
     issues: z.array(ImportIssueSchema).max(5000),
   })
   .openapi("ProjectImportPreview", { description: "导入表导入预览报告（解析不写库；确认后才写入）" });
 export type ProjectImportPreview = z.infer<typeof ProjectImportPreviewSchema>;
 
-/** 确认导入入参：落位确认（地区必填）+ 节点补库开关。 */
+/** 确认导入入参：落位、节点处理、冲突选择及补库开关。 */
 export const ProjectImportCommitBodySchema = z
   .object({
     previewId: UuidSchema,
@@ -171,6 +186,15 @@ export const ProjectImportCommitBodySchema = z
       .max(64)
       .default("")
       .openapi({ description: "项目类型（projectType 字典的码）；空串 = 未指定（解析按源表关键字给默认，如 AIRROB → 飞箱）" }),
+    nodeDecisions: z.array(z.object({
+      groupIndex: z.number().int().min(0),
+      action: z.enum(["existing", "new", "standalone"]),
+      nodeId: UuidSchema.nullable(),
+    })).max(2000).optional(),
+    conflictChoices: z.array(z.object({
+      key: z.string().min(1).max(80),
+      taskIndex: z.number().int().min(0),
+    })).max(2000).optional(),
     addMissingNodes: z
       .boolean()
       .default(true)

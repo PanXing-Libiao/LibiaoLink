@@ -27,6 +27,7 @@ import { TemplateModule } from "./modules/template/index.js";
 import { WorkspaceModule } from "./modules/workspace/index.js";
 import { ViewModule } from "./modules/view/index.js";
 import { TranslateModule } from "./modules/translate/index.js";
+import { ModelConfigModule } from "./modules/model-config/index.js";
 import { FollowModule } from "./modules/follow/index.js";
 import { StorageModule } from "./storage/index.js";
 import { AutomationSubjectReader } from "./outbox/automation-subjects.js";
@@ -55,6 +56,7 @@ export class AppModule {
         DashboardModule,
         ViewModule,
         FollowModule,
+        ModelConfigModule,
         TranslateModule,
         ReportIssueModule,
         AdminModule,

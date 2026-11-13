@@ -1,5 +1,7 @@
 import { OpenAPIRegistry, OpenApiGeneratorV31 } from "@asteasolutions/zod-to-openapi";
 import { z } from "./zod.ts";
+import { AiModelActivateSchema, AiModelListSchema, AiModelProviderCreateSchema, AiModelProviderSchema, AiModelProviderUpdateSchema, AiModelSettingsSchema } from "./modules/ai-models.ts";
+import { ProjectImportCommitBodySchema, ProjectImportPreviewSchema, ProjectImportResultSchema } from "./modules/imports.ts";
 import { CadJobSchema, CadJobCreateBodySchema, CadJobCreateResponseSchema, CadNameCodepageSchema } from "./modules/cad.ts";
 import { DateOnlySchema, IdempotencyKeySchema, UuidSchema } from "./common/conventions.ts";
 import { StageKeySchema } from "./common/dicts.ts";
@@ -271,6 +273,73 @@ const calendarDayParams = z.object({ date: DateOnlySchema });
 export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generateDocument"]> {
   const registry = new OpenAPIRegistry();
   registry.register("ResourceInvalidationPayload", ResourceInvalidationPayloadSchema);
+
+
+  // ---- 系统模型配置（仅系统管理员）----
+  registry.registerPath({
+    method: "get", path: "/api/v1/model-settings", tags: ["model-settings"], summary: "读取模型服务与当前模型",
+    responses: { 200: { description: "不返回 API Key", ...json(AiModelSettingsSchema) }, 401: commonErrors[401], 403: commonErrors[403] },
+  });
+  registry.registerPath({
+    method: "post", path: "/api/v1/model-settings/providers", tags: ["model-settings"], summary: "新增模型服务",
+    request: { body: json(AiModelProviderCreateSchema) },
+    responses: { 201: { description: "模型服务", ...json(AiModelProviderSchema) }, 400: commonErrors[400], 403: commonErrors[403] },
+  });
+  registry.registerPath({
+    method: "put", path: "/api/v1/model-settings/providers/{id}", tags: ["model-settings"], summary: "修改模型服务",
+    request: { params: idParams, body: json(AiModelProviderUpdateSchema) },
+    responses: { 200: { description: "模型服务", ...json(AiModelProviderSchema) }, 400: commonErrors[400], 403: commonErrors[403], 404: commonErrors[404], 409: commonErrors[409] },
+  });
+  registry.registerPath({
+    method: "delete", path: "/api/v1/model-settings/providers/{id}", tags: ["model-settings"], summary: "删除模型服务",
+    request: { params: idParams },
+    responses: { 204: { description: "已删除" }, 403: commonErrors[403], 404: commonErrors[404] },
+  });
+  registry.registerPath({
+    method: "get", path: "/api/v1/model-settings/providers/{id}/models", tags: ["model-settings"], summary: "自动识别模型列表",
+    request: { params: idParams },
+    responses: { 200: { description: "模型列表", ...json(AiModelListSchema) }, 400: commonErrors[400], 403: commonErrors[403], 404: commonErrors[404] },
+  });
+  registry.registerPath({
+    method: "put", path: "/api/v1/model-settings/active", tags: ["model-settings"], summary: "设置全系统当前模型",
+    request: { body: json(AiModelActivateSchema) },
+    responses: { 204: { description: "已启用" }, 400: commonErrors[400], 403: commonErrors[403], 404: commonErrors[404] },
+  });
+
+  // ---- Excel 项目导入 ----
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/project-imports/preview",
+    tags: ["projects"],
+    summary: "解析 Excel 并预览项目、节点语义匹配与待确认项",
+    request: { body: { content: { "multipart/form-data": { schema: z.object({ file: z.string().openapi({ format: "binary" }) }) } } } },
+    responses: {
+      200: { description: "导入预览票据与节点匹配结果", ...json(ProjectImportPreviewSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      422: commonErrors[422],
+      429: errorResponse("导入任务正在处理中（RATE_LIMITED）"),
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/project-imports/commit",
+    tags: ["projects"],
+    summary: "确认节点选择并导入项目",
+    request: { body: json(ProjectImportCommitBodySchema) },
+    responses: {
+      200: { description: "导入结果", ...json(ProjectImportResultSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+      410: commonErrors[410],
+      429: errorResponse("导入任务正在处理中（RATE_LIMITED）"),
+    },
+  });
 
   // ---- 项目与首页分类 ----
   registry.registerPath({

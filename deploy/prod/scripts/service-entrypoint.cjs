@@ -36,6 +36,7 @@ const REQUIRED_SECRET_MAP = [
 /** 业务可选项；文件缺失或为空 = 明确 unset，禁止从 server.env 回退。 */
 const OPTIONAL_SECRET_MAP = [
   ["translate_api_key", "TRANSLATE_API_KEY"],
+  ["model_config_encryption_key", "MODEL_CONFIG_ENCRYPTION_KEY"],
   ["wecom_app_secret", "WECOM_APP_SECRET"],
   ["wecom_bot_secret", "WECOM_BOT_SECRET"],
 ];

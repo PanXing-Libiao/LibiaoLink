@@ -2,6 +2,7 @@
 import { Module } from "@nestjs/common";
 import { AdminModule } from "../admin/index.js";
 import { IdentityModule } from "../identity/index.js";
+import { ModelConfigModule } from "../model-config/index.js";
 import { PermissionModule } from "../permission/index.js";
 import { ProjectModule } from "../project/index.js";
 import { TemplateModule } from "../template/index.js";
@@ -11,6 +12,7 @@ import { ProjectImportManualController } from "./project-import-manual.controlle
 import { ProjectImportRepository } from "./project-import.repository.js";
 import { ProjectImportService } from "./project-import.service.js";
 import { ImportAdmissionGate } from "./import-admission.gate.js";
+import { ImportNodeMatcher } from "./import-node-matcher.js";
 
 /**
  * project-import 模块（领域 · 导入表导入 · 业务口径 2026-10-14）：项目空间「导入项目」按钮的服务端落点 ——
@@ -21,9 +23,9 @@ import { ImportAdmissionGate } from "./import-admission.gate.js";
  * 解析层与存储层平级（xlsx.ts 零依赖 zip 读 / legacy.ts 导入表转换 / people.ts 人员注册表）。
  */
 @Module({
-  imports: [IdentityModule, PermissionModule, AdminModule, ProjectModule, TemplateModule, TranslateModule],
+  imports: [IdentityModule, PermissionModule, AdminModule, ProjectModule, TemplateModule, TranslateModule, ModelConfigModule],
   controllers: [ProjectImportController, ProjectImportManualController],
-  providers: [ProjectImportRepository, ProjectImportService, ImportAdmissionGate],
+  providers: [ProjectImportRepository, ProjectImportService, ImportAdmissionGate, ImportNodeMatcher],
   exports: [ProjectImportService, ProjectImportRepository],
 })
 export class ProjectImportModule {}
