@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import {
   ProjectFacetsSchema,
   ProjectListResponseSchema,
+  ProjectMapOverviewResponseSchema,
   ProjectPurgeResponseSchema,
   ProjectRecycleActionBodySchema,
   ProjectSchema,
@@ -30,6 +31,7 @@ import { buildProjectFilter, parseProjectSort, type ProjectListQueryInput } from
 
 export type ProjectView = z.infer<typeof ProjectSchema>;
 export type ProjectListResult = z.infer<typeof ProjectListResponseSchema>;
+export type ProjectMapOverviewResult = z.infer<typeof ProjectMapOverviewResponseSchema>;
 export type ProjectFacetsResult = z.infer<typeof ProjectFacetsSchema>;
 export type ProjectPurgeResult = z.infer<typeof ProjectPurgeResponseSchema>;
 
@@ -118,6 +120,31 @@ export class ProjectService {
       page: query.page,
       limit: query.limit,
       total,
+    };
+  }
+
+  /**
+   * 蓝图地图总览：有项目浏览权的账号可读全部未删项目的最少字段；
+   * 每个项目再按详情可见集标注 accessLevel，null 表示只能看概况、不能进入详情。
+   */
+  async listProjectMapOverview(scope: ProjectScopeFilter, actorId: string): Promise<ProjectMapOverviewResult> {
+    if (!(await this.permission.canBrowseProjectOverview(actorId))) {
+      throw new AppError("FORBIDDEN", "当前账号没有项目浏览权限");
+    }
+    const rows = await this.projects.listMapOverview();
+    const levels = await this.permission.projectGroupAccessLevelsOf(actorId, rows.map((row) => row.id));
+    const visibleIds = scope.kind === "all" ? null : new Set(scope.ids);
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        region: row.region,
+        projectType: row.projectType,
+        status: row.status as ProjectView["status"],
+        accessLevel: visibleIds === null || visibleIds.has(row.id) ? levels.get(row.id) ?? "view" : null,
+      })),
+      total: rows.length,
     };
   }
 

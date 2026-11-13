@@ -40,6 +40,19 @@ export type ApiProject = {
 
 export type ProjectListResult = { items: ApiProject[]; page: number; limit: number; total: number };
 
+/** 蓝图地图总览：最少展示字段；accessLevel=null 时只能看概况，不能进入项目详情。 */
+export type ProjectMapOverviewItem = {
+  id: string;
+  code: string;
+  name: string;
+  region: string;
+  projectType: string;
+  status: string;
+  accessLevel: "edit" | "view" | null;
+};
+
+export type ProjectMapOverviewResult = { items: ProjectMapOverviewItem[]; total: number };
+
 /** 首页侧边栏计数（五组固定返回；一期展示 region / projectType / managerId 三组）。 */
 export type ProjectFacets = {
   total: number;
@@ -97,6 +110,11 @@ export function fetchProjectList(filters: ListQueryState): Promise<ProjectListRe
 
   const query = parts.filter((part) => part !== "").join("&");
   return readAllPages<ApiProject>("/api/v1/projects?" + query);
+}
+
+/** 蓝图地图：有项目浏览权的账号读取全部未删项目概况；详情权限另行以 accessLevel 为准。 */
+export function fetchProjectMapOverview(): Promise<ProjectMapOverviewResult> {
+  return apiRequest<ProjectMapOverviewResult>("/api/v1/projects/map-overview");
 }
 
 export function fetchProjectFacets(filters: ListQueryState, skip: FacetSkip | null = null): Promise<ProjectFacets> {

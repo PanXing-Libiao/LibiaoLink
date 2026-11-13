@@ -144,6 +144,31 @@ export const ProjectListResponseSchema = z
   })
   .openapi("ProjectListResponse");
 
+/**
+ * 蓝图地图总览：只下发落图与项目梳理所需的最少字段，不携带客户、经理、描述等明细。
+ * accessLevel = null 表示当前账号可看到项目概况，但不能进入项目详情；view / edit 均可进入。
+ */
+export const ProjectMapOverviewItemSchema = z
+  .object({
+    id: UuidSchema,
+    code: z.string(),
+    name: z.string(),
+    region: z.string().openapi({ description: "项目落地地区（字典 region）" }),
+    projectType: z.string().openapi({ description: "项目类型（字典 project_type）" }),
+    status: ProjectStatusSchema,
+    accessLevel: GroupAccessAccessLevelSchema.nullable().openapi({
+      description: "当前账号对该项目的最终访问级别；null = 仅可在蓝图地图看到概况，进入详情仍返回 404",
+    }),
+  })
+  .openapi("ProjectMapOverviewItem", { description: "蓝图地图项目概况（最小展示字段 + 当前账号是否可进入详情）" });
+
+export const ProjectMapOverviewResponseSchema = z
+  .object({
+    items: z.array(ProjectMapOverviewItemSchema),
+    total: z.number().int().min(0),
+  })
+  .openapi("ProjectMapOverviewResponse", { description: "蓝图地图全部未删除项目概况（不受项目详情可见集裁剪）" });
+
 /** 创建项目：编号由创建人填写（服务端保证唯一性）；项目序号由服务端分配（创建请求不传 seqNo）；默认按当前已发布蓝图导入节点（导入即快照）。 */
 export const ProjectCreateBodySchema = z
   .object({

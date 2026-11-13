@@ -1,11 +1,13 @@
 # permission 模块（h6 · S6·PoC-6：权限矩阵与脱敏五出口）
 
+> **2026-11-13 蓝图总览读取权**：新增 `canBrowseProjectOverview(actorId)`：系统管理员、`GROUP_ACCESS_ENFORCED=false`、任一项目数据范围（含当前选中为空）或至少一个有效项目关系放行；仅登录、`none`-only 或无有效项目关系拒绝。该判定只开放蓝图地图的全量项目最少概况，不授予任何项目详情或写权限；详情仍走 `resolveProjectAccess`。
+
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（domain，横切策略层） |
 | 职责 | ADR-011 策略服务落地形态：功能权限（can）/ 记录级可见集 / 字段级策略 / 五出口（页面 · 导出 · 搜索 · 通知）投影统一出口 |
 | 主责 | wmj（团队分工.md §2 / §6 第 6 行） |
-| 对外接口 | PermissionService（getAuthorization / can / assertCan / assertWritable / canManageBlueprint / assertCanManageBlueprint / canManageTaskNodes / assertCanManageTaskNodes / canManageTaskTemplates / assertCanManageTaskTemplates / canManageTaskTemplate / assertCanManageTaskTemplate / projectScope / projectGroupAccessLevelsOf / auditAccessOf / resolveProjectAccess / assertProjectVisible / permissionsOf / invalidate / projectIdOfNode）、ProjectManagerEligibilityService（listCandidates / eligibleUserIds / assertAssignable）、ProjectAccessGuard + @ProjectAccess / @RequirePermission / @ProjectScope、纯函数策略（permission.rules.ts：projectScopeSpec / can / visibleFields / hiddenFields / projectFields / planExit / exitsConsistent）；HTTP：GET /api/v1/permissions/me |
+| 对外接口 | PermissionService（getAuthorization / can / assertCan / assertWritable / canManageBlueprint / assertCanManageBlueprint / canManageTaskNodes / assertCanManageTaskNodes / canManageTaskTemplates / assertCanManageTaskTemplates / canManageTaskTemplate / assertCanManageTaskTemplate / canBrowseProjectOverview / projectScope / projectGroupAccessLevelsOf / auditAccessOf / resolveProjectAccess / assertProjectVisible / permissionsOf / invalidate / projectIdOfNode）、ProjectManagerEligibilityService（listCandidates / eligibleUserIds / assertAssignable）、ProjectAccessGuard + @ProjectAccess / @RequirePermission / @ProjectScope、纯函数策略（permission.rules.ts：projectScopeSpec / can / visibleFields / hiddenFields / projectFields / planExit / exitsConsistent）；HTTP：GET /api/v1/permissions/me |
 
 ## 已实现（h6）
 
