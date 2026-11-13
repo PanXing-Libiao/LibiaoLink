@@ -145,6 +145,31 @@ const EMPTY_TEMPLATE_LIST: TemplateDraft[] = [];
 /** 按住卡片后位移超过这个数才算「拖动」（没过阈值就是点一下，什么都不改）。 */
 const DRAG_THRESHOLD = 4;
 
+/**
+ * 拖动卡片到视口上 / 下边缘 = 页面跟着滚（业务口径 2026-11-13「向上移也可以滚动页面，
+ * 不只受限于鼠标滚轮」）：指针进边缘 `DRAG_PAGE_EDGE_PX` 内就逐帧滚，越深越快（1~16px/帧）。
+ */
+const DRAG_PAGE_EDGE_PX = 72;
+const DRAG_PAGE_EDGE_MAX_SPEED = 16;
+
+/** 视口边缘自动滚的速度：按深入边缘的程度 1~16px/帧。 */
+function pageEdgeScrollSpeed(depth: number): number {
+  return Math.min(Math.max((depth / DRAG_PAGE_EDGE_PX) * DRAG_PAGE_EDGE_MAX_SPEED, 1), DRAG_PAGE_EDGE_MAX_SPEED);
+}
+
+/**
+ * 拖到视口上 / 下边缘 = 页面自动滚。页面在滚但鼠标不动时，落点仍由拖拽的 RAF 循环重算；
+ * 这里只改窗口滚动位置，不碰卡片数据。
+ */
+function autoScrollPageForDrag(point: { y: number }): void {
+  const viewportBottom = window.innerHeight;
+  if (point.y < DRAG_PAGE_EDGE_PX) {
+    window.scrollBy(0, -pageEdgeScrollSpeed(DRAG_PAGE_EDGE_PX - point.y));
+  } else if (point.y > viewportBottom - DRAG_PAGE_EDGE_PX) {
+    window.scrollBy(0, pageEdgeScrollSpeed(point.y - (viewportBottom - DRAG_PAGE_EDGE_PX)));
+  }
+}
+
 /** 正在拖的节点（Push 116）：左侧节点池拖过来 = 复制一份；模板面板里的卡片 = 在同面板内调顺序。 */
 type DragInfo = { nodeId: string; source: "left" | "right"; fromTemplateId: string | null; width: number };
 
@@ -179,7 +204,7 @@ type PlaceholderPageProps = {
 /** 占位页：顶层页的按钮先各自落地，页面内容后续迭代；任务模板先出阶段板块标签栏 + 左侧任务节点卡片区。 */
 /**
  * 拖动（Push 116，业务口径「这里拖动卡片也要可以滑动鼠标」）：改成**指针拖动** —— 原生 HTML5 拖拽在拖动期间会把 `wheel` 吞掉,
- * 「拖着的同时用滚轮翻列表」就不成立。现在的口径：按住卡片、位移超过 `DRAG_THRESHOLD` 才算拖动，拖起来之后**滚轮直接可用**（指针在页面上 = 滚页面），
+ * 「拖着的同时用滚轮翻列表」就不成立。现在的口径：按住卡片、位移超过 `DRAG_THRESHOLD` 才算拖动，拖起来之后**滚轮直接可用**（指针在页面上 = 滚页面）；拖到视口上 / 下边缘附近也会逐帧自动滚页，不再只依赖滚轮，
  * 拖动中另有一块跟着鼠标走的**半透明拖动卡片**（`data-drag-ghost`，`pointer-events-none`，不挡 `elementFromPoint` 的落点判定），
  * 插入线（`InsertLine`）按「落在哪块面板的第几格」实时跟着走；没过阈值 = 点一下，什么都不改；Esc / 指针取消 = 原地取消。
  * 左侧节点池拖过来 = 复制一份（同面板按节点 id 去重），模板面板里的卡片 = 在同面板内调顺序。
@@ -899,6 +924,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
         const grab = grabRef.current;
         ghost.style.transform = "translate(" + String(pointerRef.current.x - grab.dx) + "px," + String(pointerRef.current.y - grab.dy) + "px)";
       }
+      // 拖到视口上 / 下边缘 = 页面逐帧自动滚；先滚再算落点，插入线跟着新滚出来的位置走
+      autoScrollPageForDrag(pointerRef.current);
       const next = dropTargetAtRef.current(pointerRef.current.x, pointerRef.current.y);
       setDropTarget((previous) =>
         previous !== null && next !== null && previous.templateId === next.templateId && previous.index === next.index ? previous : next,
