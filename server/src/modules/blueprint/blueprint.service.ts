@@ -12,6 +12,31 @@ export type BlueprintView = z.infer<typeof BlueprintViewSchema>;
 /** 兜底默认模板的项目类型（ADR-019）。 */
 export const DEFAULT_BLUEPRINT_PROJECT_TYPE = "default";
 
+const LEGACY_PRODUCTION_STAGE_NAME = "生产阶段";
+const PRODUCTION_STAGE_NAME = "投产阶段";
+const LEGACY_PRODUCTION_NODE_NAME = "生产运行记录";
+const PRODUCTION_NODE_NAME = "投产运行记录";
+
+/**
+ * 展示 / 当前写面兼容：只改 production 阶段与 production.record 节点的精确旧名，
+ * 阶段内其它节点与顺序保持原样。历史 blueprint_versions.payload 不物理改写；读面返回副本即可。
+ */
+function withCurrentProductionNames(blueprint: Blueprint): Blueprint {
+  let changed = false;
+  const stages = blueprint.stages.map((stage) => {
+    const stageName = stage.key === "production" && stage.name === LEGACY_PRODUCTION_STAGE_NAME ? PRODUCTION_STAGE_NAME : stage.name;
+    const nodes = stage.key === "production"
+      ? stage.nodes.map((node) =>
+          node.key === "production.record" && node.name === LEGACY_PRODUCTION_NODE_NAME ? { ...node, name: PRODUCTION_NODE_NAME } : node,
+        )
+      : stage.nodes;
+    if (stageName === stage.name && nodes === stage.nodes) return stage;
+    changed = true;
+    return { ...stage, name: stageName, nodes };
+  });
+  return changed ? { ...blueprint, stages } : blueprint;
+}
+
 export interface BlueprintSnapshot {
   blueprintId: string;
   projectType: string;
@@ -72,7 +97,7 @@ export class BlueprintService {
   ): Promise<BlueprintView> {
     await this.assertAdmin(actorId);
     const projectType = projectTypeInput ?? DEFAULT_BLUEPRINT_PROJECT_TYPE;
-    const blueprint = this.validateOrThrow({ ...(payload as Record<string, unknown>), projectType });
+    const blueprint = withCurrentProductionNames(this.validateOrThrow({ ...(payload as Record<string, unknown>), projectType }));
     const at = new Date();
     const row = await this.database.db.transaction(async (tx) => {
       const existing = await this.blueprints.findByProjectType(projectType, tx);
@@ -103,9 +128,10 @@ export class BlueprintService {
   async publish(projectTypeInput: string | undefined, actorId: string): Promise<BlueprintView> {
     await this.assertAdmin(actorId);
     const row = await this.findRowOrFail(projectTypeInput);
-    const draft = row.draftPayload as Blueprint;
+    const draft = withCurrentProductionNames(row.draftPayload as Blueprint);
     const published = row.publishedVersion > 0 ? await this.blueprints.findVersion(row.id, row.publishedVersion) : null;
-    if (published !== null && sameBlueprint(draft, published.payload as Blueprint)) {
+    const publishedPayload = published === null ? null : withCurrentProductionNames(published.payload as Blueprint);
+    if (publishedPayload !== null && sameBlueprint(draft, publishedPayload)) {
       return this.toView(row);
     }
     const at = new Date();
@@ -141,9 +167,9 @@ export class BlueprintService {
     const row = await this.findRowOrFail(projectTypeInput);
     if (row.publishedVersion > 0) {
       const published = await this.blueprints.findVersion(row.id, row.publishedVersion);
-      if (published !== null) return published.payload as Blueprint;
+      if (published !== null) return withCurrentProductionNames(published.payload as Blueprint);
     }
-    return row.draftPayload as Blueprint;
+    return withCurrentProductionNames(row.draftPayload as Blueprint);
   }
 
   /**
@@ -160,7 +186,7 @@ export class BlueprintService {
         blueprintId: row.id,
         projectType: row.projectType,
         version: row.publishedVersion,
-        payload: version.payload as Blueprint,
+        payload: withCurrentProductionNames(version.payload as Blueprint),
       };
     }
     return null;
@@ -173,7 +199,7 @@ export class BlueprintService {
       if (row === null) continue;
       const versionRow = await this.blueprints.findVersion(row.id, version);
       if (versionRow === null) continue;
-      return { blueprintId: row.id, projectType: row.projectType, version, payload: versionRow.payload as Blueprint };
+      return { blueprintId: row.id, projectType: row.projectType, version, payload: withCurrentProductionNames(versionRow.payload as Blueprint) };
     }
     return null;
   }
@@ -214,9 +240,9 @@ export class BlueprintService {
   }
 
   private async toView(row: BlueprintRow): Promise<BlueprintView> {
-    const draft = row.draftPayload as Blueprint;
+    const draft = withCurrentProductionNames(row.draftPayload as Blueprint);
     const published = row.publishedVersion > 0 ? await this.blueprints.findVersion(row.id, row.publishedVersion) : null;
-    const publishedPayload = published === null ? null : (published.payload as Blueprint);
+    const publishedPayload = published === null ? null : withCurrentProductionNames(published.payload as Blueprint);
     const status: BlueprintView["status"] = publishedPayload !== null && sameBlueprint(draft, publishedPayload) ? "published" : "draft";
     return {
       blueprint: status === "published" && publishedPayload !== null ? publishedPayload : draft,

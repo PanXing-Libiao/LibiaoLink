@@ -8,6 +8,10 @@
 | 预留对外接口 | `ProjectImportService`（preview / commit）+ `ProjectImportRepository`（票据 / 批量写入） |
 | 依据 | 业务口径 2026-10-14（「导入项目」按钮 + 大屏面板 +「直连 API 导入」）；契约 `shared/src/modules/imports.ts`；《前端功能需求》§一.10 / §3.9；迁移 `0053_project_imports.sql` |
 
+## 阶段名称兼容（2026-11-13）
+
+- 任务表「阶段性里程」与变更表「变更阶段」同时识别旧「生产阶段」和新「投产阶段」，内部统一落 `production`；`stageRaw` 保留源表原文，预览提醒不再把旧名判为 `UNKNOWN_STAGE`。这里只做导入别名，不把用户任务名、日报或问题正文做全局替换。
+
 ## 文件
 
 ```text

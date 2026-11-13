@@ -1232,7 +1232,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收） */
+                    /** @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收） */
                     stage?: components["schemas"]["StageKey"];
                     /** @description 任务负责人（单个 UUID）；命中口径（A23 · Push 136）= 该任务挂的任意一位负责人命中即命中 */
                     "filter[ownerId]"?: components["schemas"]["Uuid"] & unknown;
@@ -3918,7 +3918,7 @@ export interface paths {
                 path: {
                     /** @description UUID（主键与关联 ID） */
                     id: components["schemas"]["Uuid"];
-                    /** @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收） */
+                    /** @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收） */
                     key: components["schemas"]["StageKey"];
                 };
                 cookie?: never;
@@ -4011,7 +4011,7 @@ export interface paths {
                 path: {
                     /** @description UUID（主键与关联 ID） */
                     id: components["schemas"]["Uuid"];
-                    /** @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收） */
+                    /** @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收） */
                     key: components["schemas"]["StageKey"];
                 };
                 cookie?: never;
@@ -12788,7 +12788,7 @@ export interface components {
             version: components["schemas"]["Version"];
         };
         /**
-         * @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）
+         * @description 九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收）
          * @enum {string}
          */
         StageKey: "presale" | "design" | "purchase" | "assembly" | "install" | "deploy" | "trial" | "production" | "acceptance";
