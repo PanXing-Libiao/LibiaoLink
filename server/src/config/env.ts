@@ -108,6 +108,8 @@ export const EnvSchema = z
     TRANSLATE_API_MODEL_FALLBACK: z.string().default(""),
     /** 翻译 API Key（由 secrets/translate_api_key 经入口注入，不进仓库 / 不进 .env）；网关无鉴权时可留空。 */
     TRANSLATE_API_KEY: z.string().default(""),
+    /** 模型服务 API Key 的加密密钥，由受控 Secret 注入；留空时不能保存需要密钥的模型服务。 */
+    MODEL_CONFIG_ENCRYPTION_KEY: z.string().default(""),
     /** 兜底引擎基址（可选）：主通道失败时改调该 LibreTranslate 兼容端点（「本地引擎方案保留」接线位；留空 = 不兜底）。 */
     TRANSLATE_FALLBACK_ORIGIN: z.string().default(""),
     // ---- ONLYOFFICE 查看器（S3 · ADR-030：Office / 文本族预览改由 ONLYOFFICE 查看器承接；受控端点鉴权 = 与 DocServer 共享密钥） ----

@@ -28,4 +28,5 @@ export * from "./modules/follows.ts";
 export * from "./modules/notifications.ts";
 export * from "./modules/translate.ts";
 export * from "./modules/imports.ts";
+export * from "./modules/ai-models.ts";
 export { buildOpenApiDocument } from "./openapi.ts";

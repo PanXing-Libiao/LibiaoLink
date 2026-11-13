@@ -17,6 +17,7 @@ import type { TranslateService } from "../src/modules/translate/index.js";
 import type { ProjectImportRepository } from "../src/modules/project-import/index.js";
 import { ProjectImportService } from "../src/modules/project-import/index.js";
 import type { ImportAdmissionGate } from "../src/modules/project-import/import-admission.gate.js";
+import type { ImportNodeMatcher, ImportMatchInput, ImportMatchResult } from "../src/modules/project-import/import-node-matcher.js";
 
 /**
  * 导入表导入用例测试（服务端落地 · 业务口径 2026-10-14）：内存替身（不连库 / 不连对象存储）——
@@ -335,7 +336,7 @@ function createHarness() {
   };
 
   const nodes = {
-    library: [] as Array<{ id: string; stageKey: string; seq: number; title: string; titleEn: string | null }>,
+    library: [] as Array<{ id: string; stageKey: string; seq: number; title: string; titleEn: string | null; version: number }>,
     inserts: [] as Array<{ stageKey: string; seq: number; title: string; titleEn: string | null }>,
     maxSeqs: new Map<string, number>(),
     async list(): Promise<unknown[]> {
@@ -455,6 +456,19 @@ function createHarness() {
     },
   };
 
+  const matcher = {
+    byTitle: new Map<string, ImportMatchResult>(),
+    englishByTitle: new Map<string, string>(),
+    async translateNames(inputs: readonly { index: number; title: string }[]): Promise<Map<number, string>> {
+      return new Map(inputs.flatMap((item) => { const value = this.englishByTitle.get(item.title); return value === undefined ? [] : [[item.index, value] as const]; }));
+    },
+    calls: 0,
+    async match(inputs: readonly ImportMatchInput[]): Promise<Map<number, ImportMatchResult>> {
+      this.calls += 1;
+      return new Map(inputs.map((input) => [input.index, this.byTitle.get(input.title) ?? { kind: "new", nodeId: null }]));
+    },
+  };
+
   const service = new ProjectImportService(
     database as unknown as DatabaseService,
     previews as unknown as ProjectImportRepository,
@@ -468,9 +482,10 @@ function createHarness() {
     storage as unknown as ObjectStorage,
     translate as unknown as TranslateService,
     admission as unknown as ImportAdmissionGate,
+    matcher as unknown as ImportNodeMatcher,
   );
 
-  return { service, previews, projects, members, nodes, audit, storage, translate, flow, permission, managerEligibility, admission };
+  return { service, previews, projects, members, nodes, audit, storage, translate, flow, permission, managerEligibility, admission, matcher };
 }
 
 /** 导入表三种 sheet 的表头（与真实导入表同列名；列顺序可乱，按表头定位）。 */
@@ -703,8 +718,8 @@ function previewPayload(h: ReturnType<typeof createHarness>): Record<string, unk
 
 async function runPreview(h: ReturnType<typeof createHarness>, locale: "zh" | "en" = "zh") {
   h.nodes.library = [
-    { id: "lib-1", stageKey: "install", seq: 10, title: "人员进场、场地检查、施工对接", titleEn: "Personnel entry, site inspection, construction docking" },
-    { id: "lib-2", stageKey: "assembly", seq: 10, title: "运输", titleEn: "Transportation" },
+    { id: "lib-1", stageKey: "install", seq: 10, title: "人员进场、场地检查、施工对接", titleEn: "Personnel entry, site inspection, construction docking", version: 1 },
+    { id: "lib-2", stageKey: "assembly", seq: 10, title: "运输", titleEn: "Transportation", version: 1 },
   ];
   return h.service.preview({ bytes: sampleWorkbook(), fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx", actorId: ACTOR_ID, locale });
 }
@@ -730,6 +745,62 @@ const COMMIT_BODY = { region: "英国", projectType: "飞箱", addMissingNodes: 
 // ---------- preview ----------
 
 describe("ProjectImportService.preview（导入表解析预览）", () => {
+
+  it("完成态缺实际完成日期按进行中导入，已填日期保留完成态", async () => {
+    const h = createHarness();
+    const sheets: SheetInput[] = [{
+      name: "任务",
+      rows: [
+        TASK_HEADER,
+        ["缺日期完成", "投产阶段", "已完成", "1", "", "", "", "", ""],
+        ["缺日期提前完成", "生产阶段", "提前完成", "1", "", "", "", "", ""],
+        ["有日期提前完成", "投产阶段", "提前完成", "1", "", "", "", "", "2026-11-01"],
+      ],
+    }];
+    const preview = await h.service.preview({
+      bytes: buildWorkbook(sheets), fileName: "[TEST] UK-导入.xlsx", actorId: ACTOR_ID, locale: "zh",
+    });
+    expect(preview.issues.filter((item) => item.code === "DONE_NO_DATE")).toHaveLength(2);
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("placeholder.png"));
+    await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY, addMissingNodes: false }, ACTOR_ID, "zh");
+    expect(h.previews.tasks.map((task) => [task.status, task.progress, task.statusOverride, task.actualEnd])).toEqual([
+      ["active", 0.75, null, null],
+      ["active", 0.75, null, null],
+      ["done", 1, "early_done", "2026-11-01"],
+    ]);
+  });
+
+  it("新旧投产阶段在同一节点库中进行匹配并保留冲突任务", async () => {
+    const h = createHarness();
+    h.nodes.library = [{ id: "lib-production", stageKey: "production", seq: 10, title: "产能爬坡", titleEn: "Capacity climbing", version: 1 }];
+    h.matcher.byTitle.set("生产能力提升", { kind: "semantic", nodeId: "lib-production" });
+    const sheets: SheetInput[] = [{
+      name: "任务",
+      rows: [
+        TASK_HEADER,
+        ["产能爬坡", "生产阶段", "待开始", "0"],
+        ["生产能力提升", "投产阶段", "待开始", "0"],
+      ],
+    }];
+    const preview = await h.service.preview({
+      bytes: buildWorkbook(sheets), fileName: "[TEST] UK-投产.xlsx", actorId: ACTOR_ID, locale: "zh",
+    });
+    expect(preview.nodes.map((node) => [node.stageKey, node.matchKind, node.libraryId])).toEqual([
+      ["production", "exact", "lib-production"],
+      ["production", "semantic", "lib-production"],
+    ]);
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("placeholder.png"));
+    await expectCode(() => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh"), "VALIDATION_FAILED");
+    await h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      conflictChoices: [{ key: "existing:lib-production", taskIndex: 1 }],
+    }, ACTOR_ID, "zh");
+    expect(h.previews.tasks.map((task) => [task.title, task.taskNodeId])).toEqual([
+      ["产能爬坡", null],
+      ["产能爬坡", "lib-production"],
+    ]);
+  });
+
   it("解析口径：条数 / 落位 / 节点匹配 / 账号 / 手动清单 / 提醒", async () => {
     const h = createHarness();
     const preview = await runPreview(h);
@@ -1448,6 +1519,124 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
       ["user-jia", "project_manager"],
       [ACTOR_ID, "project_member"],
     ]);
+  });
+
+
+  it("语义命中时采用标准名称；多条任务命中同一节点须人工选择，保留所有任务", async () => {
+    const h = createHarness();
+    h.matcher.byTitle.set("通电测试", { kind: "semantic", nodeId: "lib-1" });
+    const preview = await runPreview(h);
+    expect(preview.nodes.find((node) => node.name === "通电测试")?.matchKind).toBe("semantic");
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
+    await expectCode(() => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh"), "VALIDATION_FAILED");
+    expect(h.projects.inserted).toHaveLength(0);
+    const result = await h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      conflictChoices: [{ key: "existing:lib-1", taskIndex: 1 }],
+    }, ACTOR_ID, "zh");
+    expect(result.counts.tasks).toBe(4);
+    expect(h.previews.tasks.map((task) => task.taskNodeId)).toEqual([null, "lib-1", "lib-2", null]);
+    expect(h.previews.tasks[0]?.title).toBe("人员进场、场地检查、施工对接");
+    expect(h.previews.tasks[1]?.title).toBe("人员进场、场地检查、施工对接");
+    expect(h.matcher.calls).toBe(1);
+  });
+
+  it("AI 无法判断时必须人工选择，选择只导入任务不会新增节点", async () => {
+    const h = createHarness();
+    h.matcher.byTitle.set("通电测试", { kind: "uncertain", nodeId: null });
+    const preview = await runPreview(h);
+    const node = preview.nodes.find((item) => item.name === "通电测试")!;
+    expect(node.matchKind).toBe("uncertain");
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
+    await expectCode(() => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh"), "VALIDATION_FAILED");
+    await h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: node.groupIndex, action: "standalone", nodeId: null }],
+    }, ACTOR_ID, "zh");
+    expect(h.nodes.inserts).toEqual([]);
+    expect(h.previews.tasks[1]?.taskNodeId).toBeNull();
+    expect(h.previews.tasks[1]?.title).toBe("通电测试");
+  });
+
+
+  it("人工更正错误的语义匹配为新节点时，保留源表英文名", async () => {
+    const h = createHarness();
+    h.matcher.byTitle.set("通电测试", { kind: "semantic", nodeId: "lib-1" });
+    const preview = await runPreview(h);
+    const node = preview.nodes.find((item) => item.name === "通电测试")!;
+    expect(node.sourceNameEn).toBe("Power-on Test");
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
+    const result = await h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: node.groupIndex, action: "new", nodeId: null }],
+    }, ACTOR_ID, "zh");
+    expect(result.counts.nodesAdded).toBe(1);
+    expect(h.nodes.inserts[0]).toMatchObject({ title: "通电测试", titleEn: "Power-on Test" });
+    expect(h.previews.tasks[1]?.title).toBe("通电测试");
+  });
+
+
+  it("缺少英文时补全预览、临时任务和确认入库的新节点，保留源表及标准节点英文", async () => {
+    const h = createHarness();
+    h.matcher.englishByTitle.set("通电测试", "Power-on test");
+    h.matcher.englishByTitle.set("现场补装", "On-site installation");
+    const sheets = sampleSheets();
+    sheets[0]!.rows[2]![0] = "通电测试";
+    h.nodes.library = [
+      { id: "lib-1", stageKey: "install", seq: 10, title: "人员进场、场地检查、施工对接", titleEn: "Standard site entry", version: 1 },
+      { id: "lib-2", stageKey: "assembly", seq: 10, title: "运输", titleEn: "Transportation", version: 1 },
+    ];
+    const preview = await h.service.preview({ bytes: buildWorkbook(sheets), fileName: "[EN-TEST] UK.xlsx", actorId: ACTOR_ID, locale: "zh" });
+    expect(preview.nodes.find((node) => node.name === "通电测试")?.nameEn).toBe("Power-on test");
+    expect(preview.nodes.find((node) => node.name === "现场补装")?.sourceNameEn).toBe("On-site installation");
+    expect(preview.nodes.find((node) => node.name === "人员进场、场地检查、施工对接")?.nameEn).toBe("Standard site entry");
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
+    await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+    expect(h.nodes.inserts[0]?.titleEn).toBe("Power-on test");
+    expect(h.previews.tasks[1]?.titleEn).toBe("Power-on test");
+    expect(h.previews.tasks[3]?.titleEn).toBe("On-site installation");
+    expect(h.previews.tasks[0]?.titleEn).toBe("Standard site entry");
+  });
+
+  it("人工改选没有英文的标准节点时，为标准名称生成英文", async () => {
+    const h = createHarness();
+    h.nodes.library = [{ id: "lib-standard", stageKey: "install", seq: 10, title: "设备安全检查", titleEn: null, version: 1 }];
+    h.matcher.byTitle.set("通电测试", { kind: "uncertain", nodeId: null });
+    h.matcher.englishByTitle.set("设备安全检查", "Equipment safety inspection");
+    const sheets: SheetInput[] = [{ name: "任务", rows: [TASK_HEADER, ["通电测试\nPower-on Test", "硬件实施", "待开始", "0"]] }];
+    const preview = await h.service.preview({ bytes: buildWorkbook(sheets), fileName: "[EN-SELECT] UK.xlsx", actorId: ACTOR_ID, locale: "zh" });
+    const group = preview.nodes[0]!;
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("unused.png"));
+    await h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: group.groupIndex, action: "existing", nodeId: "lib-standard" }],
+    }, ACTOR_ID, "zh");
+    expect(h.previews.tasks[0]?.title).toBe("设备安全检查");
+    expect(h.previews.tasks[0]?.titleEn).toBe("Equipment safety inspection");
+  });
+
+
+  it("改选标准节点的英文生成失败时不写入另一条源任务的英文", async () => {
+    const h = createHarness();
+    h.nodes.library = [{ id: "lib-standard", stageKey: "install", seq: 10, title: "设备安全检查", titleEn: null, version: 1 }];
+    h.matcher.byTitle.set("通电测试", { kind: "uncertain", nodeId: null });
+    const sheets: SheetInput[] = [{ name: "任务", rows: [TASK_HEADER, ["通电测试\nPower-on Test", "硬件实施", "待开始", "0"]] }];
+    const preview = await h.service.preview({ bytes: buildWorkbook(sheets), fileName: "[EN-FAIL] UK.xlsx", actorId: ACTOR_ID, locale: "zh" });
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("unused.png"));
+    await h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: preview.nodes[0]!.groupIndex, action: "existing", nodeId: "lib-standard" }],
+    }, ACTOR_ID, "zh");
+    expect(h.previews.tasks[0]?.title).toBe("设备安全检查");
+    expect(h.previews.tasks[0]?.titleEn).toBeNull();
+  });
+
+  it("预览后标准节点发生修改时要求重新解析，避免写入未确认的名称", async () => {
+    const h = createHarness();
+    const preview = await runPreview(h);
+    h.nodes.library[0]!.version += 1;
+    await expectCode(() => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh"), "VERSION_CONFLICT");
+    expect(h.projects.inserted).toHaveLength(0);
   });
 
   it("不勾选补节点：任务按文件原名导入（taskNodeId 为空），节点库不动", async () => {

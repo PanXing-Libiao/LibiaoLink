@@ -224,6 +224,169 @@
         ],
         "description": "当前用户授权画像（全量能力基线 + 部门规则裁决结果）"
       },
+      "AiModelActivate": {
+        "type": "object",
+        "properties": {
+          "providerId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "modelId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "providerId",
+          "modelId"
+        ],
+        "additionalProperties": false
+      },
+      "AiModelList": {
+        "type": "object",
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "models"
+        ]
+      },
+      "AiModelProvider": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "baseUrl": {
+            "type": "string"
+          },
+          "hasApiKey": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "baseUrl",
+          "hasApiKey",
+          "version",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "AiModelProviderCreate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "baseUrl": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "format": "uri"
+          },
+          "apiKey": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "required": [
+          "name",
+          "baseUrl"
+        ],
+        "additionalProperties": false
+      },
+      "AiModelProviderUpdate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "baseUrl": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "format": "uri"
+          },
+          "apiKey": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "clearApiKey": {
+            "type": "boolean",
+            "default": false
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "name",
+          "baseUrl",
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "AiModelSelection": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "providerId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "modelId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "modelId"
+        ]
+      },
+      "AiModelSettings": {
+        "type": "object",
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiModelProvider"
+            }
+          },
+          "active": {
+            "$ref": "#/components/schemas/AiModelSelection"
+          }
+        },
+        "required": [
+          "providers",
+          "active"
+        ]
+      },
       "ApiError": {
         "type": "object",
         "properties": {
@@ -477,9 +640,10 @@
           "automation_rule",
           "notify_delivery",
           "group_access_rule",
-          "group_access_admin"
+          "group_access_admin",
+          "ai_model_provider"
         ],
-        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24）"
+        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24） / ai_model_provider 模型服务（对象 id = 服务 id；不记录密钥）"
       },
       "AuditResult": {
         "type": "string",
@@ -5650,6 +5814,472 @@
         "maxLength": 128,
         "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果"
       },
+      "ImportAccount": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "源表姓名（去括注）"
+          },
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "登录名（拼音全拼；人员注册表口径）"
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "显示名（测试账号 = 中文名 + -test；既有账号保持原名）"
+          },
+          "isNew": {
+            "type": "boolean",
+            "description": "true = 本次需新建（面板展示「新建」徽标）"
+          }
+        },
+        "required": [
+          "name",
+          "username",
+          "displayName",
+          "isNew"
+        ],
+        "description": "导入涉及的人员账号（只报告，不在导入里创建账号 —— 缺号仅测试环境需预建；正式环境用户目录完整）"
+      },
+      "ImportFileMeta": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "上传文件名（原样回显）"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "文件大小（字节）"
+          }
+        },
+        "required": [
+          "name",
+          "size"
+        ],
+        "description": "上传文件元信息"
+      },
+      "ImportIssue": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "$ref": "#/components/schemas/ImportIssueLevel"
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "提醒代码（DATE_ORDER / DONE_NO_DATE / PROGRESS_BINNED / MANAGER_FILLED / ACCOUNT_MISSING 等）"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "提醒文案（服务端按 Accept-Language 出中 / 英）"
+          },
+          "row": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "源表行号（行级提醒才有；null = 全局提醒）"
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "关联对象名（任务名 / 文件名等；可空）"
+          }
+        },
+        "required": [
+          "level",
+          "code",
+          "message",
+          "row",
+          "subject"
+        ],
+        "description": "导入提醒（level 三档 + 代码 + 文案 + 行号 / 对象名）"
+      },
+      "ImportIssueLevel": {
+        "type": "string",
+        "enum": [
+          "error",
+          "warning",
+          "info"
+        ],
+        "description": "提醒等级：error = 阻断（处理完才能导入）/ warning = 照原值导入只提示 / info = 口径说明"
+      },
+      "ImportManualFileKind": {
+        "type": "string",
+        "enum": [
+          "task",
+          "change_after"
+        ],
+        "description": "手动文件落位：task = 任务表「文件」列（自动挂对应任务）；change_after = 变更表「变更后文件」（有关联任务时同时挂任务）"
+      },
+      "ImportManualImage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "稳定标识（manual-<序号>；提交结果据此回传任务 / 变更目标）"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ImportManualFileKind"
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "关联任务 / 变更行（可空）"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "description": "文件名 / 路径（源表原文）"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "原因（微盘 / 本地路径，需手动上传）"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "task",
+          "name",
+          "reason"
+        ],
+        "description": "需手动导入的图片 / 文件清单（面板可就地选文件，确认导入后一并上传）"
+      },
+      "ImportManualTarget": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "taskId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "changeId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "taskId",
+          "changeId"
+        ],
+        "description": "手动文件落位目标（任务 / 变更；均可空）"
+      },
+      "ImportPreviewCounts": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reports": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "changes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "changesLinked": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "变更已关联任务数（「关联」列 + R01 输出成果文件匹配；其余只存变更记录）"
+          },
+          "stakeholders": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "干系人条数（导入表「干系人」表；落 stakeholders + project_stakeholders）"
+          },
+          "images": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "表内嵌图总数（提交时一并入文件库并挂日报）"
+          },
+          "imagesManual": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "accountsNew": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "nodesNew": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tasks",
+          "reports",
+          "changes",
+          "changesLinked",
+          "stakeholders",
+          "images",
+          "imagesManual",
+          "accountsNew",
+          "nodesNew"
+        ],
+        "description": "将写入条数（预览）"
+      },
+      "ImportProjectPlacement": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "项目编号（源表文件名 [编号] 段；只读回显）"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "项目名（默认取源表名，导入后可改）"
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "description": "识别出的地区（标准国家名）；识别不出 = null（面板强制用户选）"
+          },
+          "projectType": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "description": "识别出的项目类型（字典码：AIRROB → 飞箱）；识别不出 = null（可留空）"
+          },
+          "managerNames": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "maxItems": 20,
+            "description": "源表项目经理原文（按全表多数口径补）"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "region",
+          "projectType",
+          "managerNames"
+        ],
+        "description": "项目落位（面板左栏「项目落位」块）"
+      },
+      "ImportResultCounts": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reports": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "changes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "changesLinked": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "变更已关联任务数（「关联」列 + R01 输出成果文件匹配；其余只存变更记录）"
+          },
+          "stakeholders": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "干系人条数（导入表「干系人」表；落 stakeholders + project_stakeholders）"
+          },
+          "images": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "accountsCreated": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "本次落位账号数（信息性：账号由 SSO 登录创建，这里指识别到的账号数）"
+          },
+          "nodesAdded": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tasks",
+          "reports",
+          "changes",
+          "changesLinked",
+          "stakeholders",
+          "images",
+          "accountsCreated",
+          "nodesAdded"
+        ],
+        "description": "实际写入条数（完成页复述）"
+      },
+      "ImportTaskNode": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "节点名（源表原文 / 节点库标题）"
+          },
+          "nameEn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "节点英文名（优先节点库，其次源表或 AI 补全）；无法生成时为 null"
+          },
+          "sourceNameEn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "源表英文名或 AI 补全的英文，人工改选新节点时使用"
+          },
+          "matched": {
+            "type": "boolean",
+            "description": "是否匹配已有节点（精确或语义匹配）"
+          },
+          "groupIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stageKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 32
+          },
+          "matchKind": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "semantic",
+              "new",
+              "uncertain",
+              "temporary"
+            ]
+          },
+          "libraryId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "row": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "index",
+                "row"
+              ]
+            },
+            "maxItems": 200000
+          },
+          "inStageScope": {
+            "type": "boolean",
+            "description": "是否落在阶段范围内（false = 临时任务，不补节点库）"
+          },
+          "taskCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "关联任务条数"
+          }
+        },
+        "required": [
+          "name",
+          "nameEn",
+          "sourceNameEn",
+          "matched",
+          "groupIndex",
+          "stageKey",
+          "matchKind",
+          "libraryId",
+          "tasks",
+          "inStageScope",
+          "taskCount"
+        ],
+        "description": "来源任务节点分组及匹配结果"
+      },
       "Issue": {
         "type": "object",
         "properties": {
@@ -8956,6 +9586,258 @@
           }
         },
         "description": "绑定 / 换绑项目群：chatid 或 candidateId 二选一 + 群名备注可空；PUT = upsert 覆盖语义"
+      },
+      "ProjectImportCommitBody": {
+        "type": "object",
+        "properties": {
+          "previewId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "项目地区（region 字典的码 / 标准国家名；必填）"
+          },
+          "projectType": {
+            "type": "string",
+            "maxLength": 64,
+            "default": "",
+            "description": "项目类型（projectType 字典的码）；空串 = 未指定（解析按源表关键字给默认，如 AIRROB → 飞箱）"
+          },
+          "nodeDecisions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "groupIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "existing",
+                    "new",
+                    "standalone"
+                  ]
+                },
+                "nodeId": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Uuid"
+                    },
+                    {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "groupIndex",
+                "action",
+                "nodeId"
+              ]
+            },
+            "maxItems": 2000
+          },
+          "conflictChoices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "taskIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "key",
+                "taskIndex"
+              ]
+            },
+            "maxItems": 2000
+          },
+          "addMissingNodes": {
+            "type": "boolean",
+            "default": true,
+            "description": "是否把未匹配的任务节点补进节点库（只有落在阶段范围内的会补；阶段外按临时任务）"
+          }
+        },
+        "required": [
+          "previewId",
+          "region"
+        ],
+        "description": "确认导入（落位确认 + 节点补库开关）"
+      },
+      "ProjectImportPreview": {
+        "type": "object",
+        "properties": {
+          "previewId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "description": "预览票据（commit 时原样回传）"
+              }
+            ]
+          },
+          "expiresAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "票据过期时间（超时 410 IMPORT_PREVIEW_EXPIRED）"
+              }
+            ]
+          },
+          "file": {
+            "$ref": "#/components/schemas/ImportFileMeta"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ImportProjectPlacement"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ImportPreviewCounts"
+          },
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportAccount"
+            },
+            "maxItems": 300
+          },
+          "imagesManual": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportManualImage"
+            },
+            "maxItems": 2000
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportTaskNode"
+            },
+            "maxItems": 2000
+          },
+          "nodeLibrary": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "stageKey": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "titleEn": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 200
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "id",
+                "stageKey",
+                "title",
+                "titleEn",
+                "version"
+              ]
+            },
+            "maxItems": 10000
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportIssue"
+            },
+            "maxItems": 5000
+          }
+        },
+        "required": [
+          "previewId",
+          "expiresAt",
+          "file",
+          "project",
+          "counts",
+          "accounts",
+          "imagesManual",
+          "nodes",
+          "nodeLibrary",
+          "issues"
+        ],
+        "description": "导入表导入预览报告（解析不写库；确认后才写入）"
+      },
+      "ProjectImportResult": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ImportResultCounts"
+          },
+          "manualTargets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportManualTarget"
+            },
+            "maxItems": 2000,
+            "default": [],
+            "description": "手动文件落位目标（与预览 imagesManual 同序；前端据此在导入后一并上传）"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportIssue"
+            },
+            "maxItems": 5000,
+            "description": "完成后复述的提醒清单（照原值导入项与人工待办）"
+          }
+        },
+        "required": [
+          "projectId",
+          "code",
+          "name",
+          "counts",
+          "issues"
+        ],
+        "description": "导入表导入结果（项目已创建 + 各域条数 + 提醒复述）"
       },
       "ProjectListResponse": {
         "type": "object",
@@ -13699,6 +14581,517 @@
     "parameters": {}
   },
   "paths": {
+    "/api/v1/model-settings": {
+      "get": {
+        "tags": [
+          "model-settings"
+        ],
+        "summary": "读取模型服务与当前模型",
+        "responses": {
+          "200": {
+            "description": "不返回 API Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiModelSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/model-settings/providers": {
+      "post": {
+        "tags": [
+          "model-settings"
+        ],
+        "summary": "新增模型服务",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiModelProviderCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "模型服务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiModelProvider"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/model-settings/providers/{id}": {
+      "put": {
+        "tags": [
+          "model-settings"
+        ],
+        "summary": "修改模型服务",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiModelProviderUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "模型服务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiModelProvider"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "model-settings"
+        ],
+        "summary": "删除模型服务",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已删除"
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/model-settings/providers/{id}/models": {
+      "get": {
+        "tags": [
+          "model-settings"
+        ],
+        "summary": "自动识别模型列表",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "模型列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiModelList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/model-settings/active": {
+      "put": {
+        "tags": [
+          "model-settings"
+        ],
+        "summary": "设置全系统当前模型",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiModelActivate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "已启用"
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/project-imports/preview": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "解析 Excel 并预览项目、节点语义匹配与待确认项",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "导入预览票据与节点匹配结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectImportPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "导入任务正在处理中（RATE_LIMITED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/project-imports/commit": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "确认节点选择并导入项目",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectImportCommitBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "导入结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "上传会话已过期（UPLOAD_SESSION_EXPIRED，需重新发起上传）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "导入任务正在处理中（RATE_LIMITED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects": {
       "get": {
         "tags": [

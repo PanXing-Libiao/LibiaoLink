@@ -3,6 +3,558 @@
  * 源：shared/src 下的 Zod schema → generated/openapi.json → 本文件。
  */
 export interface paths {
+    "/api/v1/model-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取模型服务与当前模型 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 不返回 API Key */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AiModelSettings"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/model-settings/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 新增模型服务 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["AiModelProviderCreate"];
+                };
+            };
+            responses: {
+                /** @description 模型服务 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AiModelProvider"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/model-settings/providers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 修改模型服务 */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["AiModelProviderUpdate"];
+                };
+            };
+            responses: {
+                /** @description 模型服务 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AiModelProvider"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** 删除模型服务 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已删除 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/model-settings/providers/{id}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 自动识别模型列表 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 模型列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AiModelList"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/model-settings/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 设置全系统当前模型 */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["AiModelActivate"];
+                };
+            };
+            responses: {
+                /** @description 已启用 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/project-imports/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 解析 Excel 并预览项目、节点语义匹配与待确认项 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "multipart/form-data": {
+                        /** Format: binary */
+                        file: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description 导入预览票据与节点匹配结果 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectImportPreview"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 导入任务正在处理中（RATE_LIMITED） */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/project-imports/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 确认节点选择并导入项目 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ProjectImportCommitBody"];
+                };
+            };
+            responses: {
+                /** @description 导入结果 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectImportResult"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 上传会话已过期（UPLOAD_SESSION_EXPIRED，需重新发起上传） */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 导入任务正在处理中（RATE_LIMITED） */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -10226,6 +10778,45 @@ export interface components {
             taskTemplateManage?: boolean;
             auditScope?: components["schemas"]["AuditScope"];
         };
+        AiModelActivate: {
+            providerId: components["schemas"]["Uuid"];
+            modelId: string;
+        };
+        AiModelList: {
+            models: string[];
+        };
+        AiModelProvider: {
+            id: components["schemas"]["Uuid"];
+            name: string;
+            baseUrl: string;
+            hasApiKey: boolean;
+            version: number;
+            createdAt: components["schemas"]["DateTime"];
+            updatedAt: components["schemas"]["DateTime"];
+        };
+        AiModelProviderCreate: {
+            name: string;
+            /** Format: uri */
+            baseUrl: string;
+            apiKey?: string;
+        };
+        AiModelProviderUpdate: {
+            name: string;
+            /** Format: uri */
+            baseUrl: string;
+            apiKey?: string;
+            /** @default false */
+            clearApiKey: boolean;
+            version: number;
+        };
+        AiModelSelection: {
+            providerId: components["schemas"]["Uuid"];
+            modelId: string;
+        } | null;
+        AiModelSettings: {
+            providers: components["schemas"]["AiModelProvider"][];
+            active: components["schemas"]["AiModelSelection"];
+        };
         /** @description 统一错误信封（技术设计v0.2 §7.2） */
         ApiError: {
             code: components["schemas"]["ErrorCode"];
@@ -10292,10 +10883,10 @@ export interface components {
             windowId: number | null;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24） / ai_model_provider 模型服务（对象 id = 服务 id；不记录密钥）
          * @enum {string}
          */
-        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user" | "wecom_dm_binding" | "automation_rule" | "notify_delivery" | "group_access_rule" | "group_access_admin";
+        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user" | "wecom_dm_binding" | "automation_rule" | "notify_delivery" | "group_access_rule" | "group_access_admin" | "ai_model_provider";
         /**
          * @description 审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）
          * @enum {string}
@@ -11681,6 +12272,130 @@ export interface components {
         HubView: "map" | "dashboard";
         /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
         IdempotencyKey: string;
+        /** @description 导入涉及的人员账号（只报告，不在导入里创建账号 —— 缺号仅测试环境需预建；正式环境用户目录完整） */
+        ImportAccount: {
+            /** @description 源表姓名（去括注） */
+            name: string;
+            /** @description 登录名（拼音全拼；人员注册表口径） */
+            username: string;
+            /** @description 显示名（测试账号 = 中文名 + -test；既有账号保持原名） */
+            displayName: string;
+            /** @description true = 本次需新建（面板展示「新建」徽标） */
+            isNew: boolean;
+        };
+        /** @description 上传文件元信息 */
+        ImportFileMeta: {
+            /** @description 上传文件名（原样回显） */
+            name: string;
+            /** @description 文件大小（字节） */
+            size: number;
+        };
+        /** @description 导入提醒（level 三档 + 代码 + 文案 + 行号 / 对象名） */
+        ImportIssue: {
+            level: components["schemas"]["ImportIssueLevel"];
+            /** @description 提醒代码（DATE_ORDER / DONE_NO_DATE / PROGRESS_BINNED / MANAGER_FILLED / ACCOUNT_MISSING 等） */
+            code: string;
+            /** @description 提醒文案（服务端按 Accept-Language 出中 / 英） */
+            message: string;
+            /** @description 源表行号（行级提醒才有；null = 全局提醒） */
+            row: number | null;
+            /** @description 关联对象名（任务名 / 文件名等；可空） */
+            subject: string | null;
+        };
+        /**
+         * @description 提醒等级：error = 阻断（处理完才能导入）/ warning = 照原值导入只提示 / info = 口径说明
+         * @enum {string}
+         */
+        ImportIssueLevel: "error" | "warning" | "info";
+        /**
+         * @description 手动文件落位：task = 任务表「文件」列（自动挂对应任务）；change_after = 变更表「变更后文件」（有关联任务时同时挂任务）
+         * @enum {string}
+         */
+        ImportManualFileKind: "task" | "change_after";
+        /** @description 需手动导入的图片 / 文件清单（面板可就地选文件，确认导入后一并上传） */
+        ImportManualImage: {
+            /** @description 稳定标识（manual-<序号>；提交结果据此回传任务 / 变更目标） */
+            id: string;
+            kind: components["schemas"]["ImportManualFileKind"];
+            /** @description 关联任务 / 变更行（可空） */
+            task: string | null;
+            /** @description 文件名 / 路径（源表原文） */
+            name: string;
+            /** @description 原因（微盘 / 本地路径，需手动上传） */
+            reason: string;
+        };
+        /** @description 手动文件落位目标（任务 / 变更；均可空） */
+        ImportManualTarget: {
+            id: string;
+            taskId: components["schemas"]["Uuid"] & (string | null);
+            changeId: components["schemas"]["Uuid"] & (string | null);
+        };
+        /** @description 将写入条数（预览） */
+        ImportPreviewCounts: {
+            tasks: number;
+            reports: number;
+            changes: number;
+            /** @description 变更已关联任务数（「关联」列 + R01 输出成果文件匹配；其余只存变更记录） */
+            changesLinked: number;
+            /** @description 干系人条数（导入表「干系人」表；落 stakeholders + project_stakeholders） */
+            stakeholders: number;
+            /** @description 表内嵌图总数（提交时一并入文件库并挂日报） */
+            images: number;
+            imagesManual: number;
+            accountsNew: number;
+            nodesNew: number;
+        };
+        /** @description 项目落位（面板左栏「项目落位」块） */
+        ImportProjectPlacement: {
+            /** @description 项目编号（源表文件名 [编号] 段；只读回显） */
+            code: string;
+            /** @description 项目名（默认取源表名，导入后可改） */
+            name: string;
+            /** @description 识别出的地区（标准国家名）；识别不出 = null（面板强制用户选） */
+            region: string | null;
+            /** @description 识别出的项目类型（字典码：AIRROB → 飞箱）；识别不出 = null（可留空） */
+            projectType: string | null;
+            /** @description 源表项目经理原文（按全表多数口径补） */
+            managerNames: string[];
+        };
+        /** @description 实际写入条数（完成页复述） */
+        ImportResultCounts: {
+            tasks: number;
+            reports: number;
+            changes: number;
+            /** @description 变更已关联任务数（「关联」列 + R01 输出成果文件匹配；其余只存变更记录） */
+            changesLinked: number;
+            /** @description 干系人条数（导入表「干系人」表；落 stakeholders + project_stakeholders） */
+            stakeholders: number;
+            images: number;
+            /** @description 本次落位账号数（信息性：账号由 SSO 登录创建，这里指识别到的账号数） */
+            accountsCreated: number;
+            nodesAdded: number;
+        };
+        /** @description 来源任务节点分组及匹配结果 */
+        ImportTaskNode: {
+            /** @description 节点名（源表原文 / 节点库标题） */
+            name: string;
+            /** @description 节点英文名（优先节点库，其次源表或 AI 补全）；无法生成时为 null */
+            nameEn: string | null;
+            /** @description 源表英文名或 AI 补全的英文，人工改选新节点时使用 */
+            sourceNameEn: string | null;
+            /** @description 是否匹配已有节点（精确或语义匹配） */
+            matched: boolean;
+            groupIndex: number;
+            stageKey: string | null;
+            /** @enum {string} */
+            matchKind: "exact" | "semantic" | "new" | "uncertain" | "temporary";
+            libraryId: components["schemas"]["Uuid"] & (string | null);
+            tasks: {
+                index: number;
+                row: number;
+            }[];
+            /** @description 是否落在阶段范围内（false = 临时任务，不补节点库） */
+            inStageScope: boolean;
+            /** @description 关联任务条数 */
+            taskCount: number;
+        };
         /** @description 一条问题记录（由日报自动生成或手工创建） */
         Issue: {
             id: components["schemas"]["Uuid"];
@@ -12571,6 +13286,65 @@ export interface components {
             candidateId?: number;
             /** @description 群名 / 备注（维护用；可空） */
             name?: string | null;
+        };
+        /** @description 确认导入（落位确认 + 节点补库开关） */
+        ProjectImportCommitBody: {
+            previewId: components["schemas"]["Uuid"];
+            /** @description 项目地区（region 字典的码 / 标准国家名；必填） */
+            region: string;
+            /**
+             * @description 项目类型（projectType 字典的码）；空串 = 未指定（解析按源表关键字给默认，如 AIRROB → 飞箱）
+             * @default
+             */
+            projectType: string;
+            nodeDecisions?: {
+                groupIndex: number;
+                /** @enum {string} */
+                action: "existing" | "new" | "standalone";
+                nodeId: components["schemas"]["Uuid"] & (string | null);
+            }[];
+            conflictChoices?: {
+                key: string;
+                taskIndex: number;
+            }[];
+            /**
+             * @description 是否把未匹配的任务节点补进节点库（只有落在阶段范围内的会补；阶段外按临时任务）
+             * @default true
+             */
+            addMissingNodes: boolean;
+        };
+        /** @description 导入表导入预览报告（解析不写库；确认后才写入） */
+        ProjectImportPreview: {
+            previewId: components["schemas"]["Uuid"] & unknown;
+            expiresAt: components["schemas"]["DateTime"] & unknown;
+            file: components["schemas"]["ImportFileMeta"];
+            project: components["schemas"]["ImportProjectPlacement"];
+            counts: components["schemas"]["ImportPreviewCounts"];
+            accounts: components["schemas"]["ImportAccount"][];
+            imagesManual: components["schemas"]["ImportManualImage"][];
+            nodes: components["schemas"]["ImportTaskNode"][];
+            nodeLibrary: {
+                id: components["schemas"]["Uuid"];
+                stageKey: string;
+                title: string;
+                titleEn: string | null;
+                version: number;
+            }[];
+            issues: components["schemas"]["ImportIssue"][];
+        };
+        /** @description 导入表导入结果（项目已创建 + 各域条数 + 提醒复述） */
+        ProjectImportResult: {
+            projectId: components["schemas"]["Uuid"];
+            code: string;
+            name: string;
+            counts: components["schemas"]["ImportResultCounts"];
+            /**
+             * @description 手动文件落位目标（与预览 imagesManual 同序；前端据此在导入后一并上传）
+             * @default []
+             */
+            manualTargets: components["schemas"]["ImportManualTarget"][];
+            /** @description 完成后复述的提醒清单（照原值导入项与人工待办） */
+            issues: components["schemas"]["ImportIssue"][];
         };
         ProjectListResponse: {
             items: components["schemas"]["Project"][];

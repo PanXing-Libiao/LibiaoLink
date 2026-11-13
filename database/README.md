@@ -1,3 +1,5 @@
+> **模型管理（本机实现）**：迁移 0093 新增模型服务与当前模型选择；密钥只保存加密结果，需部署前准备独立密钥保护配置。
+
 > **2026-11-13 · 任务模板个人 / 公共可见范围**：`0092_task_template_visibility.sql` 给 `task_templates` 增 `visibility text not null default 'public'` 与 CHECK（`private` / `public`）；存量与种子保持公共模板。`private` 仅填写人可在列表 / 详情 / 项目添加任务模板标签中看到并用于生成任务；`public` 沿用现有模板浏览权。编辑 / 删除权限不变；创建后由填写人或管理员在卡片内切换可见范围并随「保存」落库，系统预置模板保持 `public`。
 
 > **2026-11-13 · 投产节点与投产阶段模板显示名补充改名**：`0091_production_node_and_template_display_rename.sql` 只改现行 `blueprints.draft_payload` 中 `production` 阶段的 `production.record` 节点精确旧名“生产运行记录”→“投产运行记录”，并把一条未删除、系统创建且仍名为“生产阶段模板”或“生产阶段参考模板”的模板改为“投产阶段模板”；已有“投产阶段模板”时模板命中 0。历史 `blueprint_versions.payload` 保留原文并由服务读面映射阶段名与节点名；模板节点“产能爬坡”、用户模板、通知、发送归档、导入预览、翻译缓存、outbox、审计原文与其它业务正文均不改。迁移幂等，重复执行命中 0 行。

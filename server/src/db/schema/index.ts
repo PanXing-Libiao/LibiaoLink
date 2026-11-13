@@ -18,6 +18,7 @@ export * from "./views.js";
 export * from "./follows.js";
 export * from "./notify.js";
 export * from "./translate.js";
+export * from "./ai-models.js";
 export * from "./imports.js";
 export * from "./automation.js";
 export * from "./todos.js";
