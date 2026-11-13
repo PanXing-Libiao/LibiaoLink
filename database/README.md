@@ -1,3 +1,5 @@
+> **2026-11-13 · 任务模板「入库审核」独立板块**：`0095_template_inbound_review_section.sql` 将 `task_templates.stage_key` 与 `task_nodes.stage_key` 的 CHECK 扩为九阶段 + `inbound_review`；该值只用于任务模板页独立板块，不属于项目阶段，不进入 `STAGE_KEYS`、项目任务、看板 / 甘特图 / 日报。入库审核不能生成项目任务；模板私有节点继续按 `owner_template_id` 隔离。迁移不新增表 / 列，回滚须先清该分组数据，语句见头注。
+
 > **模型管理（本机实现）**：迁移 0093 新增模型服务与当前模型选择；密钥只保存加密结果，需部署前准备独立密钥保护配置。
 
 > **2026-11-13 · 任务模板私有节点**：`0094_template_local_task_nodes.sql` 给 `task_nodes` 增可空 `owner_template_id`（→ `task_templates.id`，`on delete cascade`）；为空 = 公共节点库，非空 = 指定模板私有节点。原 `uq_task_nodes_stage_title` 改为两个部分唯一索引：公共节点按 `(stage_key, title)`、私有节点按 `(owner_template_id, title)`。`GET /api/v1/task-nodes` 与左侧节点库只读公共行；模板只可引用公共行或本模板私有行。模板内新增走 `POST /api/v1/task-templates/{id}/nodes`，模板保存时移除的私有行会清理；不部署 AI 导入相关 0093 时本迁移可独立执行。
@@ -105,6 +107,7 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0076_audit_project_snapshot.sql` | 操作记录项目名称快照（2026-10-28 · **高风险 DDL，请 wmj 复核** · CONTRIBUTING §15）：`audit_logs` 增 `project_code text` / `project_name text`（均可空、无外键、无回填）；审计写入保存项目编号 / 名称，读面左连接 `projects` 且不按 `deleted_at` 过滤，项目仍在（含回收站）优先当前值，项目行彻底删除后回退快照。只追加 DDL，应用角色随 roles/0001 default privileges 自动授权；回滚语句入头注。 |
 | `migrations/0092_task_template_visibility.sql` | 任务模板可见范围（2026-11-13）：`task_templates` 增 `visibility text not null default 'public'` 与 `ck_task_templates_visibility`（`private` / `public`）。`private` 仅填写人可见；`public` 对通过模板浏览权校验的账号可见。存量 / 种子默认 public；编辑 / 删除权限不变。只追加 DDL，应用角色随 roles/0001 default privileges 自动授权；回滚语句入头注。 |
 | `migrations/0094_template_local_task_nodes.sql` | 任务模板私有节点（2026-11-13）：`task_nodes` 增 `owner_template_id uuid references task_templates(id) on delete cascade`；删除旧全局唯一约束 `uq_task_nodes_stage_title`，改为 `uq_task_nodes_shared_stage_title (stage_key, title) where owner_template_id is null` + `uq_task_nodes_owner_title (owner_template_id, title) where owner_template_id is not null`，并增 `ix_task_nodes_owner_seq`。存量行保持 null（公共节点）；公共读接口与左侧节点库不变，模板内新增节点只写当前模板私有范围。只追加 DDL，应用角色随 default privileges 自动授权；回滚语句入头注。 |
+| `migrations/0095_template_inbound_review_section.sql` | 任务模板「入库审核」独立板块（2026-11-13）：仅重建 `ck_task_templates_stage_key` 与 `ck_task_nodes_stage_key`，在九阶段外增加 `inbound_review`；不新增表 / 列。该值只对任务模板 / 模板节点接口开放，服务端禁止该分组生成项目任务；模板私有节点继续按 `owner_template_id` 隔离。回滚前先清理该分组的模板与节点，语句入头注。 |
 | `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离 |
 | `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
 | `seeds/blueprint.mjs` | 种子 #7：default 蓝图模板（9 阶段 19 节点 + 版本 1，h3 · Push 83）；节点清单待业务补全，库内已修订时不覆盖 |

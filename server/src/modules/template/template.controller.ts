@@ -23,7 +23,7 @@ export class TemplateController {
     private readonly permission: PermissionService,
   ) {}
 
-  /** 节点库列表（按阶段过滤；缺省全部阶段，排序 = 九阶段顺序 → seq）。 */
+  /** 节点库列表（按模板板块过滤；缺省全部板块，排序 = 板块顺序（九阶段 + 入库审核）→ seq）。 */
   @Get()
   async list(
     @Query(new ZodValidationPipe(TaskNodeListQuerySchema)) query: TaskNodeListQuery,

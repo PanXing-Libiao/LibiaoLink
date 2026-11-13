@@ -382,9 +382,9 @@ try {
   check("⑨f 左列「任务节点」吸顶位顺延到标签栏下沿（position=sticky、CSS top = 122px = 64 + 59 − 1 防缝）", leftCol1 !== null && leftCol1.position === "sticky" && leftCol1.cssTop === "122px", leftCol1 === null ? "null" : JSON.stringify(leftCol1));
   check("⑨g 层级：标签栏 z 20 > 左列容器 z 10（左列滚动时从栏下滑过、不盖住栏；真机内容里左列与右侧模板区等高、钉住位移趋近 0，口径为右侧更高时生效）", leftCol1 !== null && leftCol1.parentZ === "10" && tabsSlot1 !== null && Number(tabsSlot1.zIndex) > Number(leftCol1.parentZ), leftCol1 === null ? "null" : JSON.stringify([tabsSlot1 === null ? null : tabsSlot1.zIndex, leftCol1.parentZ]));
   const barButtons = await ev(BAR_BUTTONS);
-  check("⑨h 滚动后栏内九枚板块 + 「＋ 新建模板」都在（10 枚按钮、无吞字）", barButtons !== null && barButtons.length === 10 && barButtons[0] === "售前规划" && barButtons[9].indexOf("新建模板") >= 0, barButtons === null ? "null" : JSON.stringify(barButtons));
+  check("⑨h 滚动后栏内九枚阶段 + 「入库审核」+ 「＋ 新建模板」都在（11 枚按钮、无吞字）", barButtons !== null && barButtons.length === 11 && barButtons[0] === "售前规划" && barButtons[9] === "入库审核" && barButtons[10].indexOf("新建模板") >= 0, barButtons === null ? "null" : JSON.stringify(barButtons));
   const barTitleAttrs = await ev(BAR_TITLE_ATTRS);
-  check("⑨h-2 板块标签悬停不暴露内部路由（九枚阶段按钮均无 title）", barTitleAttrs !== null && barTitleAttrs.slice(0, 9).every((value) => value === null), barTitleAttrs === null ? "null" : JSON.stringify(barTitleAttrs));
+  check("⑨h-2 板块标签悬停不暴露内部路由（九枚阶段 + 入库审核按钮均无 title）", barTitleAttrs !== null && barTitleAttrs.slice(0, 10).every((value) => value === null), barTitleAttrs === null ? "null" : JSON.stringify(barTitleAttrs));
   const barHit = await ev(BAR_HIT);
   check("⑨i 滚动后选中标签仍是命中元素（可点，不被任何浮层盖住）", barHit === true, String(barHit));
 } catch (error) {

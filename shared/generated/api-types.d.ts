@@ -2675,12 +2675,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 任务节点库（任务模板的节点来源；按阶段过滤） */
+        /** 任务节点库（任务模板的节点来源；按九阶段或入库审核过滤） */
         get: {
             parameters: {
                 query?: {
-                    /** @description 按阶段过滤；缺省 = 全部阶段 */
-                    stage?: components["schemas"]["StageKey"] & unknown;
+                    /** @description 按模板板块过滤（九阶段或 inbound_review）；缺省 = 全部板块 */
+                    stage?: components["schemas"]["TemplateSectionKey"] & unknown;
                 };
                 header?: never;
                 path?: never;
@@ -2700,7 +2700,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** 新增公共任务节点（仅系统管理员；同阶段同名 409） */
+        /** 新增公共任务节点（仅系统管理员；同板块同名 409） */
         post: {
             parameters: {
                 query?: never;
@@ -2888,12 +2888,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 任务模板列表（按阶段过滤；含节点顺序与名称摘要） */
+        /** 任务模板列表（按板块过滤；含节点顺序与名称摘要） */
         get: {
             parameters: {
                 query?: {
-                    /** @description 按阶段过滤；缺省 = 全部阶段 */
-                    stage?: components["schemas"]["StageKey"] & unknown;
+                    /** @description 按模板板块过滤（九阶段或 inbound_review）；缺省 = 全部板块 */
+                    stage?: components["schemas"]["TemplateSectionKey"] & unknown;
                 };
                 header?: never;
                 path?: never;
@@ -2913,7 +2913,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** 新建任务模板（名称 + 阶段 + 节点顺序） */
+        /** 新建任务模板（名称 + 模板板块 + 节点顺序） */
         post: {
             parameters: {
                 query?: never;
@@ -14122,10 +14122,10 @@ export interface components {
             /** @description 要求输出成果文件（锁定项，≤ 20 项，含全站自定义；多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底） */
             deliverableTypes?: (components["schemas"]["DeliverableType"] & unknown)[];
         };
-        /** @description 任务节点库条目（任务模板的节点来源） */
+        /** @description 任务节点库条目（任务模板的节点来源；stageKey 可为九阶段或入库审核） */
         TaskNode: {
             id: components["schemas"]["Uuid"];
-            stageKey: components["schemas"]["StageKey"];
+            stageKey: components["schemas"]["TemplateSectionKey"];
             /** @description 库内排序（建议 10/20/30 步长，便于插入） */
             seq: number;
             /**
@@ -14141,15 +14141,15 @@ export interface components {
         };
         /** @description 新增任务节点（管理端） */
         TaskNodeCreateBody: {
-            stageKey: components["schemas"]["StageKey"];
+            stageKey: components["schemas"]["TemplateSectionKey"];
             /**
-             * @description 节点名称（中文；同阶段内唯一）
+             * @description 节点名称（中文；同板块内唯一）
              * @example 货架组装
              */
             title: string;
             /** @description 英文名（可空） */
             titleEn?: string | null;
-            /** @description 库内排序；缺省 = 追加到该阶段末尾（末位 seq + 10） */
+            /** @description 库内排序；缺省 = 追加到该板块末尾（末位 seq + 10） */
             seq?: number;
         };
         TaskNodeDeleteResponse: {
@@ -14190,7 +14190,7 @@ export interface components {
          * @enum {string}
          */
         TaskTableColumnKey: "manager" | "owner" | "status" | "priority" | "onTime" | "deliverable" | "files" | "note" | "start" | "days" | "due" | "headcount" | "doneDate" | "change";
-        /** @description 任务模板（名称 + 阶段 + 可见范围 + 节点顺序 + 填写人；A1-16 / A1-17 的落点） */
+        /** @description 任务模板（名称 + 模板板块 + 可见范围 + 节点顺序 + 填写人；A1-16 / A1-17 的落点） */
         TaskTemplate: {
             id: components["schemas"]["Uuid"];
             /**
@@ -14198,7 +14198,7 @@ export interface components {
              * @example 英国订单
              */
             name: string;
-            stageKey: components["schemas"]["StageKey"];
+            stageKey: components["schemas"]["TemplateSectionKey"];
             visibility: components["schemas"]["TaskTemplateVisibility"];
             /** @description 节点顺序 = 数组顺序；同一模板内按 nodeId 去重 */
             nodes: components["schemas"]["TaskTemplateNode"][];
@@ -14209,10 +14209,10 @@ export interface components {
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
         };
-        /** @description 新建任务模板；visibility 缺省 public（兼容旧客户端） */
+        /** @description 新建任务模板（stageKey 为模板板块：九阶段或 inbound_review）；visibility 缺省 public（兼容旧客户端） */
         TaskTemplateCreateBody: {
             name: string;
-            stageKey: components["schemas"]["StageKey"];
+            stageKey: components["schemas"]["TemplateSectionKey"];
             visibility?: components["schemas"]["TaskTemplateVisibility"] & unknown;
             /**
              * @description 任务节点库内的节点 id（≤ 500 个），顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400
@@ -14289,6 +14289,11 @@ export interface components {
             note?: string | null;
             version: components["schemas"]["Version"];
         };
+        /**
+         * @description 任务模板板块 key：九阶段 + inbound_review（入库审核，不属于项目阶段）
+         * @enum {string}
+         */
+        TemplateSectionKey: "presale" | "design" | "purchase" | "assembly" | "install" | "deploy" | "trial" | "production" | "acceptance" | "inbound_review";
         /** @description 批量查库请求（切页提速；只回已存译文） */
         TranslateBatchBody: {
             qs: string[];

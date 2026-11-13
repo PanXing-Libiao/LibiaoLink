@@ -40,15 +40,15 @@ export interface TaskTemplateUpdatePatch {
   visibility?: "private" | "public";
 }
 
-/** 九阶段顺序（列表排序用）：与 shared/src/common/dicts.ts 的 STAGE_KEYS 同序；未知 key 排最后。 */
-const STAGE_RANK = sql`coalesce(array_position(array['presale', 'design', 'purchase', 'assembly', 'install', 'deploy', 'trial', 'production', 'acceptance']::text[], ${taskTemplates.stageKey}), 99)`;
+/** 模板板块顺序（九阶段 + 入库审核，列表排序用）：与 shared/src/common/dicts.ts 的 STAGE_KEYS 同序；未知 key 排最后。 */
+const STAGE_RANK = sql`coalesce(array_position(array['presale', 'design', 'purchase', 'assembly', 'install', 'deploy', 'trial', 'production', 'acceptance', 'inbound_review']::text[], ${taskTemplates.stageKey}), 99)`;
 
 @Injectable()
 export class TaskTemplateRepository {
   constructor(private readonly database: DatabaseService) {}
 
   /**
-   * 按阶段过滤（null = 全部阶段）；排序 = 九阶段顺序 → created_at 倒序 → id。
+   * 按模板板块过滤（null = 全部板块）；排序 = 板块顺序（九阶段 + 入库审核）→ created_at 倒序 → id。
    * 倒序的理由：面板顺序 = 「最新在最左」——「＋ 新建模板」在界面上就把新面板插在主列右侧（Push 58 业务口径），
    * 刷新后按库里的顺序重排，同样得让最新的排在最左，否则新建的模板会在刷新后从左端跳到右端。
    * 种子（#9）按清单顺序倒排 created_at，所以业务清单的第一套（如「硬件实施模板一」）仍在最左。
