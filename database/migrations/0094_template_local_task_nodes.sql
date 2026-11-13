@@ -10,12 +10,13 @@
 --   3. 公共节点在同阶段内仍按 title 唯一；模板私有节点在同一模板内按 title 唯一；
 --   4. 私有节点随模板硬删级联；模板软删仍保留行，但模板读面不可见，公共读面恒过滤私有行。
 --
--- 回滚（如需）：drop index if exists uq_task_nodes_owner_title;
+-- 回滚（如需）：delete from task_nodes where owner_template_id is not null;
+--              drop index if exists uq_task_nodes_owner_title;
 --              drop index if exists ix_task_nodes_owner_seq;
 --              drop index if exists uq_task_nodes_shared_stage_title;
 --              alter table task_nodes drop column if exists owner_template_id;
 --              alter table task_nodes add constraint uq_task_nodes_stage_title unique (stage_key, title);
---              （仅当库内不存在同阶段同名的公共节点时才能恢复旧约束）
+--              （先删除模板私有节点，避免它们与公共节点同阶段同名时无法恢复旧唯一约束）
 
 alter table task_nodes
   add column owner_template_id uuid references task_templates (id) on delete cascade;
