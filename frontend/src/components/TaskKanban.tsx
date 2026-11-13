@@ -62,7 +62,7 @@ export const STAGE_TAG_CLASS: Record<string, string> = {
   硬件实施: "bg-emerald-100 text-emerald-700",
   软件部署: "bg-amber-100 text-amber-800",
   试运行: "bg-teal-100 text-teal-700",
-  生产阶段: "bg-indigo-100 text-indigo-700",
+  投产阶段: "bg-indigo-100 text-indigo-700",
   验收: "bg-lime-100 text-lime-700",
 };
 

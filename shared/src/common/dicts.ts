@@ -28,12 +28,12 @@ export const STAGE_NAMES: Record<StageKey, string> = {
   install: "硬件实施",
   deploy: "软件部署",
   trial: "试运行",
-  production: "生产阶段",
+  production: "投产阶段",
   acceptance: "验收",
 };
 
 export const StageKeySchema = z.enum(STAGE_KEYS).openapi("StageKey", {
-  description: "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）",
+  description: "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收）",
 });
 
 export const DOC_TYPES = [

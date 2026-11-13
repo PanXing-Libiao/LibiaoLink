@@ -85,13 +85,16 @@ const STAGE_NAMES_BY_KEY: Record<string, string> = {
   install: "硬件实施",
   deploy: "软件部署",
   trial: "试运行",
-  production: "生产阶段",
+  production: "投产阶段",
   acceptance: "验收",
 };
 
 const STAGE_KEYS_BY_NAME: Record<string, string> = Object.fromEntries(
   Object.entries(STAGE_NAMES_BY_KEY).map(([key, name]) => [name, key]),
 );
+
+// 旧中文名只用于兼容历史调用；所有展示与写入仍使用“投产阶段”。
+STAGE_KEYS_BY_NAME["生产阶段"] = "production";
 
 /** 阶段 key → 展示名；null / 未知 key → 空串（展示层垫底归「临时任务」分组，Push 196 起原「未分组」；看板临时任务）。 */
 export function stageNameOf(stageKey: string | null): string {

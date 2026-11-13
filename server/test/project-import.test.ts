@@ -788,6 +788,43 @@ describe("ProjectImportService.preview（导入表解析预览）", () => {
     expect(preview.imagesManual[0]?.reason).toContain("手动上传");
   });
 
+  it("阶段名称兼容：旧「生产阶段」与新「投产阶段」都落 production，变更阶段同样识别", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    const sheets = sampleSheets();
+    const taskSheet = sheets[0]!;
+    taskSheet.rows = [
+      TASK_HEADER,
+      ["旧阶段名任务", "生产阶段", "已完成", "1", "贾海洋(haiyang)", "贾海洋(haiyang)", "2026-09-02", "2026-09-10", "2026-09-01", "10", "4", "", "", "按时交付", ""],
+      ["新阶段名任务", "投产阶段", "已完成", "1", "贾海洋(haiyang)", "贾海洋(haiyang)", "2026-09-02", "2026-09-10", "2026-09-01", "10", "4", "", "", "按时交付", ""],
+    ];
+    const changeSheet = sheets[2]!;
+    changeSheet.rows = [
+      CHANGE_HEADER,
+      ["2026-09-01", "生产阶段", "旧阶段名变更", "供应商原因", "", "", "旧投产变更.xlsx", "V2", "", "朱成荣(Eli)", "朱成荣(Eli)"],
+      ["2026-09-01", "投产阶段", "新阶段名变更", "供应商原因", "", "", "新投产变更.xlsx", "V2", "", "朱成荣(Eli)", "朱成荣(Eli)"],
+    ];
+    const preview = await h.service.preview({
+      bytes: buildWorkbook(sheets),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    const parsed = previewPayload(h).parse as {
+      tasks: Array<{ stageRaw: string; stageKey: string | null }>;
+      changes: Array<{ stageRaw: string; stageKey: string | null }>;
+    };
+    expect(parsed.tasks.map((task) => [task.stageRaw, task.stageKey])).toEqual([
+      ["生产阶段", "production"],
+      ["投产阶段", "production"],
+    ]);
+    expect(parsed.changes.map((change) => [change.stageRaw, change.stageKey])).toEqual([
+      ["生产阶段", "production"],
+      ["投产阶段", "production"],
+    ]);
+    expect(preview.issues.map((issue) => issue.code)).not.toContain("UNKNOWN_STAGE");
+  });
+
   it("日报表兼容中英混排历史表头：日报、问题与锚点图片都导入", async () => {
     const h = createHarness();
     h.nodes.library = [];

@@ -265,6 +265,39 @@ describe("蓝图写路径审计（Push 173）", () => {
     expect(view.status).toBe("published");
   });
 
+  it("历史发布版本读面兼容：旧阶段名 / 节点名显示为投产口径，原始 payload 不改", async () => {
+    const oldStage: Blueprint["stages"][number] = { key: "production", name: "生产阶段", seq: 80, nodes: [{ key: "production.record", name: "生产运行记录", seq: 10, constraints: [] }] };
+    const newStage = { ...oldStage, name: "投产阶段", nodes: oldStage.nodes.map((node) => ({ ...node, name: "投产运行记录" })) };
+    const oldPublished = blueprint({ stages: [oldStage] });
+    const currentDraft = blueprint({ stages: [newStage] });
+    const row = makeRow({
+      draftPayload: currentDraft as unknown as Record<string, unknown>,
+      publishedVersion: 1,
+      version: 1,
+    });
+    const { service, repo } = makeService({ rows: [row] });
+    repo.versions.push({ blueprintVersion: 1, payload: oldPublished, publishedBy: null, publishedAt: AT });
+
+    const view = await service.getView("default");
+    expect(view.status).toBe("published");
+    expect(view.blueprint.stages[0]?.name).toBe("投产阶段");
+    expect(view.blueprint.stages[0]?.nodes[0]?.name).toBe("投产运行记录");
+
+    const exported = await service.exportBlueprint("default");
+    expect(exported.stages[0]?.name).toBe("投产阶段");
+    expect(exported.stages[0]?.nodes[0]?.name).toBe("投产运行记录");
+    const snapshot = await service.getVersionForProject("default", 1);
+    expect(snapshot?.payload.stages[0]?.name).toBe("投产阶段");
+    expect(snapshot?.payload.stages[0]?.nodes[0]?.name).toBe("投产运行记录");
+    const published = await service.getPublishedForProject("default");
+    expect(published?.payload.stages[0]?.name).toBe("投产阶段");
+    expect(published?.payload.stages[0]?.nodes[0]?.name).toBe("投产运行记录");
+
+    expect((repo.versions[0]?.payload.stages[0] as { name: string }).name).toBe("生产阶段");
+    expect((repo.versions[0]?.payload.stages[0] as { nodes: Array<{ name: string }> }).nodes[0]?.name).toBe("生产运行记录");
+    expect((repo.rows[0]?.draftPayload as { stages: Array<{ name: string }> }).stages[0]?.name).toBe("投产阶段");
+  });
+
   it("权限不足：403 且不落库不留痕", async () => {
     const { service, repo, audit } = makeService({ allowed: false });
     await expect(service.saveDraft("default", blueprint(), ACTOR)).rejects.toMatchObject({ code: "FORBIDDEN" });

@@ -9951,7 +9951,7 @@
           "production",
           "acceptance"
         ],
-        "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）"
+        "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收）"
       },
       "StageListResponse": {
         "type": "object",
@@ -15154,7 +15154,7 @@
               "$ref": "#/components/schemas/StageKey"
             },
             "required": false,
-            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）",
+            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收）",
             "name": "stage",
             "in": "query"
           },
@@ -18237,7 +18237,7 @@
               "$ref": "#/components/schemas/StageKey"
             },
             "required": true,
-            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）",
+            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收）",
             "name": "key",
             "in": "path"
           },
@@ -18345,7 +18345,7 @@
               "$ref": "#/components/schemas/StageKey"
             },
             "required": true,
-            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）",
+            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收）",
             "name": "key",
             "in": "path"
           },

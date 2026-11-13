@@ -418,9 +418,14 @@ const TEMPLATE_SECTION_SLUGS: ReadonlyArray<readonly [string, string]> = [
   ["硬件实施", "hardware"],
   ["软件部署", "software"],
   ["试运行", "trial"],
-  ["生产阶段", "production"],
+  ["投产阶段", "production"],
   ["验收", "acceptance"],
 ];
+
+/** 旧中文板块名 → 当前板块名：只做旧链接兼容，页面与写回地址均使用当前名。 */
+const LEGACY_TEMPLATE_SECTION_NAMES: Readonly<Record<string, string>> = {
+  "生产阶段": "投产阶段",
+};
 
 /** 板块名 → 地址 slug（未登记的板块按原名编码，保证 href 永远写得出）。 */
 export function templateSectionSlug(section: string): string {
@@ -436,7 +441,8 @@ export function templateSectionFromParam(value: string | null): string | null {
   if (raw === "") {
     return null;
   }
-  const hit = TEMPLATE_SECTION_SLUGS.find(([name, slug]) => slug === raw || name === raw);
+  const canonical = LEGACY_TEMPLATE_SECTION_NAMES[raw] ?? raw;
+  const hit = TEMPLATE_SECTION_SLUGS.find(([name, slug]) => slug === raw || name === canonical);
   return hit === undefined ? null : hit[0];
 }
 
