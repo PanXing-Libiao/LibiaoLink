@@ -126,7 +126,7 @@ const STAGE_LABELS: Record<string, string> = {
   install: "硬件实施",
   deploy: "软件部署",
   trial: "试运行",
-  production: "生产阶段",
+  production: "投产阶段",
   acceptance: "验收",
 };
 

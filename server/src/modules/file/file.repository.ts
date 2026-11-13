@@ -294,6 +294,34 @@ export class FileRepository {
     return rows[0] ?? null;
   }
 
+  /**
+   * 文件定档联动任务定档前置判定（2026-11-12）：任务必须 done、任务自身至少配置一类非空输出成果，
+   * 且任务自身或所属节点范围内存在任一 draft / final / changed 且 current_version_id 非空的文件。
+   * 文件 doc_type 为空或与任务成果类型不一致均不阻止；节点 required_doc 不替代任务自身成果配置。
+   * file 属平台模块、task 属领域模块，边界规则禁止 file → task，故本处只读表，与
+   * TaskGateRepository.evaluateFinalization 保持同一口径；两处口径变更必须同步并跑两侧单测。
+   */
+  async isTaskFinalizationReady(taskId: string, client: DbClient = this.database.db): Promise<boolean> {
+    const rows = await client
+      .select({ status: tasks.status, nodeId: tasks.nodeId, deliverableTypes: tasks.deliverableTypes })
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt)))
+      .limit(1);
+    const task = rows[0];
+    if (task === undefined || task.status !== "done") return false;
+    if (!task.deliverableTypes.some((docType) => docType.trim() !== "")) return false;
+
+    const scope = task.nodeId === null
+      ? eq(files.taskId, taskId)
+      : (or(eq(files.taskId, taskId), eq(files.nodeId, task.nodeId)) as SQL);
+    const uploaded = await client
+      .select({ id: files.id })
+      .from(files)
+      .where(and(scope, inArray(files.status, ["draft", "final", "changed"]), isNotNull(files.currentVersionId)))
+      .limit(1);
+    return uploaded.length > 0;
+  }
+
   /** 补发申请：来源任务需校验未删除并取阶段 / 节点 / 标题。 */
   async findTaskReissueBrief(taskId: string, client: DbClient = this.database.db): Promise<FileTaskReissueBriefRow | null> {
     const rows = await client
@@ -320,7 +348,7 @@ export class FileRepository {
     const rows = await client
       .update(tasks)
       .set({ finalizedAt: at, finalizedBy: actorId, version: sql`${tasks.version} + 1`, updatedAt: at })
-      .where(and(eq(tasks.id, taskId), isNull(tasks.finalizedAt)))
+      .where(and(eq(tasks.id, taskId), eq(tasks.status, "done"), isNull(tasks.finalizedAt)))
       .returning({ id: tasks.id });
     return rows[0]?.id ?? null;
   }

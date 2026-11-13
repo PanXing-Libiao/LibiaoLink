@@ -326,7 +326,7 @@ describe("M3-05 续卡 · 锁定字段例外调整（A1-17 / C9-07）", () => {
     expect(audit.entries).toEqual([]);
   });
 
-  it("输出成果文件：自定义类型去重保留并立即参与完成门禁", async () => {
+  it("输出成果文件：自定义类型去重保留，任一文件即可完成，零文件才拦截", async () => {
     const repo = new FakeTaskRepository();
     repo.tasks.set(TASK_A, makeRow(TASK_A, { nodeId: null, deliverableTypes: ["合同"] }));
     const gate = new FakeTaskGateRepository();
@@ -340,17 +340,16 @@ describe("M3-05 续卡 · 锁定字段例外调整（A1-17 / C9-07）", () => {
       ADMIN,
     );
     expect(view.deliverableTypes).toEqual(["验收单", "合同", "竣工图"]);
+    await expect(service.canComplete(PROJECT, TASK_A)).resolves.toMatchObject({ canComplete: true, missing: [] });
+    gate.uploadedCounts = [];
     const blocked = await service.canComplete(PROJECT, TASK_A);
     expect(blocked.canComplete).toBe(false);
     expect(blocked.missing).toEqual([
       { docType: "验收单", required: 1, present: 0 },
+      { docType: "合同", required: 1, present: 0 },
       { docType: "竣工图", required: 1, present: 0 },
     ]);
-    gate.uploadedCounts = [
-      { docType: "合同", present: 1 },
-      { docType: "验收单", present: 1 },
-      { docType: "竣工图", present: 1 },
-    ];
+    gate.uploadedCounts = [{ docType: null, present: 1 }];
     await expect(service.canComplete(PROJECT, TASK_A)).resolves.toMatchObject({ canComplete: true, missing: [] });
   });
 

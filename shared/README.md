@@ -79,7 +79,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 项目序号 | 服务端创建时分配（`projects.seq_no` ↔ `seqNo`，全库唯一正整数、不可修改；彻底删除后的空号由下一次创建按最小可用序号复用）；与项目编号一一对应同一项目；卡片等展示两位补零，列表支持 `sort=seqNo:asc\|desc` |
 | 主题色 accent | 随项目类型字典（C9）元数据下发：`metadata.accent` = CSS 颜色字符串（hex），`metadata.accentText` = 徽标文字色（可缺省，缺省 `#fff`）；前端不硬编码颜色 |
 | 任务状态 | 存储基础态 pending/active/done；展示五态由服务端派生为 `displayStatus`（不写回） |
-| 任务来源 | 任务从「任务节点库」的节点生成（任务模板 = 名称 + 阶段 + 节点顺序）；同一节点在项目里只留一份（单条重复返回 409；「整套添加」默认跳过并返回 `skipped`）；任务描述 / 成果文件按 A1-17 生成后锁定 |
+| 任务来源 | 任务从「任务节点库」的节点生成（任务模板 = 名称 + 阶段 + 可见范围（private 仅填写人 / public 有浏览权者）+ 节点顺序）；同一节点在项目里只留一份（单条重复返回 409；「整套添加」默认跳过并返回 `skipped`）；任务描述 / 成果文件按 A1-17 生成后锁定 |
 | 节点门禁 | 完成需过服务端事务内校验；缺件返回 422 + `missing` 明细（NODE_REQUIRED_DOC_MISSING） |
 | 蓝图 | 自建 JSON（schemaVersion=1）；导出/导入 round-trip 无损；导入即快照 |
 | 认证与会话 | /auth/*（根路径；OIDC authorization_code + PKCE + state；HttpOnly Cookie 会话）；/auth/me 返回 `{ user, claims, expiresAt }`；未认证 401 AUTH_REQUIRED、回调失败 400 AUTH_CALLBACK_FAILED |

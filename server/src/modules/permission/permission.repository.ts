@@ -227,6 +227,23 @@ export class PermissionRepository {
     return rows.map(normalizeAdminUser);
   }
 
+  /** 审计用用户展示字段：按 id 解析姓名 / 工号，包含停用与已离职账号。 */
+  async listUsersByIds(userIds: readonly string[]): Promise<GroupAccessUserRecord[]> {
+    if (userIds.length === 0) return [];
+    const rows = await this.database.db
+      .select({
+        userId: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        email: users.email,
+        status: users.status,
+      })
+      .from(users)
+      .where(inArray(users.id, [...userIds]))
+      .orderBy(asc(users.displayName), asc(users.username));
+    return rows.map(normalizeAdminUser);
+  }
+
   /** 环境变量管理员部门的直属成员。 */
   async listGroupAdminUsersByGroupKeys(groupKeys: readonly string[]): Promise<GroupAccessAdminUserRecord[]> {
     if (groupKeys.length === 0) return [];

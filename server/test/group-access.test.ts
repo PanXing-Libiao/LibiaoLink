@@ -543,7 +543,7 @@ describe("GroupAccessService 部门通讯录", () => {
       permission as never,
       repository as never,
       { recordStandalone: async () => undefined } as never,
-      {} as never,
+      { listDepartments: async () => [] } as never,
       new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
     );
     const input: GroupAccessRuleInput = {
@@ -586,7 +586,7 @@ describe("GroupAccessService 部门通讯录", () => {
       permission as never,
       repository as never,
       { recordStandalone: async () => undefined } as never,
-      {} as never,
+      { listDepartments: async () => [] } as never,
       new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
     );
     const base: GroupAccessRuleInput = {
@@ -633,7 +633,7 @@ describe("GroupAccessService 部门通讯录", () => {
       permission as never,
       repository as never,
       { recordStandalone: async () => undefined } as never,
-      {} as never,
+      { listDepartments: async () => [] } as never,
       new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
     );
     const input: GroupAccessRuleInput = {
@@ -663,14 +663,25 @@ describe("GroupAccessService 部门通讯录", () => {
     ).rejects.toThrow("所选人员已不在该部门");
   });
 
-  it("同一部门可分别保存个人权限，且不会改写部门默认规则", async () => {
+  it("同一部门可分别保存个人权限，且审计说明部门、人员与赋予的权限", async () => {
     const upserts: unknown[][] = [];
     const deletions: unknown[][] = [];
+    const audits: Array<{ summary: string; metadata?: Record<string, unknown> }> = [];
     const repository = {
       findRuleMetadata: async () => null,
       listExistingProjectIds: async () => [PROJECT_C],
       listGroupMemberIds: async () => [PROJECT_A, PROJECT_B],
       listExistingMemberRuleUserIds: async (_groupKey: string, userIds: readonly string[]) => userIds.filter((userId) => userId === PROJECT_A),
+      listUsersByIds: async (userIds: readonly string[]) => userIds.flatMap((userId) => {
+        if (userId === PROJECT_A) {
+          return [{ userId, username: "wangzhi", displayName: "王智", email: null, status: "active" as const }];
+        }
+        if (userId === PROJECT_B) {
+          return [{ userId, username: "lina", displayName: "李娜", email: null, status: "active" as const }];
+        }
+        return [];
+      }),
+      listAccessProjects: async () => [{ id: PROJECT_C, code: "PRJ-001", name: "XX项目" }],
       upsertGroupAccessMemberRules: async (...args: unknown[]) => { upserts.push(args); },
       deleteGroupAccessMemberRules: async (...args: unknown[]) => { deletions.push(args); return 1; },
       upsertGroupAccessRule: async () => { throw new Error("个人权限不应改写部门默认规则"); },
@@ -683,22 +694,26 @@ describe("GroupAccessService 部门通讯录", () => {
     const service = new GroupAccessService(
       permission as never,
       repository as never,
-      { recordStandalone: async () => undefined } as never,
-      {} as never,
+      {
+        recordStandalone: async (entry: { summary: string; metadata?: Record<string, unknown> }) => { audits.push(entry); },
+      } as never,
+      {
+        listDepartments: async () => [{ id: PROJECT_A, parentId: null, sourceId: "HR", name: "人力资源部" }],
+      } as never,
       new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
     );
 
     await service.saveMemberRules(PROJECT_A, {
-      groupKey: "libiaorobot.com/QA",
-      groupName: "Quality",
+      groupKey: "libiaorobot.com/HR",
+      groupName: "HR",
       userIds: [PROJECT_A],
       projectScope: "all",
       accessLevel: "edit",
       projectIds: [],
     });
     await service.saveMemberRules(PROJECT_A, {
-      groupKey: "libiaorobot.com/QA",
-      groupName: "Quality",
+      groupKey: "libiaorobot.com/HR",
+      groupName: "HR",
       userIds: [PROJECT_B],
       projectScope: "selected",
       accessLevel: "view",
@@ -706,11 +721,22 @@ describe("GroupAccessService 部门通讯录", () => {
     });
 
     expect(upserts).toEqual([
-      ["libiaorobot.com/QA", [PROJECT_A], [{ projectScope: "all", accessLevel: "edit" }], [], expect.any(Date)],
-      ["libiaorobot.com/QA", [PROJECT_B], [{ projectScope: "selected", accessLevel: "view" }], [PROJECT_C], expect.any(Date)],
+      ["libiaorobot.com/HR", [PROJECT_A], [{ projectScope: "all", accessLevel: "edit" }], [], expect.any(Date)],
+      ["libiaorobot.com/HR", [PROJECT_B], [{ projectScope: "selected", accessLevel: "view" }], [PROJECT_C], expect.any(Date)],
     ]);
+    expect(audits.map((entry) => entry.summary)).toEqual([
+      "修改人力资源部个人权限：王智（wangzhi）；赋予全部项目：编辑 / 浏览",
+      "新增人力资源部个人权限：李娜（lina）；赋予指定项目：仅浏览（XX项目（PRJ-001））",
+    ]);
+    expect(audits[1]?.metadata).toMatchObject({
+      groupName: "人力资源部",
+      memberNames: [{ userId: PROJECT_B, displayName: "李娜", username: "lina" }],
+      permissionText: "指定项目：仅浏览（XX项目（PRJ-001））",
+      target: "member",
+    });
+
     await expect(service.saveMemberRules(PROJECT_A, {
-      groupKey: "libiaorobot.com/QA",
+      groupKey: "libiaorobot.com/HR",
       userIds: [PROJECT_C],
       projectScope: "none",
       accessLevel: "view",
@@ -718,11 +744,59 @@ describe("GroupAccessService 部门通讯录", () => {
     })).rejects.toThrow("所选人员已不在该部门");
 
     await service.removeMemberRules(PROJECT_A, {
-      groupKey: "libiaorobot.com/QA",
+      groupKey: "libiaorobot.com/HR",
       userIds: [PROJECT_A],
     });
-    expect(deletions).toEqual([["libiaorobot.com/QA", [PROJECT_A]]]);
+    expect(deletions).toEqual([["libiaorobot.com/HR", [PROJECT_A]]]);
+    expect(audits.at(-1)?.summary).toBe("删除人力资源部个人权限：王智（wangzhi）；恢复继承部门默认权限");
     expect(invalidations).toBe(3);
+  });
+
+  it("删除部门默认权限时审计说明部门、全员范围与移除的权限", async () => {
+    const audits: Array<{ summary: string; metadata?: Record<string, unknown> }> = [];
+    const deletions: string[] = [];
+    const repository = {
+      findGroupAccessRule: async () => rule({
+        groupKey: "libiaorobot.com/HR",
+        scopePermissions: [
+          { projectScope: "all", accessLevel: "edit" },
+          { projectScope: "selected", accessLevel: "view" },
+        ],
+        projectIds: [PROJECT_C],
+        memberScope: "all",
+      }),
+      findRuleMetadata: async () => ({ groupName: "HR", updatedAt: new Date("2026-11-12T00:00:00Z") }),
+      listUsersByIds: async () => [],
+      listAccessProjects: async () => [{ id: PROJECT_C, code: "PRJ-001", name: "XX项目" }],
+      deleteGroupAccessRule: async (groupKey: string) => { deletions.push(groupKey); return true; },
+    };
+    const permission = {
+      canManageGroupAccess: async () => true,
+      invalidate: () => undefined,
+    };
+    const service = new GroupAccessService(
+      permission as never,
+      repository as never,
+      {
+        recordStandalone: async (entry: { summary: string; metadata?: Record<string, unknown> }) => { audits.push(entry); },
+      } as never,
+      {
+        listDepartments: async () => [{ id: PROJECT_A, parentId: null, sourceId: "HR", name: "人力资源部" }],
+      } as never,
+      new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
+    );
+
+    await service.remove(PROJECT_A, "libiaorobot.com/HR");
+
+    expect(deletions).toEqual(["libiaorobot.com/HR"]);
+    expect(audits[0]?.summary).toBe(
+      "删除人力资源部默认权限（部门全体成员）；移除权限：全部项目：编辑 / 浏览；指定项目：仅浏览（XX项目（PRJ-001））",
+    );
+    expect(audits[0]?.metadata).toMatchObject({
+      groupName: "人力资源部",
+      memberScope: "all",
+      projectIds: [PROJECT_C],
+    });
   });
 
   it("手工授予 / 撤销系统管理员，环境配置管理员不可撤销", async () => {
@@ -767,7 +841,7 @@ describe("GroupAccessService 部门通讯录", () => {
       permission as never,
       repository as never,
       { recordStandalone: async (entry: { action: string }) => { auditActions.push(entry.action); } } as never,
-      {} as never,
+      { listDepartments: async () => [] } as never,
       new AppConfig({
         CASDOOR_ORG_NAME: "libiaorobot.com",
         GROUP_ACCESS_ADMIN_USER_IDS: PROJECT_A,

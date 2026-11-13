@@ -138,10 +138,21 @@ type SelectMenuProps = {
   disabled?: boolean;
   /** 浮层定位类（默认 z-50；弹窗内使用时传更高层级，如 z-[80]）。 */
   popoverClassName?: string;
+  /** 紧凑触发器：用于卡片元信息行等低层级内联场景（浮层选项仍保持常规密度）。 */
+  compact?: boolean;
 };
 
 /** 普通下拉（不可搜索）：状态 / 紧急重要度这类枚举字段。 */
-export function SelectMenu({ value, options, onChange, placeholder: placeholderProp, ariaLabel, disabled = false, popoverClassName = "z-50" }: SelectMenuProps) {
+export function SelectMenu({
+  value,
+  options,
+  onChange,
+  placeholder: placeholderProp,
+  ariaLabel,
+  disabled = false,
+  popoverClassName = "z-50",
+  compact = false,
+}: SelectMenuProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(160, selectMenuPopoverHeight(options.length));
   const t = useT();
   const placeholder = placeholderProp ?? t("sel.placeholder");
@@ -163,10 +174,11 @@ export function SelectMenu({ value, options, onChange, placeholder: placeholderP
           setOpen((previous) => !previous);
         }}
         className={
-          "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition " +
+          "flex w-full items-center rounded-lg border text-left transition " +
+          (compact ? "gap-1.5 px-2 py-0.5 text-[11px] " : "gap-2 px-3 py-2 text-sm ") +
           (disabled
             ? "cursor-not-allowed border-zinc-200 bg-zinc-50"
-            : "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50")
+            : "border-zinc-200 bg-white shadow-sm hover:border-zinc-300 hover:bg-zinc-50")
         }
       >
         {selected === null ? (
@@ -174,7 +186,7 @@ export function SelectMenu({ value, options, onChange, placeholder: placeholderP
         ) : (
           <span className={"truncate font-medium " + (disabled ? "text-zinc-400" : "text-zinc-800")}>{selected.label}</span>
         )}
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={"ml-auto h-4 w-4 shrink-0 " + (disabled ? "text-zinc-300" : "text-zinc-400")}>
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={"ml-auto shrink-0 " + (compact ? "h-3 w-3 " : "h-4 w-4 ") + (disabled ? "text-zinc-300" : "text-zinc-400")}>
           <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>

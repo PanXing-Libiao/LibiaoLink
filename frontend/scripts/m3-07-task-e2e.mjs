@@ -95,7 +95,7 @@ class Cdp {
 
 const API = process.env.API_BASE ?? "http://127.0.0.1:3001";
 const COOKIE = "ll_sid=" + token + "; ll_csrf=" + csrf;
-const stageNames = { presale: "售前规划", design: "设计开发", purchase: "加工采购", assembly: "组装发货", install: "硬件实施", deploy: "软件部署", trial: "试运行", production: "生产阶段", acceptance: "验收" };
+const stageNames = { presale: "售前规划", design: "设计开发", purchase: "加工采购", assembly: "组装发货", install: "硬件实施", deploy: "软件部署", trial: "试运行", production: "投产阶段", acceptance: "验收" };
 
 async function api(path, method = "GET", body, extra) {
   const headers = Object.assign({ Cookie: COOKIE, "X-CSRF-Token": csrf, Accept: "application/json" }, extra || {});

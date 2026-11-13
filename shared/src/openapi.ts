@@ -621,13 +621,14 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "post",
     path: "/api/v1/projects/{id}/tasks/{taskId}/finalize",
     tags: ["tasks"],
-    summary: "任务定档（抽屉开关入口 · Push 252）：未定档 → 置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回",
+    summary: "任务定档（抽屉开关入口 · Push 252）：先校验任务已完成、已配置输出成果且成果文件齐全；未就绪 409 TASK_FINALIZE_NOT_READY / 缺件 422 TASK_REQUIRED_DOC_MISSING；通过后置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回",
     request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskFinalizeBodySchema) },
     responses: {
       200: { description: "定档后的任务（Task 同形；幂等路径原样返回）", ...json(TaskSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
+      422: commonErrors[422],
     },
   });
 
@@ -635,7 +636,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "post",
     path: "/api/v1/projects/{id}/tasks/{taskId}/unfinalize",
     tags: ["tasks"],
-    summary: "任务取消定档（抽屉「已」开关再次点击 · Push 260）：已定档 → 清位重新开放修改（留痕「取消定档」）；未定档 → 幂等原样返回",
+    summary: "任务取消定档（抽屉「已」开关再次点击 · Push 260）：预计完成日期当天及之前 → 清位重新开放修改（留痕「取消定档」）；预计完成日期已过且当前账号仅为任务负责人 → 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；项目经理等项目编辑者仍可取消；未定档 → 幂等原样返回",
     request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskUnfinalizeBodySchema) },
     responses: {
       200: { description: "取消定档后的任务（Task 同形；幂等路径原样返回）", ...json(TaskSchema) },
@@ -818,7 +819,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "patch",
     path: "/api/v1/task-templates/{id}",
     tags: ["templates"],
-    summary: "编辑模板（改名 / 节点全量替换；乐观锁）",
+    summary: "编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁）",
     request: { params: idParams, body: json(TaskTemplateUpdateBodySchema) },
     responses: {
       200: { description: "更新后的模板", ...json(TaskTemplateSchema) },
@@ -1343,7 +1344,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "post",
     path: "/api/v1/files/{id}/finalize",
     tags: ["files"],
-    summary: "定档（锁版；此后修改必须走变更）",
+    summary: "定档（锁版；此后修改必须走变更；仅挂接任务已完成且输出成果齐全时才联动任务定档）",
     request: { params: idParams, headers: idempotencyHeader, body: json(FileFinalizeBodySchema) },
     responses: {
       200: { description: "已定档的文件", ...json(FileSchema) },

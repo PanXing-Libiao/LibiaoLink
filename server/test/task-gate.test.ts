@@ -1,7 +1,7 @@
 /**
- * M3-03 任务完成门禁回归（A4-20 / ADR-024 · 2026-10-29 口径）：
- * 配置了成果类型才要求对应上传文件；未配置成果类型不要求文件；draft 文件可完成并触发 R02。
- * 覆盖预检、完成提交、PATCH status / progress 与批量的同一门禁。
+ * M3-03 任务完成门禁回归（A4-20 / ADR-024 · 2026-11-12 口径）：
+ * 配置了成果类型才要求上传，且任一已上传文件即可，文件 doc_type 不参与匹配；未配置成果类型不要求文件；
+ * draft 文件可完成并触发 R02。覆盖预检、完成提交、PATCH status / progress 与批量的同一门禁。
  */
 import { describe, expect, it } from "vitest";
 import type { AuditService } from "../src/modules/admin/index.js";
@@ -10,7 +10,7 @@ import type { DbClient } from "../src/db/db-client.js";
 import type { PermissionService, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 import type { TaskCompletionTargetRow, TaskFileSummaryCounts, TaskListRow, TaskRow, TaskUpdatePatch } from "../src/modules/task/task.repository.js";
 import type { TaskRepository } from "../src/modules/task/task.repository.js";
-import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
+import { missingDeliveryRequirements, type TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
 import { shanghaiToday } from "../src/modules/task/task.rules.js";
 import { TaskService } from "../src/modules/task/task.service.js";
 import type { TaskNodeRepository, TemplateService } from "../src/modules/template/index.js";
@@ -200,8 +200,8 @@ function makeService(repo: FakeTaskRepository, gate: FakeTaskGateRepository): {
   return { service, db, audit };
 }
 
-describe("M3-03 · 任务完成门禁（A4-20 / ADR-024 · 2026-10-29 上传文件校验）", () => {
-  it("预检：节点缺件 → canComplete=false + doc_type 缺件", async () => {
+describe("M3-03 · 任务完成门禁（A4-20 / ADR-024 · 2026-11-12 上传文件校验）", () => {
+  it("预检：有成果要求但没有任何上传文件 → canComplete=false + 缺件", async () => {
     const repo = new FakeTaskRepository();
     const gate = new FakeTaskGateRepository();
     gate.requirements = [{ docType: "合同", minCount: 1 }];
@@ -212,27 +212,27 @@ describe("M3-03 · 任务完成门禁（A4-20 / ADR-024 · 2026-10-29 上传文�
     expect(result.warnings).toEqual([]);
   });
 
-  it("预检：节点要求与任务输出成果合并校验（节点任务也不能漏掉任务侧新增类型）", async () => {
+  it("预检：节点要求与任务输出成果合并后，任一文件即可通过且不必匹配类型", async () => {
     const repo = new FakeTaskRepository();
     repo.task = makeRow({ nodeId: NODE, deliverableTypes: ["验收单"] });
     const gate = new FakeTaskGateRepository();
     gate.requirements = [{ docType: "合同", minCount: 1 }];
-    gate.uploadedCounts = [{ docType: "合同", present: 1 }];
+    gate.uploadedCounts = [{ docType: "竣工图", present: 1 }];
     const { service } = makeService(repo, gate);
     const result = await service.canComplete(PROJECT, TASK);
-    expect(result.canComplete).toBe(false);
-    expect(result.missing).toEqual([{ docType: "验收单", required: 1, present: 0 }]);
+    expect(result.canComplete).toBe(true);
+    expect(result.missing).toEqual([]);
   });
 
-  it("预检：无节点任务按 deliverable_types 逐类校验", async () => {
+  it("预检：无节点任务配置多类成果，只要存在任一文件即可完成", async () => {
     const repo = new FakeTaskRepository();
     repo.task = makeRow({ nodeId: null, deliverableTypes: ["合同", "验收单"] });
     const gate = new FakeTaskGateRepository();
     gate.uploadedCounts = [{ docType: "合同", present: 1 }];
     const { service } = makeService(repo, gate);
     const result = await service.canComplete(PROJECT, TASK);
-    expect(result.canComplete).toBe(false);
-    expect(result.missing).toEqual([{ docType: "验收单", required: 1, present: 0 }]);
+    expect(result.canComplete).toBe(true);
+    expect(result.missing).toEqual([]);
   });
 
   it("预检：未配置成果类型 → 直接通过（没有文件也放行）", async () => {
@@ -244,11 +244,11 @@ describe("M3-03 · 任务完成门禁（A4-20 / ADR-024 · 2026-10-29 上传文�
     expect(result.missing).toEqual([]);
   });
 
-  it("预检：配置成果类型且已上传 → 通过", async () => {
+  it("预检：先上传文件后设成果类型，文件 doc_type 为空仍可完成", async () => {
     const repo = new FakeTaskRepository();
     repo.task = makeRow({ nodeId: null, deliverableTypes: ["合同"] });
     const gate = new FakeTaskGateRepository();
-    gate.uploadedCounts = [{ docType: "合同", present: 1 }];
+    gate.uploadedCounts = [{ docType: null, present: 1 }];
     const { service } = makeService(repo, gate);
     const result = await service.canComplete(PROJECT, TASK);
     expect(result.canComplete).toBe(true);
@@ -288,12 +288,11 @@ describe("M3-03 · 任务完成门禁（A4-20 / ADR-024 · 2026-10-29 上传文�
     expect(db.outbox.some((row) => row.topic === "task.gate_rejected")).toBe(true);
   });
 
-  it("完成提交：门禁通过 → 200 task=done（满格 + 完成日期按当天）+ outbox task.completed", async () => {
+  it("完成提交：配置成果类型且存在任一文件（doc_type 为空）→ 200 task=done + outbox task.completed", async () => {
     const repo = new FakeTaskRepository();
-    repo.task = makeRow({ status: "active", progress: "0.75" });
+    repo.task = makeRow({ status: "active", progress: "0.75", nodeId: null, deliverableTypes: ["合同"] });
     const gate = new FakeTaskGateRepository();
-    gate.requirements = [{ docType: "合同", minCount: 1 }];
-    gate.uploadedCounts = [{ docType: "合同", present: 1 }];
+    gate.uploadedCounts = [{ docType: null, present: 1 }];
     const { service, db } = makeService(repo, gate);
     const result = await service.complete(PROJECT, TASK, { version: 3 }, ACTOR);
     expect(result.task.status).toBe("done");
@@ -384,5 +383,21 @@ describe("M3-03 · 任务完成门禁（A4-20 / ADR-024 · 2026-10-29 上传文�
       httpStatus: 422,
     });
     expect(repo.task?.status).toBe("pending");
+  });
+});
+
+describe("任务门禁缺件纯判定（任一文件）", () => {
+  it("配置类型且存在 doc_type 为空 / 不一致的文件 → 无缺件", () => {
+    const requirements = [{ docType: "CAD图纸", minCount: 1 }, { docType: "技术协议", minCount: 1 }];
+    expect(missingDeliveryRequirements(requirements, [{ docType: null, present: 1 }])).toEqual([]);
+    expect(missingDeliveryRequirements(requirements, [{ docType: "合同", present: 1 }])).toEqual([]);
+  });
+
+  it("没有任何文件 → 按配置类型返回提示；未配置类型 → 不要求文件", () => {
+    const requirements = [{ docType: "CAD图纸", minCount: 1 }];
+    expect(missingDeliveryRequirements(requirements, [])).toEqual([
+      { docType: "CAD图纸", required: 1, present: 0 },
+    ]);
+    expect(missingDeliveryRequirements([], [])).toEqual([]);
   });
 });

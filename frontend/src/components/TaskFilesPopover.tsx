@@ -39,7 +39,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
   /** 任务定档（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）：true = 该任务已定档 ——
    *  两个添加入口关闭（服务端 409 TASK_FINALIZED），下拉顶出常驻提示。 */
   taskFinalized?: boolean;
-  /** 仅任务负责人 / 项目经理可定档：false 时不渲染「添加定档文件」入口。 */
+  /** 任务负责人 / 项目经理可定档且任务已设定输出成果文件：false 时不渲染「添加定档文件」入口。 */
   canFinalize?: boolean;
   /** 上传 / 删除写入口；false = 只读账号仍看同款文件胶囊与清单，但添加和删除禁用。 */
   canEdit?: boolean;

@@ -344,6 +344,7 @@ describe("M3-04 · 任务批量操作（A1-08）", () => {
     const repo = new FakeTaskRepository();
     repo.tasks.set(TASK_A, makeRow(TASK_A, { nodeId: null, deliverableTypes: ["合同"] }));
     const gate = new FakeTaskGateRepository();
+    gate.uploadedCounts = [];
     const { service, db, audit } = makeService(repo, gate);
     const result = await service.batch(PROJECT, { ids: [TASK_A, TASK_B], changes: { status: "done" } }, ACTOR);
     expect(result.succeededCount).toBe(1);

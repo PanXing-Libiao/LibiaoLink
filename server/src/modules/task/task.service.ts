@@ -48,6 +48,7 @@ import {
   applyStatusWrite,
   deriveDisplayStatus,
   deriveOnTime,
+  isUnfinalizeLockedByPlannedEnd,
   shanghaiToday,
 } from "./task.rules.js";
 import {
@@ -66,7 +67,6 @@ import {
   mergeDeliveryRequirements,
   missingDeliveryRequirements,
   type TaskGateDocCountRow,
-  type TaskGateScope,
 } from "./task.gate.repository.js";
 
 type Task = z.infer<typeof TaskSchema>;
@@ -369,7 +369,7 @@ export class TaskService {
     actorId: string,
   ): Promise<TaskCreateFromTemplateResponse> {
     const project = await this.loadProjectForWrite(projectId);
-    const template = await this.templates.getTemplate(body.templateId);
+    const template = await this.templates.getTemplate(body.templateId, actorId);
     const ordered = template.nodes;
     let picked = ordered;
     if (body.nodeIds !== undefined) {
@@ -765,13 +765,15 @@ export class TaskService {
   /**
    * 定档 / 取消定档的角色闸（Pro 逐人权限）：仅任务当前负责人或项目编辑者。
    * 必须在幂等短路之前判定，避免无权用户通过重复操作探测或维持已定档状态。
+   * 返回能力来源：取消定档时间闸只约束 task_owner；project_edit（含项目经理）不受该时间闸限制。
    */
   private assertCanManageTaskFinalization(
     actorId: string,
     task: TaskRow,
     projectAccess: ProjectAccessContext,
-  ): void {
-    if (taskCapabilitiesOf(actorId, projectAccess, task.ownerIds).canFinalize) return;
+  ): TaskCapabilities {
+    const capabilities = taskCapabilitiesOf(actorId, projectAccess, task.ownerIds);
+    if (capabilities.canFinalize) return capabilities;
     throw new AppError("FORBIDDEN", "仅任务负责人或项目编辑者可定档或取消定档");
   }
 
@@ -997,7 +999,7 @@ export class TaskService {
    */
   /**
    * GET /projects/{id}/tasks/{taskId}/can-complete：完成任务预检（UI 置灰依据；不替代事务内强校验 —— 与节点 can-complete 同口径）。
-   * 门禁口径（ADR-024 / A4-20 · 2026-10-29）：合并节点 required_doc 与任务 deliverable_types，配置了成果类型才要求对应上传文件；未配置不要求。
+   * 门禁口径（ADR-024 / A4-20 · 2026-11-12）：合并节点 required_doc 与任务 deliverable_types，配置了成果类型才要求上传文件，且只要范围内存在任一已上传文件即可；文件 doc_type 不参与匹配。未配置不要求文件。
    * draft 文件可完成并返回 R02 提醒；预检与事务内强校验同口径。
    */
   async canComplete(projectId: string, taskId: string): Promise<TaskCanCompleteResponse> {
@@ -1078,7 +1080,9 @@ export class TaskService {
 
   /**
    * POST /projects/{id}/tasks/{taskId}/finalize：任务定档（Push 252 · 业务口径「在抽屉中每个任务在任务状态旁边加一个定档按钮状态，有二次提示」）。
-   * 口径：未定档 → 置位 finalized_at / finalized_by（version+1、留痕、outbox task.finalized、项目触点）；此后写口一律 409 TASK_FINALIZED（assertTaskMutable）；修改走变更。
+   * 口径（2026-11-12）：任务必须已完成（status=done）、至少配置一类输出成果文件，且范围内存在任一已上传文件，才可定档；
+   * 文件 doc_type 为空或与配置不一致均不阻止。未完成 / 未配置成果类型 → 409 TASK_FINALIZE_NOT_READY；没有任何成果文件 → 422 TASK_REQUIRED_DOC_MISSING。
+   * 通过后置位 finalized_at / finalized_by（version+1、留痕、outbox task.finalized、项目触点）；此后写口一律 409 TASK_FINALIZED（assertTaskMutable）；修改走变更。
    * 防绕过补漏：定档同时撤销该任务在途的 version 上传会话；completeUpload 事务内再复核（会话早于定档发起时状态门禁不够）。
    * 已定档 → 幂等短路（200 原样返回，不写库 / 不递增版本 —— 抽屉开关重复点击 / 与文件定档并发都只生效一次）；version 不匹配 → 409 VERSION_CONFLICT。
    * 与文件定档（file.finalizeFile → markTaskFinalized）双入口并存：两条路径都只置位一次。
@@ -1096,6 +1100,20 @@ export class TaskService {
       }
       if (before.version !== body.version) {
         throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
+      }
+      if (before.status !== "done") {
+        throw new AppError("TASK_FINALIZE_NOT_READY", "任务未完成，不能定档；请先将任务状态改为已完成", [
+          { code: "task_not_done", message: "任务状态必须为已完成", path: "status" },
+        ]);
+      }
+      if (before.deliverableTypes.length === 0) {
+        throw new AppError("TASK_FINALIZE_NOT_READY", "任务未设定输出成果文件，不能定档；请先配置输出成果文件", [
+          { code: "deliverable_types_required", message: "至少需要配置一类输出成果文件", path: "deliverableTypes" },
+        ]);
+      }
+      const gate = await this.gate.evaluateFinalization(tx, before);
+      if (gate.missing.length > 0) {
+        throw this.requiredDocsMissingError(gate.missing, "定档");
       }
       const updated = await this.repository.updateWithVersion(
         taskId,
@@ -1140,8 +1158,10 @@ export class TaskService {
 
   /**
    * POST /projects/{id}/tasks/{taskId}/unfinalize：任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）。
-   * 口径：已定档 → 清空 finalized_at / finalized_by（version+1、留痕「取消定档」、outbox task.unfinalized、项目触点），
-   * 任务重新开放修改（编辑 / 删除 / 文件写口恢复）；文件级定档（files.status=final）不回退 —— 文件修改仍走变更（A4-13）。
+   * 口径：已定档且预计完成日期当天及之前 → 清空 finalized_at / finalized_by（version+1、留痕「取消定档」、outbox task.unfinalized、项目触点），
+   * 任务重新开放修改（编辑 / 删除 / 文件写口恢复）；任务负责人遇到预计完成日期已过（Asia/Shanghai 今天晚于 planned_end）→ 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；
+   * 项目经理及其他项目编辑者仍可取消定档；无预计完成日期不锁。
+   * 文件级定档（files.status=final）不回退 —— 文件修改仍走变更（A4-13）。
    * 未定档 → 幂等短路（200 原样返回，不写库 / 不递增版本）；version 不匹配 → 409 VERSION_CONFLICT。
    * 操作记录（业务口径「点击定档按钮应该也要计入操作记录」）：定档 / 取消定档各留一条「任务」记录（action=update，摘要前缀「任务定档」/「取消定档」）。
    */
@@ -1152,9 +1172,14 @@ export class TaskService {
     const today = shanghaiToday(at);
     const row = await this.database.db.transaction(async (tx) => {
       const before = await this.requireActiveTask(tx, projectId, taskId);
-      this.assertCanManageTaskFinalization(actorId, before, access);
+      const capabilities = this.assertCanManageTaskFinalization(actorId, before, access);
       if (before.finalizedAt === null) {
         return before;
+      }
+      if (capabilities.source === "task_owner" && isUnfinalizeLockedByPlannedEnd(before.plannedEnd, today)) {
+        throw new AppError("TASK_UNFINALIZE_AFTER_PLAN", "预计完成时间已过，任务负责人不能取消定档（项目经理仍可取消）", [
+          { code: "unfinalize_after_planned_end", message: "预计完成日期：" + (before.plannedEnd ?? ""), path: "plannedEnd" },
+        ]);
       }
       if (before.version !== body.version) {
         throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
@@ -1197,7 +1222,7 @@ export class TaskService {
 
   /**
    * 门禁判定（ADR-024 / A4-20 · 2026-10-29 收敛）：
-   * 1) 合并节点 required_doc 与任务 deliverable_types；配置了成果类型时逐类要求至少上传一份；
+   * 1) 合并节点 required_doc 与任务 deliverable_types；配置了成果类型时，范围内存在任一已上传文件即可；
    * 2) 未配置任何成果类型时不要求文件，不能凭空增加“所有任务都必须有文件”的隐性约束。
    * 上传口径：files.status ∈ (draft, final, changed) 且 current_version_id 非空；draft 放行并给 R02 提醒。
    */
@@ -1205,7 +1230,7 @@ export class TaskService {
     client: DbClient,
     task: TaskCompletionTargetRow,
   ): Promise<{ missing: TaskGateMissing[]; warnings: TaskGateWarning[] }> {
-    const scope: TaskGateScope = { taskId: task.id, nodeId: task.nodeId };
+    const scope = { taskId: task.id, nodeId: task.nodeId };
     const nodeRequirements =
       task.nodeId === null ? [] : await this.gate.listNodeDocRequirements(client, task.nodeId);
     const requirements = mergeDeliveryRequirements(nodeRequirements, task.deliverableTypes);
@@ -1292,20 +1317,25 @@ export class TaskService {
     });
   }
 
+  /** 成果缺件错误（完成任务 / 定档共用）：422 + details.missing 口径一致。 */
+  private requiredDocsMissingError(missing: readonly TaskGateMissing[], action: "完成任务" | "定档"): AppError {
+    return new AppError(
+      "TASK_REQUIRED_DOC_MISSING",
+      "已配置的成果文件尚未上传，无法" + action + "（TASK_REQUIRED_DOC_MISSING）",
+      missing.map((item) => ({
+        code: "required_doc",
+        message: "缺少已上传的成果文件：" + item.docType + "（需要 " + item.required + "，现有 " + item.present + "）",
+        path: "missing",
+        meta: { ...item },
+      })),
+    );
+  }
+
   /** 事务内门禁强校验：已配置成果类型缺上传文件 → GateRejectedSignal（422 + missing）；通过 → 放行提示（R02）。拒绝留痕由调用方在事务外补写。 */
   private async assertCompletionGate(client: DbClient, task: TaskRow, at: Date, actorId: string): Promise<TaskGateWarning[]> {
     const gate = await this.evaluateGate(client, task);
     if (gate.missing.length > 0) {
-      const rejection = new AppError(
-        "TASK_REQUIRED_DOC_MISSING",
-        "已配置的成果文件尚未上传，无法完成任务（TASK_REQUIRED_DOC_MISSING）",
-        gate.missing.map((item) => ({
-          code: "required_doc",
-          message: "缺少已上传的成果文件：" + item.docType + "（需要 " + item.required + "，现有 " + item.present + "）",
-          path: "missing",
-          meta: { ...item },
-        })),
-      );
+      const rejection = this.requiredDocsMissingError(gate.missing, "完成任务");
       throw new GateRejectedSignal(rejection, {
         topic: "task.gate_rejected",
         dedupeKey: "task.gate_rejected:" + task.id + ":" + at.getTime(),
@@ -1671,7 +1701,10 @@ function normalizeDocTypes(values: readonly string[]): Task["deliverableTypes"] 
 
 /** 放行提示（A2-10 / R02）：存在未定档（draft）成果文件时按内置字典顺序、其后自定义顺序出 warning（计数 > 0 才出）。 */
 function buildDraftWarnings(rows: readonly TaskGateDocCountRow[]): TaskGateWarning[] {
-  const counts = new Map(rows.map((row) => [row.docType, row.present]));
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    if (row.docType !== null) counts.set(row.docType, row.present);
+  }
   const docTypes = [...DOC_TYPES, ...[...counts.keys()].filter((docType) => !(DOC_TYPES as readonly string[]).includes(docType))];
   const warnings: TaskGateWarning[] = [];
   for (const docType of docTypes) {

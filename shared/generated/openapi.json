@@ -3911,6 +3911,8 @@
           "TASK_ALREADY_DONE",
           "TASK_HAS_REFERENCES",
           "TASK_FINALIZED",
+          "TASK_FINALIZE_NOT_READY",
+          "TASK_UNFINALIZE_AFTER_PLAN",
           "REPORT_ALREADY_EXISTS",
           "REPORT_GROUP_NOT_BOUND",
           "BLUEPRINT_SCHEMA_INVALID",
@@ -9949,7 +9951,7 @@
           "production",
           "acceptance"
         ],
-        "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）"
+        "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收）"
       },
       "StageListResponse": {
         "type": "object",
@@ -10548,7 +10550,7 @@
                   "string",
                   "null"
                 ],
-                "description": "任务定档时间（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：上传 / 替换时声明为「定档文件」→ 文件定档的同时本任务一并定档（同事务）；**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档。Push 260（业务口径「把现在的定档改成 再次点击取消定档吧」）：经 POST …/unfinalize 清回 null（任务重新开放修改；文件级定档不回退）"
+                "description": "任务定档时间（Push 249；2026-11-12 收紧）：**只有任务已完成、已配置至少一类输出成果文件且每类成果均至少有一份已上传文件时才可定档**；未完成 / 未配置成果类型返回 409 TASK_FINALIZE_NOT_READY，成果缺件返回 422 TASK_REQUIRED_DOC_MISSING。文件定档仍可独立锁版，但只有挂接任务满足同一门禁时才联动任务定档，不能从文件入口绕过。**定档后不支持任何修改** —— 字段编辑 / 状态 / 进度 / 完成提交 / 删除 / 文件新增 / 直接替换 / 改名一律 409 TASK_FINALIZED（含批量）；对已定档文件的修改走变更（A4-13 申请即通过）；null = 未定档。Push 260：经 POST …/unfinalize 清回 null（任务重新开放修改；文件级定档不回退）。取消定档时间闸：预计完成日期当天及之前可取消；业务今天（Asia/Shanghai）已晚于 plannedEnd 时，任务负责人只能定档，取消返回 409 TASK_UNFINALIZE_AFTER_PLAN（项目经理等项目编辑者仍可取消；无预计完成日期不锁）"
               }
             ]
           },
@@ -11361,7 +11363,7 @@
         "required": [
           "version"
         ],
-        "description": "任务定档提交（version = 抽屉当前行版本）"
+        "description": "任务定档提交（version = 抽屉当前行版本）；任务未完成 / 未配置成果类型返回 409 TASK_FINALIZE_NOT_READY，成果文件缺件返回 422 TASK_REQUIRED_DOC_MISSING"
       },
       "TaskGateMissing": {
         "type": "object",
@@ -11797,6 +11799,9 @@
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
           },
+          "visibility": {
+            "$ref": "#/components/schemas/TaskTemplateVisibility"
+          },
           "nodes": {
             "type": "array",
             "items": {
@@ -11814,7 +11819,7 @@
                   "string",
                   "null"
                 ],
-                "description": "填写人 user id；存量种子 / 系统导入为空"
+                "description": "填写人 user id；存量种子 / 系统导入为空；系统预置模板没有填写人，任何人都不能调整其可见范围"
               }
             ]
           },
@@ -11823,7 +11828,7 @@
               "string",
               "null"
             ],
-            "description": "填写人姓名（users.display_name）；为空时界面显示系统"
+            "description": "填写人姓名（users.display_name）；为空时界面显示系统配置填写人贾海洋"
           },
           "version": {
             "$ref": "#/components/schemas/Version"
@@ -11839,6 +11844,7 @@
           "id",
           "name",
           "stageKey",
+          "visibility",
           "nodes",
           "createdBy",
           "createdByName",
@@ -11846,7 +11852,7 @@
           "createdAt",
           "updatedAt"
         ],
-        "description": "任务模板（名称 + 阶段 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）"
+        "description": "任务模板（名称 + 阶段 + 可见范围 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）"
       },
       "TaskTemplateCreateBody": {
         "type": "object",
@@ -11858,6 +11864,16 @@
           },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
+          },
+          "visibility": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskTemplateVisibility"
+              },
+              {
+                "description": "可见范围；缺省 public（兼容旧客户端）。private = 仅填写人可见，public = 有模板浏览权的人可见"
+              }
+            ]
           },
           "nodeIds": {
             "type": "array",
@@ -11872,7 +11888,8 @@
         "required": [
           "name",
           "stageKey"
-        ]
+        ],
+        "description": "新建任务模板；visibility 缺省 public（兼容旧客户端）"
       },
       "TaskTemplateDeleteBody": {
         "type": "object",
@@ -11956,6 +11973,16 @@
             "minLength": 1,
             "maxLength": 100
           },
+          "visibility": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskTemplateVisibility"
+              },
+              {
+                "description": "可见范围（可选）：private 仅填写人可见，public 有模板浏览权的人可见；只有填写人本人能实际切换，非填写人回传同值不视为切换；不传 = 保持原值"
+              }
+            ]
+          },
           "nodeIds": {
             "type": "array",
             "items": {
@@ -11971,7 +11998,15 @@
         "required": [
           "version"
         ],
-        "description": "编辑模板（改名 / 节点全量替换；乐观锁 version 必传）"
+        "description": "编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁 version 必传）"
+      },
+      "TaskTemplateVisibility": {
+        "type": "string",
+        "enum": [
+          "private",
+          "public"
+        ],
+        "description": "可见范围：private 仅填写人可见；public 有模板浏览权的人可见"
       },
       "TaskUnfinalizeBody": {
         "type": "object",
@@ -11990,7 +12025,7 @@
         "required": [
           "version"
         ],
-        "description": "任务取消定档提交（version = 抽屉当前行版本）"
+        "description": "任务取消定档提交（version = 抽屉当前行版本）；预计完成日期已过且当前账号仅为任务负责人时返回 409 TASK_UNFINALIZE_AFTER_PLAN，项目经理等项目编辑者仍可取消"
       },
       "TaskUpdateBody": {
         "type": "object",
@@ -15152,7 +15187,7 @@
               "$ref": "#/components/schemas/StageKey"
             },
             "required": false,
-            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）",
+            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收）",
             "name": "stage",
             "in": "query"
           },
@@ -15735,7 +15770,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "任务定档（抽屉开关入口 · Push 252）：未定档 → 置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回",
+        "summary": "任务定档（抽屉开关入口 · Push 252）：先校验任务已完成、已配置输出成果且成果文件齐全；未就绪 409 TASK_FINALIZE_NOT_READY / 缺件 422 TASK_REQUIRED_DOC_MISSING；通过后置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回",
         "parameters": [
           {
             "schema": {
@@ -15805,6 +15840,16 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "业务校验未通过（门禁 / 蓝图校验，含明细）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -15814,7 +15859,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "任务取消定档（抽屉「已」开关再次点击 · Push 260）：已定档 → 清位重新开放修改（留痕「取消定档」）；未定档 → 幂等原样返回",
+        "summary": "任务取消定档（抽屉「已」开关再次点击 · Push 260）：预计完成日期当天及之前 → 清位重新开放修改（留痕「取消定档」）；预计完成日期已过且当前账号仅为任务负责人 → 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；项目经理等项目编辑者仍可取消；未定档 → 幂等原样返回",
         "parameters": [
           {
             "schema": {
@@ -16500,7 +16545,7 @@
         "tags": [
           "templates"
         ],
-        "summary": "编辑模板（改名 / 节点全量替换；乐观锁）",
+        "summary": "编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁）",
         "parameters": [
           {
             "schema": {
@@ -18225,7 +18270,7 @@
               "$ref": "#/components/schemas/StageKey"
             },
             "required": true,
-            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）",
+            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收）",
             "name": "key",
             "in": "path"
           },
@@ -18333,7 +18378,7 @@
               "$ref": "#/components/schemas/StageKey"
             },
             "required": true,
-            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 生产阶段 / 验收）",
+            "description": "九阶段字典（v0.2 §2.5：售前规划 / 设计开发 / 加工采购 / 组装发货 / 硬件实施 / 软件部署 / 试运行 / 投产阶段 / 验收）",
             "name": "key",
             "in": "path"
           },
@@ -19275,7 +19320,7 @@
         "tags": [
           "files"
         ],
-        "summary": "定档（锁版；此后修改必须走变更）",
+        "summary": "定档（锁版；此后修改必须走变更；仅挂接任务已完成且输出成果齐全时才联动任务定档）",
         "parameters": [
           {
             "schema": {
