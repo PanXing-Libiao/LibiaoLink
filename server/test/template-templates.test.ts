@@ -45,6 +45,7 @@ function makeTemplate(overrides: Partial<TaskTemplateRow> = {}): TaskTemplateRow
     id: TEMPLATE,
     name: "硬件实施模板一",
     stageKey: "install",
+    visibility: "public",
     version: 0,
     createdBy: null,
     createdByName: null,
@@ -82,12 +83,13 @@ class FakeTaskTemplateRepository {
     return this.refs.filter((ref) => ids.includes(ref.templateId)).map((ref) => ({ ...ref }));
   }
 
-  async insert(input: { name: string; stageKey: string; createdBy: string }): Promise<TaskTemplateRow> {
+  async insert(input: { name: string; stageKey: string; visibility: "private" | "public"; createdBy: string }): Promise<TaskTemplateRow> {
     this.counter += 1;
     const row = makeTemplate({
       id: "8888888" + this.counter + "-8888-4888-8888-88888888888" + this.counter,
       name: input.name,
       stageKey: input.stageKey,
+      visibility: input.visibility,
       createdBy: input.createdBy,
       createdByName: "测试填写人",
       version: 0,
@@ -198,7 +200,7 @@ describe("模板列表 / 详情（读 = 登录即可）", () => {
   it("stage 缺省 = 全部阶段（null 透传仓库）；nodes 按 seq 组装、total 与 items 同步", async () => {
     const { service, repo } = makeService();
     repo.rows = [makeTemplate(), makeTemplate({ id: OTHER, stageKey: "design", name: "设计开发模板" })];
-    const result = await service.listTemplates({});
+    const result = await service.listTemplates({}, ACTOR);
     expect(repo.listStages).toEqual([null]);
     expect(result.total).toBe(2);
     expect(result.items[0]).toMatchObject({
@@ -213,13 +215,39 @@ describe("模板列表 / 详情（读 = 登录即可）", () => {
     expect(result.items[1]?.nodes).toEqual([]);
   });
 
+  it("列表按可见范围过滤：公共模板全员可见，个人模板仅填写人可见", async () => {
+    const { service, repo } = makeService();
+    repo.rows = [
+      makeTemplate({ id: TEMPLATE, visibility: "public", createdBy: OTHER }),
+      makeTemplate({ id: OTHER, visibility: "private", createdBy: OTHER }),
+      makeTemplate({ id: MISSING, visibility: "private", createdBy: ACTOR }),
+    ];
+    const result = await service.listTemplates({}, ACTOR);
+    expect(result.items.map((item) => item.id)).toEqual([TEMPLATE, MISSING]);
+    expect(result.total).toBe(2);
+  });
+
   it("按阶段过滤；详情不存在 / 已软删（仓库返 null）→ 404 NOT_FOUND", async () => {
     const { service, repo } = makeService();
     repo.rows = [makeTemplate(), makeTemplate({ id: OTHER, stageKey: "design", name: "设计开发模板" })];
-    const filtered = await service.listTemplates({ stage: "design" });
+    const filtered = await service.listTemplates({ stage: "design" }, ACTOR);
     expect(repo.listStages).toEqual(["design"]);
     expect(filtered.items.map((item) => item.name)).toEqual(["设计开发模板"]);
-    await expect(service.getTemplate(MISSING)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.getTemplate(MISSING, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("个人模板：填写人可看，其他账号按不存在处理；公共模板全员可看", async () => {
+    const own = makeService();
+    own.repo.rows = [makeTemplate({ visibility: "private", createdBy: ACTOR })];
+    await expect(own.service.getTemplate(TEMPLATE, ACTOR)).resolves.toMatchObject({ visibility: "private" });
+
+    const foreign = makeService();
+    foreign.repo.rows = [makeTemplate({ visibility: "private", createdBy: OTHER })];
+    await expect(foreign.service.getTemplate(TEMPLATE, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    const shared = makeService();
+    shared.repo.rows = [makeTemplate({ visibility: "public", createdBy: OTHER })];
+    await expect(shared.service.getTemplate(TEMPLATE, ACTOR)).resolves.toMatchObject({ visibility: "public" });
   });
 
   it("详情带节点顺序（title / titleEn 随行下发，模板预览可直接渲染）", async () => {
@@ -228,7 +256,7 @@ describe("模板列表 / 详情（读 = 登录即可）", () => {
       { templateId: TEMPLATE, nodeId: OTHER_NODE, seq: 20, title: "货架检查", titleEn: "Shelf inspection" },
       { templateId: TEMPLATE, nodeId: MISSING, seq: 10, title: "货架组装", titleEn: null },
     ];
-    const detail = await service.getTemplate(TEMPLATE);
+    const detail = await service.getTemplate(TEMPLATE, ACTOR);
     expect(detail.nodes.map((node) => node.nodeId)).toEqual([OTHER_NODE, MISSING]);
     expect(detail.nodes[1]?.seq).toBe(10);
   });
@@ -238,7 +266,7 @@ describe("新建模板（写 = taskTemplate.manage）", () => {
   it("名称 trim + 节点顺序落库（seq = 10/20…）+ 审计 action=create", async () => {
     const { service, repo, audit, permission } = makeService();
     const created = await service.createTemplate(
-      { name: "  英国订单  ", stageKey: "install", nodeIds: [OTHER_NODE] },
+      { name: "  英国订单  ", stageKey: "install", visibility: "public", nodeIds: [OTHER_NODE] },
       ACTOR,
     );
     expect(permission.lastKey).toBe("taskTemplate.manage");
@@ -247,6 +275,7 @@ describe("新建模板（写 = taskTemplate.manage）", () => {
       stageKey: "install",
       createdBy: ACTOR,
       createdByName: "测试填写人",
+      visibility: "public",
       version: 0,
     });
     expect(created.nodes).toEqual([{ nodeId: OTHER_NODE, seq: 10, title: "货架组装", titleEn: "Shelf Assembly" }]);
@@ -258,24 +287,36 @@ describe("新建模板（写 = taskTemplate.manage）", () => {
       objectType: "task_template",
       objectId: created.id,
       summary: "新增任务模板：硬件实施 · 英国订单",
-      metadata: { stageKey: "install", nodeCount: 1 },
+      metadata: { stageKey: "install", visibility: "public", nodeCount: 1 },
       changes: [
         { field: "name", from: null, to: "英国订单" },
         { field: "nodes", from: null, to: ["货架组装"] },
+        { field: "visibility", from: null, to: "public" },
       ],
     });
   });
 
+  it("新建时可选择仅个人使用；回包与审计保留可见范围", async () => {
+    const { service, repo, audit } = makeService();
+    const created = await service.createTemplate(
+      { name: "我的草稿", stageKey: "install", visibility: "private", nodeIds: [] },
+      ACTOR,
+    );
+    expect(created).toMatchObject({ visibility: "private", createdBy: ACTOR });
+    expect(repo.rows.at(-1)).toMatchObject({ visibility: "private", createdBy: ACTOR });
+    expect(audit.records[0]?.metadata).toEqual({ stageKey: "install", visibility: "private", nodeCount: 0 });
+  });
+
   it("nodeIds 允许空数组（新建后逐步拖入）", async () => {
     const { service } = makeService();
-    const created = await service.createTemplate({ name: "未命名模板", stageKey: "install", nodeIds: [] }, ACTOR);
+    const created = await service.createTemplate({ name: "未命名模板", stageKey: "install", visibility: "public", nodeIds: [] }, ACTOR);
     expect(created.nodes).toEqual([]);
   });
 
   it("名称全空白 → 400 VALIDATION_FAILED，不落库", async () => {
     const { service, repo, audit } = makeService();
     await expect(
-      service.createTemplate({ name: "   ", stageKey: "install", nodeIds: [] }, ACTOR),
+      service.createTemplate({ name: "   ", stageKey: "install", visibility: "public", nodeIds: [] }, ACTOR),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     expect(repo.rows).toHaveLength(1);
     expect(audit.records).toHaveLength(0);
@@ -284,7 +325,7 @@ describe("新建模板（写 = taskTemplate.manage）", () => {
   it("重复 id → 400 VALIDATION_FAILED", async () => {
     const { service, repo, audit } = makeService();
     await expect(
-      service.createTemplate({ name: "重复", stageKey: "install", nodeIds: [OTHER_NODE, OTHER_NODE] }, ACTOR),
+      service.createTemplate({ name: "重复", stageKey: "install", visibility: "public", nodeIds: [OTHER_NODE, OTHER_NODE] }, ACTOR),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     expect(repo.rows).toHaveLength(1);
     expect(audit.records).toHaveLength(0);
@@ -293,13 +334,13 @@ describe("新建模板（写 = taskTemplate.manage）", () => {
   it("节点不存在 → 400；节点跨阶段 → 400（模板内节点必须同阶段）", async () => {
     const missing = makeService();
     await expect(
-      missing.service.createTemplate({ name: "未知", stageKey: "install", nodeIds: [MISSING] }, ACTOR),
+      missing.service.createTemplate({ name: "未知", stageKey: "install", visibility: "public", nodeIds: [MISSING] }, ACTOR),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
 
     const foreign = makeService();
     foreign.nodes.rows = [makeNode({ id: OTHER_NODE, stageKey: "design", title: "规划设计" })];
     await expect(
-      foreign.service.createTemplate({ name: "跨阶段", stageKey: "install", nodeIds: [OTHER_NODE] }, ACTOR),
+      foreign.service.createTemplate({ name: "跨阶段", stageKey: "install", visibility: "public", nodeIds: [OTHER_NODE] }, ACTOR),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     expect(foreign.repo.rows).toHaveLength(1);
   });
@@ -307,7 +348,7 @@ describe("新建模板（写 = taskTemplate.manage）", () => {
   it("非管理员 → 403 FORBIDDEN，不落库不留痕", async () => {
     const { service, repo, audit } = makeService({ allowed: false });
     await expect(
-      service.createTemplate({ name: "英国订单", stageKey: "install", nodeIds: [] }, ACTOR),
+      service.createTemplate({ name: "英国订单", stageKey: "install", visibility: "public", nodeIds: [] }, ACTOR),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(repo.rows).toHaveLength(1);
     expect(audit.records).toHaveLength(0);
@@ -327,9 +368,19 @@ describe("编辑模板（改名 / 节点全量替换 + 乐观锁）", () => {
       objectType: "task_template",
       objectId: TEMPLATE,
       summary: "编辑任务模板：硬件实施 · 英国订单",
-      metadata: { stageKey: "install", nodeCount: 1 },
+      metadata: { stageKey: "install", visibility: "public", nodeCount: 1 },
     });
     expect(audit.records[0]?.changes).toEqual([{ field: "name", from: "硬件实施模板一", to: "英国订单" }]);
+  });
+
+  it("其他账号编辑个人模板按不存在处理", async () => {
+    const foreign = makeService({ admin: true });
+    foreign.repo.rows = [makeTemplate({ visibility: "private", createdBy: OTHER })];
+    await expect(
+      foreign.service.updateTemplate(TEMPLATE, { name: "越权改名", version: 0 }, ACTOR),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(foreign.repo.rows[0]).toMatchObject({ name: "硬件实施模板一", version: 0 });
+    expect(foreign.audit.records).toHaveLength(0);
   });
 
   it("其他项目经理不能编辑别人创建的模板；创建人 / 管理员可以", async () => {
@@ -392,10 +443,11 @@ describe("删除模板（软删 + 审计快照）", () => {
       objectType: "task_template",
       objectId: TEMPLATE,
       summary: "删除任务模板：硬件实施 · 硬件实施模板一",
-      metadata: { stageKey: "install", nodeCount: 1 },
+      metadata: { stageKey: "install", visibility: "public", nodeCount: 1 },
       changes: [
         { field: "name", from: "硬件实施模板一", to: null },
         { field: "nodes", from: ["货架组装"], to: null },
+        { field: "visibility", from: "public", to: null },
       ],
     });
   });

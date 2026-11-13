@@ -369,7 +369,7 @@ export class TaskService {
     actorId: string,
   ): Promise<TaskCreateFromTemplateResponse> {
     const project = await this.loadProjectForWrite(projectId);
-    const template = await this.templates.getTemplate(body.templateId);
+    const template = await this.templates.getTemplate(body.templateId, actorId);
     const ordered = template.nodes;
     let picked = ordered;
     if (body.nodeIds !== undefined) {

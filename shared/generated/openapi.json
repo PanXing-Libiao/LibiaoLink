@@ -11799,6 +11799,9 @@
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
           },
+          "visibility": {
+            "$ref": "#/components/schemas/TaskTemplateVisibility"
+          },
           "nodes": {
             "type": "array",
             "items": {
@@ -11841,6 +11844,7 @@
           "id",
           "name",
           "stageKey",
+          "visibility",
           "nodes",
           "createdBy",
           "createdByName",
@@ -11848,7 +11852,7 @@
           "createdAt",
           "updatedAt"
         ],
-        "description": "任务模板（名称 + 阶段 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）"
+        "description": "任务模板（名称 + 阶段 + 可见范围 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）"
       },
       "TaskTemplateCreateBody": {
         "type": "object",
@@ -11860,6 +11864,16 @@
           },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
+          },
+          "visibility": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskTemplateVisibility"
+              },
+              {
+                "description": "可见范围；缺省 public（兼容旧客户端）。private = 仅填写人可见，public = 有模板浏览权的人可见"
+              }
+            ]
           },
           "nodeIds": {
             "type": "array",
@@ -11874,7 +11888,8 @@
         "required": [
           "name",
           "stageKey"
-        ]
+        ],
+        "description": "新建任务模板；visibility 缺省 public（兼容旧客户端）"
       },
       "TaskTemplateDeleteBody": {
         "type": "object",
@@ -11974,6 +11989,14 @@
           "version"
         ],
         "description": "编辑模板（改名 / 节点全量替换；乐观锁 version 必传）"
+      },
+      "TaskTemplateVisibility": {
+        "type": "string",
+        "enum": [
+          "private",
+          "public"
+        ],
+        "description": "可见范围：private 仅填写人可见；public 有模板浏览权的人可见"
       },
       "TaskUnfinalizeBody": {
         "type": "object",

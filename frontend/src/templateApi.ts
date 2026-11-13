@@ -5,7 +5,8 @@
  * - 编辑 PATCH /api/v1/task-nodes/{id}（写 = 节点库维护权（系统管理员或有效项目经理）；乐观锁 version 必传：过期 409 VERSION_CONFLICT）
  * - 删除 DELETE /api/v1/task-nodes/{id}（写 = blueprint.manage；物理删行 + 审计留痕；已生成的项目任务不受影响）
  * 任务模板（第二段 · Push 182）：GET/POST /api/v1/task-templates、PATCH/DELETE /api/v1/task-templates/{id}
- *   —— 写同样 = 公共模板维护权（新建：管理员或有效项目经理；编辑 / 删除：创建人或管理员）；PATCH 是「改名 + nodeIds 全量替换」，version 乐观锁必传；DELETE 是软删（带 version）。
+ *   —— 写同样 = 模板管理权（新建：管理员或有效项目经理；编辑 / 删除：创建人或管理员）；新建时可选 private（仅自己）/ public（有浏览权的人）
+ *      PATCH 是「改名 + nodeIds 全量替换」，version 乐观锁必传；DELETE 是软删（带 version）。
  * 阶段名（界面板块）↔ 阶段 key 的换算复用 taskApi 的 stageKeyOfName（同一份九阶段字典，避免两处各写一份）。
  * 注意：任务侧还没有「节点库来源」字段（契约 taskNodeId 现解析为项目流程节点），
  * 「已添加」一律按「同阶段同名」折算（见 data/tasks.ts 的 addedNodeKeysOf）。
@@ -101,11 +102,15 @@ export function nodeWriteMessage(error: { code: string; message: string }): stri
 
 // ---------- 任务模板（第二段 · A1-16 / A1-17）----------
 
+/** 模板可见范围：private = 仅填写人可见；public = 有模板浏览权的人可见。 */
+export type TemplateVisibility = "private" | "public";
+
 /** 契约 TaskTemplate（只取界面用得到的字段）。 */
 export type ApiTaskTemplate = {
   id: string;
   name: string;
   stageKey: string;
+  visibility: TemplateVisibility;
   nodes: { nodeId: string; seq: number; title: string; titleEn: string | null }[];
   createdBy: string | null;
   createdByName: string | null;
@@ -118,6 +123,7 @@ export type ApiTaskTemplate = {
 export type TemplateItem = {
   id: string;
   name: string;
+  visibility: TemplateVisibility;
   nodes: TaskNodeItem[];
   createdBy: string | null;
   createdByName: string | null;
@@ -128,6 +134,7 @@ export function toTemplateItem(template: ApiTaskTemplate): TemplateItem {
   return {
     id: template.id,
     name: template.name,
+    visibility: template.visibility,
     nodes: template.nodes.map((node) => ({
       id: node.nodeId,
       title: node.title,
@@ -152,13 +159,18 @@ export async function fetchStageTemplates(stageName: string): Promise<TemplateIt
   return payload.items.map(toTemplateItem);
 }
 
-/** 新建模板（名称 + 所属阶段 + 节点顺序；nodeIds 允许空 —— 新建后逐步拖入）。 */
-export async function createTaskTemplate(stageName: string, name: string, nodeIds: string[]): Promise<TemplateItem> {
+/** 新建模板（名称 + 所属阶段 + 可见范围 + 节点顺序；nodeIds 允许空 —— 新建后逐步拖入）。 */
+export async function createTaskTemplate(
+  stageName: string,
+  name: string,
+  nodeIds: string[],
+  visibility: TemplateVisibility,
+): Promise<TemplateItem> {
   const stageKey = stageKeyOfName(stageName);
   if (stageKey === null) {
     throw new Error("未知阶段：" + stageName);
   }
-  const payload = await apiSend<ApiTaskTemplate>("/api/v1/task-templates", "POST", { name, stageKey, nodeIds });
+  const payload = await apiSend<ApiTaskTemplate>("/api/v1/task-templates", "POST", { name, stageKey, visibility, nodeIds });
   return toTemplateItem(payload);
 }
 

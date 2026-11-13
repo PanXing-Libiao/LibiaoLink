@@ -22,9 +22,11 @@ import {
   updateTaskTemplate,
   type TaskNodeItem,
   type TemplateItem,
+  type TemplateVisibility,
 } from "./templateApi";
 import { replaceTemplateSection, templateSectionFromParam, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import { isLocalizedLocale, stageText, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT } from "./i18n";
+import { lockBodyScroll } from "./scrollLock";
 import type { MeResponse } from "./types";
 
 /** 任务模板的阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
@@ -43,6 +45,8 @@ type TemplateDraft = {
   id: string;
   /** 模板名（可直接改；保存时 trim 后落库） */
   name: string;
+  /** 可见范围：创建时选定；private 仅填写人可见，public 有浏览权的人可见 */
+  visibility: TemplateVisibility;
   /** 这份模板里已选的节点，顺序即模板里的顺序 */
   nodes: TemplateNode[];
   createdBy: string | null;
@@ -78,6 +82,7 @@ function toTemplateDraft(template: TemplateItem): TemplateDraft {
   return {
     id: template.id,
     name,
+    visibility: template.visibility,
     nodes,
     createdBy: template.createdBy,
     createdByName: template.createdByName,
@@ -425,15 +430,16 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
    * 新建模板 = `POST /api/v1/task-templates`（默认名「未命名模板」、空节点，回来再拖节点进去）：
    * 成功 = 新面板插到最前（原来的往右挪）并把焦点 / 全选落到它的名字上；失败 = 底部提示条。
    */
-  const startNewTemplate = (): void => {
+  const startNewTemplate = (visibility: TemplateVisibility): void => {
     if (newTemplateBusy) {
       return;
     }
+    setNewTemplateVisibilityOpen(false);
     setNewTemplateBusy(true);
     setTemplateNotice(null);
     void (async () => {
       try {
-        const created = await createTaskTemplate(activeSection, t("tpl.unnamed"), []);
+        const created = await createTaskTemplate(activeSection, t("tpl.unnamed"), [], visibility);
         const draft = toTemplateDraft(created);
         updateTemplates((previous) => [draft, ...previous]);
         // 焦点 / 全选等这块面板渲染出来再落（下面那个 useEffect 里做 —— 不用 setTimeout 抢时机）
@@ -560,7 +566,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   /** 待确认删除的节点（同款红胶囊的第一下：第二下在顶部确认 Toast 上）+ 写入失败的提示文案。 */
   const [pendingDeleteNode, setPendingDeleteNode] = useState<TaskNodeItem | null>(null);
   const [nodeNotice, setNodeNotice] = useState<string | null>(null);
-  /** 模板写入的本地状态：正在新建 / 正在保存哪一块、待确认删除的模板、失败提示。 */
+  /** 模板写入的本地状态：新建可见范围选择 / 正在新建 / 正在保存哪一块、待确认删除的模板、失败提示。 */
+  const [newTemplateVisibilityOpen, setNewTemplateVisibilityOpen] = useState(false);
   const [newTemplateBusy, setNewTemplateBusy] = useState(false);
   /** 新建模板后，等这块面板渲染出来再把焦点 / 全选落到它的名字输入框上。 */
   const [focusTemplateId, setFocusTemplateId] = useState<string | null>(null);
@@ -570,6 +577,14 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到行内删除按钮。 */
   const deleteNodeConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteNode !== null);
   const deleteTemplateConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteTemplate !== null);
+  const newTemplateTrapRef = useFocusTrap<HTMLDivElement>(newTemplateVisibilityOpen);
+
+  useEffect(() => {
+    if (!newTemplateVisibilityOpen) {
+      return;
+    }
+    return lockBodyScroll();
+  }, [newTemplateVisibilityOpen]);
 
   /** 新建模板后的聚焦：状态一置上就等这次渲染提交完，把名字输入框聚焦 + 全选（落完即清）。 */
   useEffect(() => {
@@ -1000,7 +1015,10 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                 type="button"
                 data-template-new=""
                 aria-label={t("tpl.new.title")}
-                onClick={startNewTemplate}
+                onClick={() => {
+                  setTemplateNotice(null);
+                  setNewTemplateVisibilityOpen(true);
+                }}
                 disabled={newTemplateBusy}
                 title={t("tpl.new.title")}
                 className="shrink-0 rounded-lg border border-white/80 bg-white/70 px-3 py-1.5 text-sm font-medium text-zinc-700 shadow-[0_2px_10px_rgba(15,23,42,0.08)] transition hover:bg-white hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1235,8 +1253,19 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                             ) : null}
                           </span>
                         </div>
-                        <p data-template-creator={template.id} className="mt-1 truncate text-[11px] text-zinc-500" title={template.createdByName ?? t("tpl.creatorSystem")}>
-                          {t("tpl.creator", { name: template.createdByName ?? t("tpl.creatorSystem") })}
+                        <p
+                          data-template-creator={template.id}
+                          data-template-visibility={template.visibility}
+                          className="mt-1 truncate text-[11px] text-zinc-500"
+                          title={t("tpl.creator", {
+                            name: template.createdByName ?? t("tpl.creatorSystem"),
+                            visibility: t(template.visibility === "private" ? "tpl.visibility.private" : "tpl.visibility.public"),
+                          })}
+                        >
+                          {t("tpl.creator", {
+                            name: template.createdByName ?? t("tpl.creatorSystem"),
+                            visibility: t(template.visibility === "private" ? "tpl.visibility.private" : "tpl.visibility.public"),
+                          })}
                         </p>
                         {/* 提示行固定高度：出现 / 消失都不顶动下方列表（否则拖拽时会跟着抖）；
                             不拖拽时这一行留给「未保存 / 冲突」状态 + 「放弃改动」出路（Push 264 追订） */}
@@ -1371,6 +1400,63 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
               </div>
             </div>
           </div>
+          {newTemplateVisibilityOpen ? (
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/30 px-4 backdrop-blur-[2px]"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setNewTemplateVisibilityOpen(false);
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setNewTemplateVisibilityOpen(false);
+                }
+              }}
+            >
+              <div
+                ref={newTemplateTrapRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="new-template-visibility-title"
+                className="w-full max-w-md rounded-2xl border border-white/80 bg-white p-5 shadow-[0_24px_70px_rgba(15,23,42,0.28)]"
+              >
+                <h2 id="new-template-visibility-title" className="text-base font-semibold text-zinc-900">
+                  {t("tpl.new.chooseTitle")}
+                </h2>
+                <p className="mt-1 text-sm text-zinc-500">{t("tpl.new.chooseLead")}</p>
+                <div className="mt-4 grid gap-2">
+                  <button
+                    type="button"
+                    data-template-visibility-choice="private"
+                    onClick={() => { startNewTemplate("private"); }}
+                    className="group rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-zinc-400 hover:bg-zinc-50"
+                  >
+                    <span className="block text-sm font-medium text-zinc-900">{t("tpl.visibility.private")}</span>
+                    <span className="mt-0.5 block text-xs text-zinc-500">{t("tpl.visibility.privateHint")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-template-visibility-choice="public"
+                    onClick={() => { startNewTemplate("public"); }}
+                    className="group rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-zinc-400 hover:bg-zinc-50"
+                  >
+                    <span className="block text-sm font-medium text-zinc-900">{t("tpl.visibility.public")}</span>
+                    <span className="mt-0.5 block text-xs text-zinc-500">{t("tpl.visibility.publicHint")}</span>
+                  </button>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => { setNewTemplateVisibilityOpen(false); }}
+                    className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-600 transition hover:bg-zinc-50"
+                  >
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {/* 节点库 / 模板删除的第二下确认（与首页「删除项目」同一套顶部常驻 Toast —— 非阻断）；失败提示沿用顶部浮动 Toast */}
           {pendingDeleteNode === null ? null : (
             <ToastConfirm
