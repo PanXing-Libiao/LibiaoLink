@@ -1,6 +1,6 @@
 import { z } from "../zod.ts";
 import { DateTimeSchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
-import { STAGE_KEYS, STAGE_NAMES } from "../common/dicts.ts";
+import { STAGE_KEYS, STAGE_NAMES, StageKeySchema } from "../common/dicts.ts";
 
 const TASK_TEMPLATE_NODE_IDS_LIMIT = 500;
 

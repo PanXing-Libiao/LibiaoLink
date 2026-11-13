@@ -1,4 +1,4 @@
-> **2026-11-13 公共节点申请通道（本机实现，未部署 · 迁移 0095）**：未匹配 / 保留 Excel 原名的阶段内任务，除加入个人模板外可**申请加入公共节点库**；申请随导入同一事务提交（`commit.nodeRequests`），不写 `task_nodes`、不阻塞导入。审核人（与 taskNodeManage 同口径）在任务模板页逐条通过或驳回；通过时才按同阶段同名判重建公共节点（已有同名则直接关联），驳回原因必填。该阶段已有同名节点时本次不提交申请（`NODE_REQUEST_EXISTING_NODE`），同名申请已在队列时沿用不重复提交（`NODE_REQUEST_REUSED`）；结果回传 `nodeRequests[{id,stageKey,title,status}]`。接口与表口径见 template 模块 README 与 `shared/src/modules/templates.ts`。
+> **2026-11-13 公共节点申请通道（本机实现，未部署 · 迁移 0096）**：未匹配 / 保留 Excel 原名的阶段内任务，除加入个人模板外可**申请加入公共节点库**；申请随导入同一事务提交（`commit.nodeRequests`），不写 `task_nodes`、不阻塞导入。审核人（与 taskNodeManage 同口径）在任务模板页逐条通过或驳回；通过时才按同阶段同名判重建公共节点（已有同名则直接关联），驳回原因必填。该阶段已有同名节点时本次不提交申请（`NODE_REQUEST_EXISTING_NODE`），同名申请已在队列时沿用不重复提交（`NODE_REQUEST_REUSED`）；结果回传 `nodeRequests[{id,stageKey,title,status}]`。接口与表口径见 template 模块 README 与 `shared/src/modules/templates.ts`。
 
 > **2026-11-13 Excel 导入 AI 建议与个人模板（本机实现，未部署）**：名称一致自动沿用公共节点；AI 识别出的相似节点逐条选择沿用标准名称或保留 Excel 原名（含同名多条任务）。批次等细节可触发 AI 建议，是否沿用由用户决定；无法判断时人工选择。未匹配或选择保留原名的任务可选加入同阶段已有且当前账号有权编辑的本人个人模板，节点归属该模板，不进入公共节点库；不选择模板则只导入项目。公共节点需要增加时仍联系管理员。多条任务选择同一个标准节点时保留全部任务并提示关联冲突，未选择沿用的任务不参与冲突。模板与项目在同一事务提交，并校验模板归属、阶段及版本；英文沿用原表或 AI 补全结果。
 
@@ -48,7 +48,7 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 - 日期笔误（完成早于开始 / 开始晚于预计完成）照原值导入 + 提醒（`DATE_ORDER` / `DATE_ORDER_END`）。
 - `tasks.on_time` = 源表「是否按时交付」原值（按时交付 true / 延期交付 false / 空 null；与日期推导不一致 → `ONTIME_MISMATCH` 提醒，不改值）。
 - 任务节点：无对应按文件原名导入，不写节点库；`nameEn` 优先节点库标准英文，其次源表英文或模型补全。阶段外按临时任务处理。
-- 公共节点申请（2026-11-13 · 迁移 0095）：`commit.nodeRequests[{groupIndex,title?,titleEn?}]` 只允许「阶段内 + 保留 Excel 原名」的分组（精确匹配 / 已选已有节点 / 阶段外一律 400），同一分组不可重复提交；标题缺省 = 源表原名、英文缺省 = 预览补全结果（显式 `null` = 无英文）。申请在**导入事务内**写入：导入回滚则申请一起回滚；同阶段同名已有公共节点 → 不提交（warning `NODE_REQUEST_EXISTING_NODE`），同名 pending 申请 → 沿用（info `NODE_REQUEST_REUSED`）。导入结果 `nodeRequests` 回传本次提交（含沿用）的申请。
+- 公共节点申请（2026-11-13 · 迁移 0096）：`commit.nodeRequests[{groupIndex,title?,titleEn?}]` 只允许「阶段内 + 保留 Excel 原名」的分组（精确匹配 / 已选已有节点 / 阶段外一律 400），同一分组不可重复提交；标题缺省 = 源表原名、英文缺省 = 预览补全结果（显式 `null` = 无英文）。申请在**导入事务内**写入：导入回滚则申请一起回滚；同阶段同名已有公共节点 → 不提交（warning `NODE_REQUEST_EXISTING_NODE`），同名 pending 申请 → 沿用（info `NODE_REQUEST_REUSED`）。导入结果 `nodeRequests` 回传本次提交（含沿用）的申请。
 - 变更：阶段映射 实施 → `install`、发货 → `assembly`；内容 / 原因合并落库（占位 = 内容待补 / 原因待补）。
 - 变更关联（Push 319 / Push 398）：①「关联」列（多值按逗号 / 顿号拆）按任务描述匹配（键 = 去全部空白 + 小写；对「标题+英文名」/「标题」/「英文名」三串）；② **R01**（`docs/rules/R01-R07-内置规则文案.md`）：变更时间 / 变更文件 / 变更后文件 / 变更后文件版本齐备时，按「变更文件 ∈ 任务输出成果文件（多值）」匹配，命中多条全部关联。两路去重 → 提交事务回写 `tasks.change_refs`（追加序 = 变更表行序 + 任务表行序）；未命中 / 多命中 / 日期不一致 / 任务侧落空出提醒（`CHANGE_RELATED_UNMATCHED` / `CHANGE_RELATED_AMBIGUOUS` / `CHANGE_DATE_MISMATCH` / `TASK_CHANGE_REF_UNMATCHED` + 汇总 `CHANGE_LINK_SUMMARY`），照常导入不阻断；预览 / 结果 counts 增 `changesLinked`。R01 解决「变更文件已上传但任务总览 / 变更记录找不到」的导入断链。
 - 问题处理人（Push 319）：源表没有处理人字段 —— 未解决（open / in_progress）默认 `owner_id` = 项目经理首位（`managerIds[0] ?? actorId`；done = null）+ info 提醒 `ISSUE_OWNER_FALLBACK` —— 未解决问题随项目经理进入工作台「待我处理」，「我提出的问题」按 reporter（日报作者）照旧。

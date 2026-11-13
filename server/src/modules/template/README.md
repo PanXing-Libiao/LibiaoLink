@@ -36,7 +36,7 @@
 
 - **背景 / 口径**：导入表导入不再向公共节点库补节点；导入人（多数没有节点库维护权）需要一个申请渠道，管理员审核通过后才落公共节点。
 - **契约**：`shared/src/modules/templates.ts` 增 `TaskNodeRequestStatus` / `TaskNodeRequest` / `TaskNodeRequestListQuery` / `TaskNodeRequestListResponse` / `TaskNodeRequestApproveBody` / `TaskNodeRequestRejectBody` / `TaskNodeRequestDecisionResponse`；`shared/src/openapi.ts` 新增 4 条路径；`AUDIT_OBJECT_TYPES` 增 `task_node_request`。导入侧契约见 `shared/src/modules/imports.ts`（commit `nodeRequests` / 结果 `nodeRequests`）。
-- **数据**：迁移 `database/migrations/0095_task_node_requests.sql`（阶段 / 中英文名 / 状态 / 申请人 + 时间 / 来源项目 + 预览票据 / 审核人 + 时间 + 意见 / 最终节点 id；同阶段同名只允许一条 pending 的部分唯一索引；状态迁移的 CHECK 兜底）。
+- **数据**：迁移 `database/migrations/0096_task_node_requests.sql`（阶段 / 中英文名 / 状态 / 申请人 + 时间 / 来源项目 + 预览票据 / 审核人 + 时间 + 意见 / 最终节点 id；同阶段同名只允许一条 pending 的部分唯一索引；状态迁移的 CHECK 兜底）。
 - **写**：
   - `POST /api/v1/task-node-requests/{id}/approve`（与节点库维护权同口径复核）：可先改中英文名 → 同阶段同名判重 → 无同名则追加到该阶段末尾建公共节点（写 `task_node` create 审计）→ 有同名则**直接关联**（`linkedExisting=true`，不建行也不写节点审计）→ 申请行落 approved + `node_id`（写 `task_node_request` update 审计）。已处理 400、不存在 404、无权限 403。
   - `POST /api/v1/task-node-requests/{id}/reject`：原因必填（trim 后非空，≤200），落 rejected + `review_note`，写审计。

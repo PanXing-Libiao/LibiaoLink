@@ -19,7 +19,7 @@ import { TaskNodeRequestService } from "./task-node-request.service.js";
 const idParam = new ZodValidationPipe(UuidSchema);
 
 /**
- * 公共任务节点申请接口（0095 · 2026-11-13）：
+ * 公共任务节点申请接口（0096 · 2026-11-13）：
  * 导入面板里「保留 Excel 原名」的任务可顺带申请加入公共节点库，由节点库维护侧（与 taskNodeManage 同口径）
  * 逐条通过（可改中英文名后直接建节点）或驳回（原因必填）；申请人可撤销本人待审申请。
  * 门禁：登录 + CSRF；审核面（列表审核人视角 / 通过 / 驳回）由服务层复核节点库维护权，本人视角只看自己。

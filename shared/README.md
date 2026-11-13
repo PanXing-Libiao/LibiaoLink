@@ -30,7 +30,7 @@ shared/
 │   ├── modules/
 │   │   ├── projects.ts         项目主数据 + 首页分类 facets
 │   │   ├── tasks.ts            任务 + 四格进度（含创建 / 编辑 / 从模板生成）
-│   │   ├── templates.ts        任务节点库 + 任务模板（A1-16 / A1-17）+ 公共任务节点申请（0095）
+│   │   ├── templates.ts        任务节点库 + 任务模板（A1-16 / A1-17）+ 公共任务节点申请（0096）
 │   │   ├── flow.ts             蓝图 JSON + 流程节点 + 完成门禁
 │   │   ├── files.ts            文件与变更（上传 / 版本 / 定档 / 回收站 / 文件库查询与多态关联；v0.2 §5）
 │   │   ├── identity.ts         登录用户 + /auth/me（ADR-010；g6）

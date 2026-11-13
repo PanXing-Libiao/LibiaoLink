@@ -53,7 +53,7 @@ const requester = alias(users, "request_requester");
 const reviewer = alias(users, "request_reviewer");
 
 /**
- * 公共任务节点申请仓库（0095 · 2026-11-13）：只读写 task_node_requests。
+ * 公共任务节点申请仓库（0096 · 2026-11-13）：只读写 task_node_requests。
  * - 状态机 pending → approved / rejected / withdrawn；改状态一律带 status = 'pending' 条件，天然幂等且防并发重复审核；
  * - 同阶段同名只允许一条 pending（部分唯一索引）：插入用 onConflictDoNothing，冲突时由服务层复用既有行。
  */

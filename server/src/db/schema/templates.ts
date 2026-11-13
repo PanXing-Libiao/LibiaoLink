@@ -69,7 +69,7 @@ export const taskNodes = pgTable(
 );
 
 /**
- * task_node_requests（0095 · 2026-11-13）：公共任务节点申请 —— 导入侧发起、节点库维护侧审核。
+ * task_node_requests（0096 · 2026-11-13）：公共任务节点申请 —— 导入侧发起、节点库维护侧审核。
  * 申请本身不写 task_nodes；审核通过时才按同阶段同名判重建公共节点（已有同名则直接关联）。
  * 同阶段同名只允许一条 pending（部分唯一索引）；状态机 pending → approved / rejected / withdrawn 不可回退。
  */
