@@ -14,7 +14,15 @@ import { useMainNavItems } from "./mainNav";
  * 当前所在页：active 项 = 深色字、字重 700（与项目页内键帽导航同一套「当前项」语言）；
  * 项目详情页视作「项目空间」内（导航项亮「项目空间」）。
  */
-export function TopNav() {
+type TopNavProps = {
+  /**
+   * 「任务模板」导航项的非数字红点（PM 反馈 2026-11-13「任务模板 这里加红点提醒吧」）：
+   * true = 该账号有「入库审核」待处理事项（判定与取数见 AppHeader / App.tsx）；缺省 false = 不渲染红点。
+   */
+  templatesPending?: boolean;
+};
+
+export function TopNav({ templatesPending = false }: TopNavProps) {
   /** 导航项文案走 i18n（Push 296 语言切换）：默认中文；切英文后顶栏导航四项跟着换。 */
   const t = useT();
   const items = useMainNavItems();
@@ -30,6 +38,15 @@ export function TopNav() {
           className="topnav-btn"
         >
           {item.label}
+          {/* 入库审核待处理红点：只在「任务模板」项上，且是圆点不是数字；颜色之外另给文本供读屏（不靠颜色传达）。 */}
+          {item.key !== "templates" || !templatesPending ? null : (
+            <span
+              role="img"
+              data-nav-templates-dot=""
+              aria-label={t("nav.templates.pendingAria")}
+              className="ml-1.5 inline-block h-2 w-2 shrink-0 rounded-full bg-rose-500 align-middle"
+            />
+          )}
         </a>
       ))}
     </nav>

@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
-import { IMPORT_ALLOWED_EXTENSIONS, IMPORT_MAX_FILE_BYTES, IMPORT_PREVIEW_TTL_MINUTES } from "@libiaolink/contracts";
+import {
+  IMPORT_ALLOWED_EXTENSIONS,
+  IMPORT_MAX_FILE_BYTES,
+  IMPORT_PREVIEW_TTL_MINUTES,
+  STAGE_NAMES,
+} from "@libiaolink/contracts";
 import type {
   ImportAccount,
   ImportIssue,
@@ -58,6 +63,7 @@ import { ImportAdmissionGate } from "./import-admission.gate.js";
 import { ImportNodeMatcher } from "./import-node-matcher.js";
 import type { ImportLibraryNode } from "./import-node-matcher.js";
 import { ZipArchive, parseWorkbook, parseWorkbookFile } from "./xlsx.js";
+import { TaskNodeRequestService } from "../template/index.js";
 import type { ParsedWorkbook } from "./xlsx.js";
 
 /**
@@ -161,6 +167,8 @@ const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 /** 变更 / 日报长文本入库上限（与库内 check 同值：daily_reports 2000 / issues.title 500 / 文本类 2000）。 */
 const TEXT_LIMIT = 2000;
 const TITLE_LIMIT = 500;
+/** 阶段 key → 展示名（提醒文案用，与 template 模块同口径）。 */
+const STAGE_NAME_BY_KEY = STAGE_NAMES as Record<string, string>;
 
 /** 导入表导入用例（h2+ · 导入项目按钮的服务端落点）。 */
 @Injectable()
@@ -182,6 +190,7 @@ export class ProjectImportService implements OnModuleInit {
     private readonly admission: ImportAdmissionGate,
     private readonly nodeMatcher: ImportNodeMatcher,
     private readonly templateService: TemplateService,
+    private readonly nodeRequests: TaskNodeRequestService,
   ) {}
 
   /** 启动清掉上次进程崩溃遗留的导入临时目录（按前缀 + mtime 保龄，不碰活跃请求）。 */
@@ -456,6 +465,29 @@ export class ProjectImportService implements OnModuleInit {
       selectedGroups.add(selection.groupIndex);
       return { templateId: selection.templateId, version: selection.version, stageKey: group.stageKey, title: group.title, titleEn: group.sourceTitleEn };
     });
+    // 公共节点申请（2026-11-13）：只允许对「保留 Excel 原名」的阶段内节点提交；同一分组只能提交一次。
+    const requestItems: Array<{ stageKey: string; title: string; titleEn: string | null }> = [];
+    const requestedGroups = new Set<number>();
+    for (const item of body.nodeRequests ?? []) {
+      const group = groups[item.groupIndex];
+      const plan = nodePlan.groups[item.groupIndex];
+      if (group === undefined || plan === undefined || group.stageKey === null || plan.node !== null) {
+        throw new AppError("VALIDATION_FAILED", "公共节点申请只能针对保留 Excel 原名的任务");
+      }
+      if (requestedGroups.has(item.groupIndex)) {
+        throw new AppError("VALIDATION_FAILED", "同一任务节点只能提交一次公共节点申请");
+      }
+      requestedGroups.add(item.groupIndex);
+      const title = (item.title ?? group.title).trim();
+      if (title === "") throw new AppError("VALIDATION_FAILED", "公共节点申请的名称不能为空");
+      const titleEn = item.titleEn === undefined
+        ? group.sourceTitleEn
+        : item.titleEn === null || item.titleEn.trim() === ""
+          ? null
+          : item.titleEn.trim();
+      requestItems.push({ stageKey: group.stageKey, title: clipText(title, 200), titleEn: clipNullable(titleEn, 200) });
+    }
+
     // 人工改选的标准节点可能没有英文；按最终名称生成，避免沿用不同源任务的译文。
     const selectedEnglish = new Map<string, string>();
     const missingSelected = new Map<string, { index: number; title: string }>();
@@ -610,6 +642,13 @@ export class ProjectImportService implements OnModuleInit {
         at,
         tx,
       );
+      // 公共节点申请：与项目 / 任务在同一事务里落库（导入回滚则申请一起回滚；申请不阻塞导入）。
+      const requestOutcome = requestItems.length === 0
+        ? { requests: [], existingNodes: [], reusedPending: 0 as number }
+        : await this.nodeRequests.createFromImport(
+            { actorId, projectId: projectRow.id, previewId: preview.id, items: requestItems },
+            tx,
+          );
       const imported = await this.flow.importSnapshot(tx, {
         projectId: projectRow.id,
         projectType: projectRow.projectType,
@@ -829,7 +868,14 @@ export class ProjectImportService implements OnModuleInit {
       throwIfCancelled(signal);
       await this.previews.markCommitted(preview.id, projectRow.id, at, tx);
       const manualTargets = buildManualTargets(parse.manualFiles, taskIds, changeIds, changeLinks);
-      return { projectId: projectRow.id, code: projectRow.code, name: projectRow.name, counts, manualTargets };
+      return {
+        projectId: projectRow.id,
+        code: projectRow.code,
+        name: projectRow.name,
+        counts,
+        manualTargets,
+        requestOutcome,
+      };
     });
     let written: {
       projectId: string;
@@ -837,6 +883,7 @@ export class ProjectImportService implements OnModuleInit {
       name: string;
       counts: ImportResultCounts;
       manualTargets: ImportManualTarget[];
+      requestOutcome: { requests: Array<{ id: string; stageKey: string; title: string; status: string }>; existingNodes: Array<{ stageKey: string; title: string }>; reusedPending: number };
     };
     try {
       written = await commitTx;
@@ -845,6 +892,16 @@ export class ProjectImportService implements OnModuleInit {
       throw error;
     }
 
+    if (written.requestOutcome.existingNodes.length > 0) {
+      extraSeeds.push(
+        nodeRequestExistingNodeSeed(
+          written.requestOutcome.existingNodes.map((item) => STAGE_NAME_BY_KEY[item.stageKey] + " · " + item.title),
+        ),
+      );
+    }
+    if (written.requestOutcome.reusedPending > 0) {
+      extraSeeds.push(nodeRequestReusedSeed(written.requestOutcome.reusedPending));
+    }
     if (unresolvedOwners.size > 0) {
       extraSeeds.push(unresolvedOwnersSeed([...unresolvedOwners]));
     }
@@ -863,6 +920,12 @@ export class ProjectImportService implements OnModuleInit {
       name: written.name,
       counts: written.counts,
       manualTargets: written.manualTargets,
+      nodeRequests: written.requestOutcome.requests.map((row) => ({
+        id: row.id,
+        stageKey: row.stageKey as ProjectImportResult["nodeRequests"][number]["stageKey"],
+        title: row.title,
+        status: row.status as ProjectImportResult["nodeRequests"][number]["status"],
+      })),
       issues,
     };
   }
@@ -1445,6 +1508,31 @@ function stakeholderFillerMissingSeed(names: readonly string[]): LegacyIssueSeed
     subject: list,
     zh: "干系人「填写者」账号未找到（" + list + "）：导入后「填写者」列留空（可到干系人台账补录）",
     en: "Stakeholder 填写者 accounts not found (" + list + "): the 填写者 column stays empty after import (editable in the stakeholder ledger).",
+  };
+}
+
+/** 公共节点申请：该阶段已有同名公共节点 → 不提交申请（任务仍按原名导入）。 */
+function nodeRequestExistingNodeSeed(items: readonly string[]): LegacyIssueSeed {
+  const list = items.join("、");
+  return {
+    level: "warning",
+    code: "NODE_REQUEST_EXISTING_NODE",
+    row: null,
+    subject: list,
+    zh: "该阶段已有同名公共节点，本次未提交申请（任务仍按 Excel 原名导入）：" + list,
+    en: "A public node with the same name already exists in that stage; no request was submitted (tasks keep the Excel names): " + list,
+  };
+}
+
+/** 公共节点申请：同阶段同名已有待审申请 → 直接沿用，不重复提交（info）。 */
+function nodeRequestReusedSeed(count: number): LegacyIssueSeed {
+  return {
+    level: "info",
+    code: "NODE_REQUEST_REUSED",
+    row: null,
+    subject: null,
+    zh: "有 " + String(count) + " 条同名申请已在审核队列中：本次直接沿用，不会重复提交",
+    en: String(count) + " request(s) with the same names are already pending review: reused instead of submitting duplicates.",
   };
 }
 

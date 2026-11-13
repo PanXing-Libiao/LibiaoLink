@@ -1,3 +1,5 @@
+> **2026-11-13 公共节点申请通道（本机实现，未部署 · 迁移 0096）**：未匹配 / 保留 Excel 原名的阶段内任务，除加入个人模板外可**申请加入公共节点库**；申请随导入同一事务提交（`commit.nodeRequests`），不写 `task_nodes`、不阻塞导入。审核人（与 taskNodeManage 同口径）在任务模板页逐条通过或驳回；通过时才按同阶段同名判重建公共节点（已有同名则直接关联），驳回原因必填。该阶段已有同名节点时本次不提交申请（`NODE_REQUEST_EXISTING_NODE`），同名申请已在队列时沿用不重复提交（`NODE_REQUEST_REUSED`）；结果回传 `nodeRequests[{id,stageKey,title,status}]`。接口与表口径见 template 模块 README 与 `shared/src/modules/templates.ts`。
+
 > **2026-11-13 Excel 导入 AI 建议与个人模板（本机实现，未部署）**：名称一致自动沿用公共节点；AI 识别出的相似节点逐条选择沿用标准名称或保留 Excel 原名（含同名多条任务）。批次等细节可触发 AI 建议，是否沿用由用户决定；无法判断时人工选择。未匹配或选择保留原名的任务可选加入同阶段已有且当前账号有权编辑的本人个人模板，节点归属该模板，不进入公共节点库；不选择模板则只导入项目。公共节点需要增加时仍联系管理员。多条任务选择同一个标准节点时保留全部任务并提示关联冲突，未选择沿用的任务不参与冲突。模板与项目在同一事务提交，并校验模板归属、阶段及版本；英文沿用原表或 AI 补全结果。
 
 > **2026-11-13 导入节点英文补全（历史口径，以下以最新导入规则为准）**：源表缺少英文时，按名称去重分批调用系统启用模型生成英文并写入预览票据；已有标准英文优先。确认补库时保存新节点英文，手工改选缺英文的已有节点时按其标准名称补全任务英文，不改写原节点。模型不可用或结果无效时保留空值与待补提示，不阻断导入。
@@ -25,7 +27,7 @@ project-import.controller.ts  # HTTP 面：POST /api/v1/project-imports/preview�
 project-import.service.ts     # 口径编排：preview = 文件闸 → 解析 + 转换 → 账号对账 + 节点归并 → 源文件留档（imports/<previewId>/source.<ext>）→ 票据；commit = 票据状态机 → 编号占用 → 图片先传对象存储 → 单事务写入（项目 / 蓝图快照 / 成员 / 任务 / 日报 / 问题 / 变更 / 干系人 / 文件）→ 审计 → 完工清理源文件 + 翻译预热；sweepExpiredPreviews = worker 每 10 分钟清理过期 pending 票据（先 purge 源对象，再置 expired；失败下轮重试）
 import-admission.gate.ts      # 进程内非阻塞准入：preview 按请求体大小计权（≤32 MiB=1 / ≤128 MiB=2 / 更大或长度未知=3）；commit 按源文件大小计权 + previewId 单飞；额度不足立即 429，成功 / 失败 / 取消均幂等归还
 project-import.repository.ts  # 数据访问：project_import_previews 票据（插入 / 取回 / 状态机 / 过期）与批量写入（task_nodes / project_members / tasks / reports / report_issues / change_requests / stakeholders / project_stakeholders / files；写路径由服务层开事务传 tx）
-project-import.module.ts      # DI 装配：identity / permission / admin / project / template / translate；对象存储走全局 ObjectStorage 端口
+project-import.module.ts      # DI 装配：identity / permission / admin / project / template（模板 + 公共节点申请）/ translate；对象存储走全局 ObjectStorage 端口
 xlsx.ts                       # 解析层（零依赖）：zip 解包（store / deflate，实际解压量受预算约束）+ sheet XML → 二维格 + 内嵌图锚点（cell → media）；XML 缓存与图片按需读取分开限量；支持 .xlsx / .xlsm
 legacy.ts                     # 转换层（纯函数）：导入表 → 标准导入模型 + 提醒清单（进度五档 / 完成日期口径 / 日期笔误 / 节点拼装 / 变更阶段映射 / 干系人列解析 / 图片清单 / 日报中英混排表头标准化；message 中英双语）
 people.ts                     # 人员注册表：姓名 → 拼音登录名 / 显示名（-test）建议；PEOPLE_REGISTRY + proposeAccount + stripParen
@@ -36,7 +38,7 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 
 - `POST /api/v1/project-imports/preview`（multipart/form-data，字段 `file`）—— 解析 + 口径校验，**不写库**；返回预览票据（30 分钟）+ 落位建议 + 将写入条数 + 三份清单（需手动导入文件：`id` / `kind` / 任务或变更行 / 文件名 / 原因 / 节点匹配 / 账号）+ 提醒清单。
   错误面：400 `IMPORT_FILE_INVALID`（缺文件名 / 非 .xlsx·.xlsm / 空文件 / 超 256 MB / 实际请求体大于声明长度）· 401 未登录 · 403 缺 `project.create` · 422 `IMPORT_PARSE_FAILED`（导入表结构不对 / 不是 xlsx / 超出解析资源预算）· 429 `RATE_LIMITED`（preview 准入额度不足）。
-- `POST /api/v1/project-imports/commit`（JSON：`previewId` / `region` / `projectType` / 节点确认与冲突选择；旧 `addMissingNodes` 已停用）—— 单事务建项目并写入全量数据（失败整批回滚，不许半量落库）。
+- `POST /api/v1/project-imports/commit`（JSON：`previewId` / `region` / `projectType` / 节点确认与冲突选择 / 可选公共节点申请 `nodeRequests`；旧 `addMissingNodes` 已停用）—— 单事务建项目并写入全量数据（失败整批回滚，不许半量落库）。
   错误面：400 `VALIDATION_FAILED`（参数非法 / 地区空 / 票据已提交）· 403 票据非本人 · 404 票据不存在 · 409 `PROJECT_CODE_EXISTS`（编号占用）· 410 `IMPORT_PREVIEW_EXPIRED`（过期 / 源文件已清理）· 400 `IMPORT_CANCELLED`（写入中取消：连接在写完前断开 —— 单事务回滚 + 已传图片清理；票据保留 pending、源文件保留，可再次提交）。
 - `POST /api/v1/projects/{id}/import-manual-files/attach-change`（JSON：`changeId` / `fileId`）—— 导入补充附件回挂变更：文件首版本写 `file_versions.change_request_id` + 文件状态置 `changed`（文件库显示「已变更」）+ `file_links(change)`；同一变更重复调用幂等（204）；一期「一变更一版本」：变更行 `FOR UPDATE` 串行化后先查该变更已有版本，同一变更已有其它文件 / 文件已挂其它变更 400，项目 / 文件 / 变更不匹配 404。
 
@@ -46,6 +48,7 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 - 日期笔误（完成早于开始 / 开始晚于预计完成）照原值导入 + 提醒（`DATE_ORDER` / `DATE_ORDER_END`）。
 - `tasks.on_time` = 源表「是否按时交付」原值（按时交付 true / 延期交付 false / 空 null；与日期推导不一致 → `ONTIME_MISMATCH` 提醒，不改值）。
 - 任务节点：无对应按文件原名导入，不写节点库；`nameEn` 优先节点库标准英文，其次源表英文或模型补全。阶段外按临时任务处理。
+- 公共节点申请（2026-11-13 · 迁移 0096）：`commit.nodeRequests[{groupIndex,title?,titleEn?}]` 只允许「阶段内 + 保留 Excel 原名」的分组（精确匹配 / 已选已有节点 / 阶段外一律 400），同一分组不可重复提交；标题缺省 = 源表原名、英文缺省 = 预览补全结果（显式 `null` = 无英文）。申请在**导入事务内**写入：导入回滚则申请一起回滚；同阶段同名已有公共节点 → 不提交（warning `NODE_REQUEST_EXISTING_NODE`），同名 pending 申请 → 沿用（info `NODE_REQUEST_REUSED`）。导入结果 `nodeRequests` 回传本次提交（含沿用）的申请。
 - 变更：阶段映射 实施 → `install`、发货 → `assembly`；内容 / 原因合并落库（占位 = 内容待补 / 原因待补）。
 - 变更关联（Push 319 / Push 398）：①「关联」列（多值按逗号 / 顿号拆）按任务描述匹配（键 = 去全部空白 + 小写；对「标题+英文名」/「标题」/「英文名」三串）；② **R01**（`docs/rules/R01-R07-内置规则文案.md`）：变更时间 / 变更文件 / 变更后文件 / 变更后文件版本齐备时，按「变更文件 ∈ 任务输出成果文件（多值）」匹配，命中多条全部关联。两路去重 → 提交事务回写 `tasks.change_refs`（追加序 = 变更表行序 + 任务表行序）；未命中 / 多命中 / 日期不一致 / 任务侧落空出提醒（`CHANGE_RELATED_UNMATCHED` / `CHANGE_RELATED_AMBIGUOUS` / `CHANGE_DATE_MISMATCH` / `TASK_CHANGE_REF_UNMATCHED` + 汇总 `CHANGE_LINK_SUMMARY`），照常导入不阻断；预览 / 结果 counts 增 `changesLinked`。R01 解决「变更文件已上传但任务总览 / 变更记录找不到」的导入断链。
 - 问题处理人（Push 319）：源表没有处理人字段 —— 未解决（open / in_progress）默认 `owner_id` = 项目经理首位（`managerIds[0] ?? actorId`；done = null）+ info 提醒 `ISSUE_OWNER_FALLBACK` —— 未解决问题随项目经理进入工作台「待我处理」，「我提出的问题」按 reporter（日报作者）照旧。
@@ -75,7 +78,7 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 - `server/test/import-admission-gate.test.ts`（7 用例）：小 / 中 / 重型权重、长度缺失保守计权、幂等归还、预算 1 串行回退、同票据提交单飞与提交并发上限。
 - `server/test/import-http-limits.test.ts`（6 用例）：`Content-Length` 预分配兼容入口、multipart 流式落盘区间、流式超限拒绝、实际请求体超出声明长度立即拒绝、preview 准入 429 与释放、sourceFile 入参接线。
 - `server/test/import-temp.test.ts`（3 用例）：启动清扫只删过期同前缀目录、磁盘余量预检、嵌套 ENOSPC 识别。
-- `server/test/project-import.test.ts`（29 用例）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点）—— 解析口径 / zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / **commit 准入（拒绝不写库 / 成功与取消释放额度）** / commit 主链路（`taskNodeId` / `sortIndex` / 图片挂问题 / 回退提醒 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）/ **变更关联（Push 319：解析命中与提醒码 / 提交回写 `change_refs`；Push 398：R01 输出成果文件匹配 + 手动文件目标任务）** / **未解决问题默认处理人（含 done 不挂人）** / **写入取消两例（Push 321：上传途中 abort → 已传图片清理 + 票据 pending + 重提成功 + 源文件保留；事务内 abort → 回滚 + 已传图片全清）** / **过期票据清扫（Push 325：删除源对象成功置 expired；删除失败保留 pending 下轮重试）** / **干系人两例（Push 324：导入表内嵌转换（分类四值 / 联系方式拆分 / 提交时间）；导入表缺表 info 提醒，不导入干系人；提交写台账 + 项目关联（分类 / 提交时间 / 填写者匹配账号））** / **变更申请人·填写者（Push 347：源表「变更申请人」「填写者」两列命中库内账号 → `applied_by` / `writer_by`；未命中 = 回落导入人 / 留空 + `CHANGE_APPLICANT_MISSING` / `CHANGE_WRITER_MISSING`）** / **变更附图（Push 349：解析锚点列 / 行映射 + 列外提醒；提交落 files 并回填 change_requests 两列）**。
+- `server/test/project-import.test.ts`（**34 用例**；2026-11-13 增 5 例：公共节点申请随导入同事务提交并在完成页回传 / 缺省取源表原名与预览英文 / 只能对保留原名提交且拒绝重复分组 / 同名公共节点时不出申请并出提醒 / 同名申请在队列时沿用出提醒）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点）—— 解析口径 / zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / **commit 准入（拒绝不写库 / 成功与取消释放额度）** / commit 主链路（`taskNodeId` / `sortIndex` / 图片挂问题 / 回退提醒 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）/ **变更关联（Push 319：解析命中与提醒码 / 提交回写 `change_refs`；Push 398：R01 输出成果文件匹配 + 手动文件目标任务）** / **未解决问题默认处理人（含 done 不挂人）** / **写入取消两例（Push 321：上传途中 abort → 已传图片清理 + 票据 pending + 重提成功 + 源文件保留；事务内 abort → 回滚 + 已传图片全清）** / **过期票据清扫（Push 325：删除源对象成功置 expired；删除失败保留 pending 下轮重试）** / **干系人两例（Push 324：导入表内嵌转换（分类四值 / 联系方式拆分 / 提交时间）；导入表缺表 info 提醒，不导入干系人；提交写台账 + 项目关联（分类 / 提交时间 / 填写者匹配账号））** / **变更申请人·填写者（Push 347：源表「变更申请人」「填写者」两列命中库内账号 → `applied_by` / `writer_by`；未命中 = 回落导入人 / 留空 + `CHANGE_APPLICANT_MISSING` / `CHANGE_WRITER_MISSING`）** / **变更附图（Push 349：解析锚点列 / 行映射 + 列外提醒；提交落 files 并回填 change_requests 两列）**。
 - 日报表头兼容回归（2026-11-04）：测试覆盖 `时间time` / `当日完成工作Work completed today` / `现场发现问题Problem` / `今日施工人数Number of people today` 等历史混排表头，并验证日报与第 5 / 9 列图片锚点一起导入；真实原文件预览为 38 任务 / 12 日报 / 2 问题 / 45 图片（现场 43 / 问题 2），正式机与测试机同文件解析结果一致。
 - `server/test/resource-change.test.ts`：commit 的资源变更登记（projects / tasks / reports / issues / files / templates）。
 

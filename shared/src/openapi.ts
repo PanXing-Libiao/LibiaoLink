@@ -57,6 +57,11 @@ import {
   TaskNodeUpdateBodySchema,
   TaskNodeListQuerySchema,
   TaskNodeListResponseSchema,
+  TaskNodeRequestApproveBodySchema,
+  TaskNodeRequestDecisionResponseSchema,
+  TaskNodeRequestListQuerySchema,
+  TaskNodeRequestListResponseSchema,
+  TaskNodeRequestRejectBodySchema,
   TaskTemplateCreateBodySchema,
   TaskTemplateDeleteBodySchema,
   TaskTemplateDeleteResponseSchema,
@@ -862,6 +867,63 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
       200: { description: "已删除", ...json(TaskNodeDeleteResponseSchema) },
       403: commonErrors[403],
       404: commonErrors[404],
+    },
+  });
+
+  // ---- 公共任务节点申请（2026-11-13：导入侧发起、节点库维护侧审核） ----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/task-node-requests",
+    tags: ["templates"],
+    summary: "公共任务节点申请列表（审核人看全部；本人视角只看自己）",
+    request: { query: TaskNodeRequestListQuerySchema },
+    responses: {
+      200: { description: "申请列表 + 待审条数", ...json(TaskNodeRequestListResponseSchema) },
+      403: commonErrors[403],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/task-node-requests/{id}/approve",
+    tags: ["templates"],
+    summary: "通过公共节点申请（可先改中英文名；同阶段已有同名节点则直接关联）",
+    request: { params: idParams, body: json(TaskNodeRequestApproveBodySchema) },
+    responses: {
+      200: { description: "审核结果（含创建或关联到的节点）", ...json(TaskNodeRequestDecisionResponseSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/task-node-requests/{id}/reject",
+    tags: ["templates"],
+    summary: "驳回公共节点申请（原因必填，申请人可见）",
+    request: { params: idParams, body: json(TaskNodeRequestRejectBodySchema) },
+    responses: {
+      200: { description: "驳回结果", ...json(TaskNodeRequestDecisionResponseSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/task-node-requests/{id}/withdraw",
+    tags: ["templates"],
+    summary: "撤销本人的待审申请（仅 pending 可撤销）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "撤销结果", ...json(TaskNodeRequestDecisionResponseSchema) },
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
     },
   });
 

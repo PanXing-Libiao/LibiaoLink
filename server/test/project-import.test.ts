@@ -12,7 +12,7 @@ import type { AuditService } from "../src/modules/admin/index.js";
 import type { UserRow } from "../src/modules/identity/index.js";
 import type { PermissionService, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 import type { FlowService, ProjectMemberRepository, ProjectRepository } from "../src/modules/project/index.js";
-import type { TaskNodeRepository, TemplateService } from "../src/modules/template/index.js";
+import type { TaskNodeRepository, TaskNodeRequestService, TemplateService } from "../src/modules/template/index.js";
 import type { TranslateService } from "../src/modules/translate/index.js";
 import type { ProjectImportRepository } from "../src/modules/project-import/index.js";
 import { ProjectImportService } from "../src/modules/project-import/index.js";
@@ -469,6 +469,23 @@ function createHarness() {
     },
   };
 
+  const nodeRequests = {
+    submitted: [] as Array<{ stageKey: string; title: string; titleEn: string | null }>,
+    existingNodes: [] as Array<{ stageKey: string; title: string }>,
+    reusedPending: 0,
+    counter: 0,
+    async createFromImport(params: { actorId: string; projectId: string; previewId: string; items: ReadonlyArray<{ stageKey: string; title: string; titleEn: string | null }> }) {
+      this.submitted.push(...params.items.map((item) => ({ ...item })));
+      const requests = params.items
+        .filter((item) => !this.existingNodes.some((node) => node.stageKey === item.stageKey && node.title === item.title))
+        .map((item) => {
+          this.counter += 1;
+          return { id: "0000000" + this.counter + "-0000-4000-8000-00000000000" + this.counter, stageKey: item.stageKey, title: item.title, status: "pending" };
+        });
+      return { requests, existingNodes: this.existingNodes, reusedPending: this.reusedPending };
+    },
+  };
+
   const templateService = {
     available: [] as Array<{ id: string; name: string; stageKey: string; version: number }>,
     additions: [] as Array<{ templateId: string; version: number; stageKey: string; title: string; titleEn: string | null }>,
@@ -491,9 +508,10 @@ function createHarness() {
     admission as unknown as ImportAdmissionGate,
     matcher as unknown as ImportNodeMatcher,
     templateService as unknown as TemplateService,
+    nodeRequests as unknown as TaskNodeRequestService,
   );
 
-  return { service, previews, projects, members, nodes, audit, storage, translate, flow, permission, managerEligibility, admission, matcher, templateService };
+  return { service, previews, projects, members, nodes, audit, storage, translate, flow, permission, managerEligibility, admission, matcher, templateService, nodeRequests };
 }
 
 /** 导入表三种 sheet 的表头（与真实导入表同列名；列顺序可乱，按表头定位）。 */
@@ -1585,6 +1603,86 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(h.previews.tasks[1]).toMatchObject({ taskNodeId: null, title: "通电测试" });
     expect(h.templateService.additions).toEqual([{ templateId: "personal-1", version: 2, stageKey: "install", title: "通电测试", titleEn: "Power-on Test" }]);
     expect(h.nodes.inserts).toEqual([]);
+  });
+
+  it("公共节点申请：保留原名的任务随导入同事务提交，完成页回传申请", async () => {
+    const h = createHarness();
+    const preview = await runPreview(h);
+    const node = preview.nodes.find((item) => item.name === "通电测试")!;
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
+    const result = await h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: node.groupIndex, action: "standalone", nodeId: null }],
+      nodeRequests: [{ groupIndex: node.groupIndex, title: "通电测试（申请）", titleEn: null }],
+    }, ACTOR_ID, "zh");
+    expect(h.nodeRequests.submitted).toEqual([{ stageKey: "install", title: "通电测试（申请）", titleEn: null }]);
+    expect(result.nodeRequests).toHaveLength(1);
+    expect(result.nodeRequests[0]).toMatchObject({ stageKey: "install", title: "通电测试（申请）", status: "pending" });
+    expect(h.nodes.inserts).toEqual([]);
+  });
+
+  it("公共节点申请：缺省取源表原名与预览补全的英文", async () => {
+    const h = createHarness();
+    const preview = await runPreview(h);
+    const node = preview.nodes.find((item) => item.name === "通电测试")!;
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
+    await h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: node.groupIndex, action: "standalone", nodeId: null }],
+      nodeRequests: [{ groupIndex: node.groupIndex }],
+    }, ACTOR_ID, "zh");
+    expect(h.nodeRequests.submitted).toEqual([{ stageKey: "install", title: "通电测试", titleEn: "Power-on Test" }]);
+  });
+
+  it("公共节点申请：只能对保留原名的阶段内任务提交，重复分组拒绝", async () => {
+    const h = createHarness();
+    const preview = await runPreview(h);
+    const exact = preview.nodes.find((item) => item.name === "人员进场、场地检查、施工对接")!;
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
+    await expectCode(() => h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      nodeRequests: [{ groupIndex: exact.groupIndex }],
+    }, ACTOR_ID, "zh"), "VALIDATION_FAILED");
+    expect(h.projects.inserted).toEqual([]);
+    expect(h.nodeRequests.submitted).toEqual([]);
+
+    const node = preview.nodes.find((item) => item.name === "通电测试")!;
+    await expectCode(() => h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: node.groupIndex, action: "standalone", nodeId: null }],
+      nodeRequests: [{ groupIndex: node.groupIndex }, { groupIndex: node.groupIndex }],
+    }, ACTOR_ID, "zh"), "VALIDATION_FAILED");
+    expect(h.nodeRequests.submitted).toEqual([]);
+  });
+
+  it("公共节点申请：该阶段已有同名公共节点时不提交，出提醒", async () => {
+    const h = createHarness();
+    h.nodeRequests.existingNodes = [{ stageKey: "install", title: "通电测试" }];
+    const preview = await runPreview(h);
+    const node = preview.nodes.find((item) => item.name === "通电测试")!;
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
+    const result = await h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: node.groupIndex, action: "standalone", nodeId: null }],
+      nodeRequests: [{ groupIndex: node.groupIndex }],
+    }, ACTOR_ID, "zh");
+    expect(result.nodeRequests).toEqual([]);
+    expect(result.issues.map((issue) => issue.code)).toContain("NODE_REQUEST_EXISTING_NODE");
+  });
+
+  it("公共节点申请：同名申请已在审核队列时沿用，出提示不重复提交", async () => {
+    const h = createHarness();
+    h.nodeRequests.reusedPending = 1;
+    const preview = await runPreview(h);
+    const node = preview.nodes.find((item) => item.name === "通电测试")!;
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
+    const result = await h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: node.groupIndex, action: "standalone", nodeId: null }],
+      nodeRequests: [{ groupIndex: node.groupIndex }],
+    }, ACTOR_ID, "zh");
+    expect(result.nodeRequests).toHaveLength(1);
+    expect(result.issues.map((issue) => issue.code)).toContain("NODE_REQUEST_REUSED");
   });
 
   it("相同描述的语义任务也能逐条选择，不沿用的任务不会形成节点冲突", async () => {

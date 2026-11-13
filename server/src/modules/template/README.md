@@ -5,7 +5,7 @@
 | 类型 | 领域模块（domain） |
 | 职责 | 公共任务节点库（`task_nodes.owner_template_id is null`）列表 / 新增 / 编辑 / 删除；模板私有节点（`owner_template_id` 非空）按模板新增 / 清理；任务模板（`task_templates` / `task_template_nodes`）列表 / 详情 / 新建 / 编辑（`nodeIds` 全量替换）/ 软删 |
 | 主责 | wmj（团队分工.md §2；本切为 px 按授权代做，请 wmj 复核） |
-| 对外接口 | `TemplateService` / `TaskNodeRepository` / `TaskTemplateRepository`（`index.ts` 出口） |
+| 对外接口 | `TemplateService` / `TaskNodeRepository` / `TaskNodeRequestService`（导入模块同事务调用 `createFromImport`）/ `TaskTemplateRepository`（`index.ts` 出口） |
 
 ## 本切片交付（第一段 · Push 181）
 
@@ -32,6 +32,21 @@
 - **留痕**：每次写一条审计（`objectType = task_template`；`summary` 带阶段中文名与模板名；`changes` 记名称 + 节点名顺序 + 可见范围 + 填写人，删除写删除前快照；`metadata` 同步带 `visibility` / `createdBy`）；节点删除时审计 `metadata.removedFromTemplates` 记连带从几份模板里移除；**不写 outbox**。
 - **边界**：不碰 `tasks` / `project_nodes`；**实例化 `POST /api/v1/projects/{id}/tasks/from-template` 仍未实现**（前端「添加任务」卡片逐条 `POST /projects/{id}/tasks`，判重 = 同阶段同名）。
 
+## 本切片交付（第三段 · 2026-11-13：公共任务节点申请）
+
+- **背景 / 口径**：导入表导入不再向公共节点库补节点；导入人（多数没有节点库维护权）需要一个申请渠道，管理员审核通过后才落公共节点。
+- **契约**：`shared/src/modules/templates.ts` 增 `TaskNodeRequestStatus` / `TaskNodeRequest` / `TaskNodeRequestListQuery` / `TaskNodeRequestListResponse` / `TaskNodeRequestApproveBody` / `TaskNodeRequestRejectBody` / `TaskNodeRequestDecisionResponse`；`shared/src/openapi.ts` 新增 4 条路径；`AUDIT_OBJECT_TYPES` 增 `task_node_request`。导入侧契约见 `shared/src/modules/imports.ts`（commit `nodeRequests` / 结果 `nodeRequests`）。
+- **数据**：迁移 `database/migrations/0096_task_node_requests.sql`（阶段 / 中英文名 / 状态 / 申请人 + 时间 / 来源项目 + 预览票据 / 审核人 + 时间 + 意见 / 最终节点 id；同阶段同名只允许一条 pending 的部分唯一索引；状态迁移的 CHECK 兜底）。
+- **写**：
+  - `POST /api/v1/task-node-requests/{id}/approve`（与节点库维护权同口径复核）：可先改中英文名 → 同阶段同名判重 → 无同名则追加到该阶段末尾建公共节点（写 `task_node` create 审计）→ 有同名则**直接关联**（`linkedExisting=true`，不建行也不写节点审计）→ 申请行落 approved + `node_id`（写 `task_node_request` update 审计）。已处理 400、不存在 404、无权限 403。
+  - `POST /api/v1/task-node-requests/{id}/reject`：原因必填（trim 后非空，≤200），落 rejected + `review_note`，写审计。
+  - `POST /api/v1/task-node-requests/{id}/withdraw`：仅申请人本人、仅 pending（他人 403、已处理 400），落 withdrawn，写审计。
+  - `createFromImport`（供导入模块在**导入事务内**调用，不对外暴露）：批内同阶段同名去重；该阶段已有同名公共节点 → 跳过并回报；已有同名 pending → 复用不重复插行（`onConflictDoNothing` + 回查兜底并发）；名称 trim、英文空串 → null。
+- **读**：`GET /api/v1/task-node-requests?stage=&status=&mine=` —— `mine=true` 只看本人（任何登录账号，含本人待审数）；缺省 = 审核人视角全部（服务层 `assertCanManageTaskNodes`，无权限 403），响应带全局 `pendingCount`；排序 = pending 优先 → 提交时间倒序。
+- **留痕**：通过 / 驳回 / 撤销各一条审计（`objectType = task_node_request`，`changes` 记状态 / 名称 / 审核意见 / 最终节点）；通过时新建节点另写一条 `task_node` create 审计（`metadata.source = task_node_request` + `requestId`）。**导入内提交申请不单独留痕**（已由导入的 project create 审计覆盖上下文）。不写 outbox。
+- **边界**：申请**不写** `task_nodes`；只通过审核通过这一条路径落公共节点（与直接 `POST /task-nodes` 并存）。不接消息推送（一期只有待审列表与数量角标）。
+- **并发口径（真机复验修正）**：审核 / 撤销前的行锁用 `lockById`（只查 `task_node_requests` 本表 + `FOR UPDATE`）；**不能**在读面带 `LEFT JOIN` 的查询上加 `FOR UPDATE` —— PostgreSQL 直接报 `FOR UPDATE cannot be applied to the nullable side of an outer join`（2026-11-13 本地真库 + 浏览器全链路实测暴露，单测替身无法覆盖）。读面字段在行锁之后另取 `findById`。
+
 ## 本切片交付（2026-11-13 · 「入库审核」模板独立板块）
 
 - **业务口径**：任务模板页在九阶段标签右侧、「＋ 新建模板」左侧增加「入库审核」。它不是项目阶段，不进入 `STAGE_KEYS` / 项目阶段字典 / 任务 / 看板 / 甘特图 / 日报，也不得混入验收。
@@ -39,11 +54,14 @@
 - **数据**：迁移 `0095_template_inbound_review_section.sql` 扩展 `task_templates.stage_key` 与 `task_nodes.stage_key` 的 CHECK；仍沿用 `owner_template_id` 隔离模板私有节点，不新增表 / 列。
 - **边界**：入库审核模板不能生成项目任务；`TaskService.create(sourceNodeId=…)` 与 `createFromTemplate()` 对 `inbound_review` 返回 400 `VALIDATION_FAILED`。Excel 导入的个人模板候选也排除该分组。
 - **前端**：`#/templates?section=inbound-review`；九阶段 + 入库审核共用同一套标签、节点库、模板卡片、可见范围与私有节点交互；中 / 英 / 日 / 韩显示名同步。
+
 ## 验证
 
 - 第一段：`test/template-nodes.test.ts` —— 18 例全绿（列表 / 新增（归一 + seq + 同名 + 越权）/ 编辑（改名 + 英文名清空 + 同名放行与拦截 + 乐观锁 + 404 + 403）/ 删除（快照 + 404 + 403 + 被模板引用时照删））。
 - 第二段：`test/template-templates.test.ts` —— **30 例全绿**（含模板私有节点新增 / 空白标题 / 同模板判重 / 跨模板引用拒绝 / 保存清理）（列表（按阶段 / 全部 + 读序 + 个人 / 公共可见范围）/ 详情（404 + 个人模板隔离）/ 新建（trim + 可见范围 + 空 `nodeIds` + 全空白名 400 + 重复 id / 未知节点 / 跨阶段 400 + 403 + 填写人）/ 编辑（改名 + 可见范围双向切换 + 系统模板管理员不能调整范围 + 他人模板管理员不能调整范围但可编辑内容 + 非管理员拒绝 + `nodeIds` 全量替换 + 清空 + 409 + 404 + 个人模板隔离）/ 删除（软删回包 + 读面消失 + 审计快照 + 409 + 404 + 403））。
-- 本次复核：`npm run typecheck` / `npm run build` / `npm test`（**1844 passed · 61 skipped / 129 文件**）/ `npm run check:boundaries`（**357 文件 / 1637 依赖 / 0 违规**）全过；`shared` 的 `generate` / `typecheck` / `build` / `check` 全过。
+- 第三段（2026-11-13）：`test/task-node-requests.test.ts` —— **9 例全绿**（本人视角 / 审核人视角与 403 / 导入内跳过同名节点与复用待审 + 批内去重 / 并发撞唯一索引回查复用 / 通过时改名建节点（seq 追加 + 两条审计）/ 已有同名直接关联 / 已处理 400 + 404 + 403 / 驳回原因必填 / 撤销仅本人且仅 pending）；`test/project-import.test.ts` 增 5 例（申请随导入提交并回传 / 缺省取源表原名与预览英文 / 只能对保留原名提交并拒绝重复分组 / 同名节点提醒 / 复用在途申请提醒）。
+- 本次复核：`npm run typecheck` / `npm run build` / `npm test`（**1830 passed · 61 skipped / 129 文件**）/ `npm run check:boundaries`（**357 文件 / 1637 依赖 / 0 违规**）全过；`shared` 的 `generate` / `typecheck` / `build` / `check` 全过。
+- 本次复核：`npm run typecheck` / `npm run build` / `npm test` / `npm run check:boundaries` 全过；`shared` 的 `generate` / `typecheck` / `build` / `check` 全过。
 - 真机回放：第一段 `frontend/scripts/m3-05-task-nodes-e2e.mjs` 48 项全过，证据 `docs/m3-05-回放证据(节点库增删改·前端).md`；第二段 `frontend/scripts/m3-05-task-templates-e2e.mjs` **60 项全过**（含硬刷新后仍在 / 未保存改动必须消失 / 面板顺序 = 接口顺序），证据 `docs/m3-05-回放证据(模板落库·前端).md`。
 
 ## 待办（后续）
