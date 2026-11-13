@@ -98,7 +98,7 @@ const STAGE_TEXT: Record<string, LanguageStrings> = {
   硬件实施: { en: "Hardware Implementation", ja: "ハードウェア実装", ko: "하드웨어 구축" },
   软件部署: { en: "Software Deployment", ja: "ソフトウェア配備", ko: "소프트웨어 배포" },
   试运行: { en: "Trial Run", ja: "試運転", ko: "시운전" },
-  生产阶段: { en: "Production", ja: "生産段階", ko: "생산 단계" },
+  投产阶段: { en: "Production", ja: "生産段階", ko: "생산 단계" },
   验收: { en: "Acceptance", ja: "検収", ko: "검수" },
   临时任务: { en: "Temporary Tasks", ja: "臨時タスク", ko: "임시 작업" },
   项目总览: { en: "Project Overview", ja: "プロジェクト概要", ko: "프로젝트 개요" },

@@ -86,7 +86,7 @@ export const STAGE_TEMPLATE_SEED = [
     stageKey: "production",
     templates: [
       {
-        name: "生产阶段模板",
+        name: "投产阶段模板",
         nodes: ["产能爬坡"],
       },
     ],

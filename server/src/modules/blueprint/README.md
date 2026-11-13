@@ -20,7 +20,11 @@
 - 权限（2026-11-11）：写接口（`PUT` / `publish` / `import`）仅系统管理员；`canManageBlueprint` 不再接受部门 / 个人编辑范围或项目经理身份。读接口登录即可，前端目前没有流程蓝图编辑页。
 - 种子：`database/seeds/blueprint.mjs`（种子 #7）落 default 模板（9 阶段 19 节点 + 版本 1）；节点清单待业务补全，库内已修订时种子不覆盖（可重跑）。
 - 单测：`test/blueprint-validation.test.ts`（7 例，纯函数：schema / key 唯一 / seq 递增 / docType 引用 / 引用未知分流）。
-- 单测（Push 173）：`test/blueprint-audit.test.ts`（7 例：首存 `create` / 再存 `update`（changes 只含变化字段）/ 导入前缀与 `metadata.source=import` / 发布记 `publishedVersion` / 幂等不写 / 403 与 422 不落痕）。
+- 单测（Push 173）：`test/blueprint-audit.test.ts`（8 例：首存 `create` / 再存 `update`（changes 只含变化字段）/ 导入前缀与 `metadata.source=import` / 发布记 `publishedVersion` / 幂等不写 / 历史显示名兼容 / 403 与 422 不落痕）。
+
+## 阶段与节点显示名兼容（2026-11-13）
+
+- `production` 阶段 key 与 `production.record` 节点 key 均不变。历史 payload 的该阶段 `name` 精确为「生产阶段」、该节点 `name` 精确为「生产运行记录」时，`getView` / `exportBlueprint` / `getPublishedForProject` / `getVersionForProject` 返回深拷贝内的展示名「投产阶段」/「投产运行记录」。历史 `blueprint_versions.payload` 不物理改写，节点与顺序不动；当前草稿的阶段名由迁移 `0090`、节点名由迁移 `0091` 定点更新，`0091` 同时把一条旧系统任务模板改为「投产阶段模板」。`sameBlueprint` 的原始比较口径不变。
 
 ## 边界与后续
 

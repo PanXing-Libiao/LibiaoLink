@@ -8,7 +8,7 @@ import type { ParsedWorkbook, SheetGrid } from "./xlsx.js";
  * - 进度五档：已完成 / 提前完成 100%、待开始 0%、进行中就近取档并封顶 75%；待开始有进度 → 归零；
  * - 日期笔误（完成早于开始 / 开始晚于预计完成）照原值导入 + 提醒；日期解析失败留空 + 提醒；
  * - 任务节点：按标题逐字比对节点库（服务层做），这里只出标题与英文名（源表英文列）；
- * - 变更阶段映射：实施 → install、发货 → assembly；x x x 占位 → 标记待补；
+ * - 变更阶段映射：实施 → install、发货 → assembly、生产阶段 / 投产阶段 → production；x x x 占位 → 标记待补；
  * - 变更关联：变更管理「关联」列按任务描述匹配（提交时回写任务 change_refs，追加序 = 变更表行序）；任务表「变更关联」（日期）与变更时间核对，对不上出提醒；
  * - 图片：按锚点挂行（日报现场图 col E / 问题图 col I 内嵌图随导入；变更后文件等文件名 → 需手动导入清单）；
  * - 干系人（Push 324）：「干系人」表 → 台账模型（公司分类自由写法映射四值 / 填写者 / 提交时间；另附文件在服务层合并）。
@@ -176,6 +176,8 @@ const BINS = [0, 0.25, 0.5, 0.75, 1];
 
 const STAGE_KEY_BY_NAME: Record<string, StageKey> = {};
 for (const [key, name] of Object.entries(STAGE_NAMES)) STAGE_KEY_BY_NAME[name] = key as StageKey;
+// 旧导入表仍可能写“生产阶段”；内部 key 不变，统一落 production。
+STAGE_KEY_BY_NAME["生产阶段"] = "production";
 
 const DOC_CANON = new Map<string, string>();
 for (const doc of DOC_TYPES) {
@@ -878,7 +880,15 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
       const stageRaw = cellAt(sheetRef, row, changeIndex, "变更阶段");
       const content = cellAt(sheetRef, row, changeIndex, "变更内容描述");
       const reason = cellAt(sheetRef, row, changeIndex, "变更原因");
-      const stageKey: StageKey | null = stageRaw.includes("实施") ? "install" : stageRaw.includes("发货") ? "assembly" : null;
+      const stageKey: StageKey | null =
+        STAGE_KEY_BY_NAME[stageRaw] ??
+        (stageRaw.includes("实施")
+          ? "install"
+          : stageRaw.includes("发货")
+            ? "assembly"
+            : stageRaw.includes("生产阶段") || stageRaw.includes("投产阶段")
+              ? "production"
+              : null);
       const docRaw = cellAt(sheetRef, row, changeIndex, "变更文件");
       const contentClean = content.split(" ").join("");
       const reasonClean = reason.split(" ").join("");

@@ -90,7 +90,7 @@ const CHANGE_FILE_STATUS_TEXT: Record<string, string> = {
 };
 
 /** 变更阶段下拉（A4-13「变更阶段」）：九阶段字典，与任务表阶段同名同序。 */
-const CHANGE_STAGE_VALUES = ["售前规划", "设计开发", "加工采购", "组装发货", "硬件实施", "软件部署", "试运行", "生产阶段", "验收"];
+const CHANGE_STAGE_VALUES = ["售前规划", "设计开发", "加工采购", "组装发货", "硬件实施", "软件部署", "试运行", "投产阶段", "验收"];
 
 /** 变更阶段展示（空 / 未知 → 「—」）。 */
 function stageLabelOf(stageKey: string | null): string {
