@@ -360,6 +360,65 @@ export class TemplateService {
     return { id, deletedAt: at.toISOString() };
   }
 
+  /** 导入页只列出本人已有的个人模板。 */
+  async listPersonalImportTemplates(actorId: string): Promise<Array<{ id: string; name: string; stageKey: string; version: number }>> {
+    if (!await this.permission.canManageTaskTemplates(actorId)) return [];
+    return (await this.templates.list(null)).filter((row) => row.visibility === "private" && row.createdBy === actorId)
+      .map(({ id, name, stageKey, version }) => ({ id, name, stageKey, version }));
+  }
+
+  /** 将导入任务加入所选个人模板，与项目导入处于同一事务。 */
+  async appendImportedPrivateNodes(
+    selections: Array<{ templateId: string; version: number; stageKey: string; title: string; titleEn: string | null }>,
+    actorId: string,
+    tx: DbClient,
+  ): Promise<void> {
+    if (selections.length === 0) return;
+    await this.assertTemplateEditor(actorId, "编辑任务模板");
+    const groups = new Map<string, typeof selections>();
+    for (const item of selections) {
+      const items = groups.get(item.templateId) ?? [];
+      items.push(item);
+      groups.set(item.templateId, items);
+    }
+    for (const [id, items] of groups) {
+      const before = await this.templates.findById(id, tx);
+      if (before === null || before.visibility !== "private" || before.createdBy !== actorId) {
+        throw new AppError("VALIDATION_FAILED", "只能添加到本人的个人模板");
+      }
+      if (items.some((item) => item.stageKey !== before.stageKey || item.version !== before.version)) {
+        throw new AppError("VERSION_CONFLICT", "个人模板已变化，请重新解析导入文件");
+      }
+      const refs = await this.templates.nodeRefsOf([id], tx);
+      const row = await this.templates.updateWithVersion(id, before.version, {}, new Date(), tx);
+      if (row === null) throw new AppError("VERSION_CONFLICT", "个人模板已变化，请重新解析导入文件");
+      const ids = refs.map((ref) => ref.nodeId);
+      let seq = await this.nodes.maxOwnerSeq(id, tx);
+      for (const item of items) {
+        let node = await this.nodes.findByTitle(item.stageKey, item.title, id, tx);
+        if (node === null) {
+          seq += 10;
+          node = await this.nodes.insert({ ownerTemplateId: id, stageKey: item.stageKey, title: item.title, titleEn: item.titleEn, seq }, tx);
+          await this.audit.record(tx, {
+            actorId, action: "create", objectType: "task_node", objectId: node.id,
+            summary: "导入任务加入模板节点：" + before.name + " · " + node.title,
+            changes: diffRecords({}, nodeSnapshot(node)),
+            metadata: { stageKey: node.stageKey, seq: node.seq, ownerTemplateId: id, templateId: id, scope: "template" },
+          });
+        }
+        if (!ids.includes(node.id)) ids.push(node.id);
+      }
+      await this.templates.replaceNodes(id, ids, tx);
+      const afterRefs = await this.templates.nodeRefsOf([id], tx);
+      await this.audit.record(tx, {
+        actorId, action: "update", objectType: "task_template", objectId: id,
+        summary: "导入任务加入个人模板：" + stageName(before.stageKey) + " · " + before.name,
+        changes: diffRecords(templateSnapshot(before, refs), templateSnapshot(row, afterRefs)),
+        metadata: { stageKey: before.stageKey, visibility: before.visibility, nodeCount: afterRefs.length },
+      });
+    }
+  }
+
   /**
    * 模板内节点校验：重复 id / 节点不存在 / 节点跨阶段一律 400 VALIDATION_FAILED（在写入前、同事务内判）。
    * 「同阶段」是模板的硬口径：模板页左列只给同阶段节点，「项目总览 → 添加任务」也按模板阶段建任务。

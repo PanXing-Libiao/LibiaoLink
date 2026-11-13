@@ -12470,6 +12470,7 @@ export interface components {
             images: number;
             imagesManual: number;
             accountsNew: number;
+            /** @description 公共节点补库兼容字段，恒为 0 */
             nodesNew: number;
         };
         /** @description 项目落位（面板左栏「项目落位」块） */
@@ -12497,6 +12498,7 @@ export interface components {
             images: number;
             /** @description 本次落位账号数（信息性：账号由 SSO 登录创建，这里指识别到的账号数） */
             accountsCreated: number;
+            /** @description 公共节点补库兼容字段，恒为 0 */
             nodesAdded: number;
         };
         /** @description 来源任务节点分组及匹配结果 */
@@ -12505,13 +12507,16 @@ export interface components {
             name: string;
             /** @description 节点英文名（优先节点库，其次源表或 AI 补全）；无法生成时为 null */
             nameEn: string | null;
-            /** @description 源表英文名或 AI 补全的英文，人工改选新节点时使用 */
+            /** @description 源表英文名或 AI 补全的英文，未匹配任务直接导入时使用 */
             sourceNameEn: string | null;
             /** @description 是否匹配已有节点（精确或语义匹配） */
             matched: boolean;
             groupIndex: number;
             stageKey: string | null;
-            /** @enum {string} */
+            /**
+             * @description new 表示未匹配，按原名导入并可选加入个人模板
+             * @enum {string}
+             */
             matchKind: "exact" | "semantic" | "new" | "uncertain" | "temporary";
             libraryId: components["schemas"]["Uuid"] & (string | null);
             tasks: {
@@ -13414,7 +13419,7 @@ export interface components {
             /** @description 群名 / 备注（维护用；可空） */
             name?: string | null;
         };
-        /** @description 确认导入（落位确认 + 节点补库开关） */
+        /** @description 确认导入（落位、节点处理及冲突选择） */
         ProjectImportCommitBody: {
             previewId: components["schemas"]["Uuid"];
             /** @description 项目地区（region 字典的码 / 标准国家名；必填） */
@@ -13426,17 +13431,25 @@ export interface components {
             projectType: string;
             nodeDecisions?: {
                 groupIndex: number;
-                /** @enum {string} */
+                /**
+                 * @description new 为旧客户端兼容值，按 standalone 处理
+                 * @enum {string}
+                 */
                 action: "existing" | "new" | "standalone";
                 nodeId: components["schemas"]["Uuid"] & (string | null);
+            }[];
+            personalTemplateSelections?: {
+                groupIndex: number;
+                templateId: components["schemas"]["Uuid"];
+                version: number;
             }[];
             conflictChoices?: {
                 key: string;
                 taskIndex: number;
             }[];
             /**
-             * @description 是否把未匹配的任务节点补进节点库（只有落在阶段范围内的会补；阶段外按临时任务）
-             * @default true
+             * @description 已停用，仅兼容旧客户端；不再通过此字段新增公共节点
+             * @default false
              */
             addMissingNodes: boolean;
         };
@@ -13455,6 +13468,12 @@ export interface components {
                 stageKey: string;
                 title: string;
                 titleEn: string | null;
+                version: number;
+            }[];
+            personalTemplates: {
+                id: components["schemas"]["Uuid"];
+                name: string;
+                stageKey: string;
                 version: number;
             }[];
             issues: components["schemas"]["ImportIssue"][];

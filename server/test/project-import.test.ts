@@ -12,7 +12,7 @@ import type { AuditService } from "../src/modules/admin/index.js";
 import type { UserRow } from "../src/modules/identity/index.js";
 import type { PermissionService, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 import type { FlowService, ProjectMemberRepository, ProjectRepository } from "../src/modules/project/index.js";
-import type { TaskNodeRepository } from "../src/modules/template/index.js";
+import type { TaskNodeRepository, TemplateService } from "../src/modules/template/index.js";
 import type { TranslateService } from "../src/modules/translate/index.js";
 import type { ProjectImportRepository } from "../src/modules/project-import/index.js";
 import { ProjectImportService } from "../src/modules/project-import/index.js";
@@ -469,6 +469,13 @@ function createHarness() {
     },
   };
 
+  const templateService = {
+    available: [] as Array<{ id: string; name: string; stageKey: string; version: number }>,
+    additions: [] as Array<{ templateId: string; version: number; stageKey: string; title: string; titleEn: string | null }>,
+    async listPersonalImportTemplates() { return this.available; },
+    async appendImportedPrivateNodes(items: typeof this.additions) { this.additions.push(...items); },
+  };
+
   const service = new ProjectImportService(
     database as unknown as DatabaseService,
     previews as unknown as ProjectImportRepository,
@@ -483,9 +490,10 @@ function createHarness() {
     translate as unknown as TranslateService,
     admission as unknown as ImportAdmissionGate,
     matcher as unknown as ImportNodeMatcher,
+    templateService as unknown as TemplateService,
   );
 
-  return { service, previews, projects, members, nodes, audit, storage, translate, flow, permission, managerEligibility, admission, matcher };
+  return { service, previews, projects, members, nodes, audit, storage, translate, flow, permission, managerEligibility, admission, matcher, templateService };
 }
 
 /** 导入表三种 sheet 的表头（与真实导入表同列名；列顺序可乱，按表头定位）。 */
@@ -793,6 +801,7 @@ describe("ProjectImportService.preview（导入表解析预览）", () => {
     await expectCode(() => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh"), "VALIDATION_FAILED");
     await h.service.commit({
       previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: preview.nodes[1]!.groupIndex, action: "existing", nodeId: "lib-production" }],
       conflictChoices: [{ key: "existing:lib-production", taskIndex: 1 }],
     }, ACTOR_ID, "zh");
     expect(h.previews.tasks.map((task) => [task.title, task.taskNodeId])).toEqual([
@@ -805,7 +814,7 @@ describe("ProjectImportService.preview（导入表解析预览）", () => {
     const h = createHarness();
     const preview = await runPreview(h);
 
-    expect(preview.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, stakeholders: 0, images: 2, imagesManual: 2, accountsNew: 5, nodesNew: 1 });
+    expect(preview.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, stakeholders: 0, images: 2, imagesManual: 2, accountsNew: 5, nodesNew: 0 });
     expect(preview.project).toEqual({
       code: "LBGW-20260331-1459",
       name: "UK-VANILLA-AIRROB",
@@ -974,7 +983,7 @@ describe("ProjectImportService.preview（导入表解析预览）", () => {
       locale: "zh",
     });
     expect(preview.counts.images).toBe(3);
-    expect(preview.counts.nodesNew).toBe(3);
+    expect(preview.counts.nodesNew).toBe(0);
     expect(preview.issues.map((issue) => issue.code)).toContain("IMAGE_ROW_MISSING");
   });
 
@@ -1243,7 +1252,7 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(h.storage.purged).not.toContain(sourceKey);
   });
 
-  it("主链路：建项目 + 补节点 + 任务 / 日报 / 问题 / 变更 / 图片，落位按面板确认值", async () => {
+  it("主链路：建项目 + 任务 / 日报 / 问题 / 变更 / 图片，未匹配任务不补节点", async () => {
     const h = createHarness();
     const preview = await runPreview(h);
     const sourceKey = h.previews.row === null ? "" : h.previews.row.objectKey;
@@ -1255,7 +1264,7 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(h.storage.getObjectStreamCalls).toBe(1);
     expect(h.storage.getObjectCalls).toBe(0);
     expect(result.name).toBe("UK-VANILLA-AIRROB");
-    expect(result.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, stakeholders: 0, images: 2, accountsCreated: 5, nodesAdded: 1 });
+    expect(result.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, stakeholders: 0, images: 2, accountsCreated: 5, nodesAdded: 0 });
     expect(result.manualTargets).toEqual([
       { id: "manual-0", taskId: null, changeId: "change-0" },
       { id: "manual-1", taskId: "task-3", changeId: null },
@@ -1270,9 +1279,9 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(h.members.upserts[0]?.role).toBe("project_manager");
     expect(h.members.upserts[0]?.userId).toBe(ACTOR_ID);
 
-    // 节点：命中直接挂、未命中补库（maxSeq 0 + 10）、阶段外临时任务不补
-    expect(h.nodes.inserts).toEqual([{ stageKey: "install", seq: 10, title: "通电测试", titleEn: "Power-on Test" }]);
-    expect(h.previews.tasks.map((task) => task.taskNodeId)).toEqual(["lib-1", "node-1", "lib-2", null]);
+    // 已匹配任务关联标准节点；未匹配和阶段外任务只导入项目。
+    expect(h.nodes.inserts).toEqual([]);
+    expect(h.previews.tasks.map((task) => task.taskNodeId)).toEqual(["lib-1", null, "lib-2", null]);
     expect(h.previews.tasks.map((task) => task.sortIndex)).toEqual([0, 1, 0, 0]);
 
     // 日报 / 问题：作者缺失回落导入人；问题图随问题转挂 issue 侧
@@ -1314,7 +1323,7 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(h.storage.purged).toContain(sourceKey);
     expect(h.translate.warmed).toContain("UK-VANILLA-AIRROB");
     expect(h.audit.records.filter((record) => record.objectType === "project").length).toBe(1);
-    expect(h.audit.records.filter((record) => record.objectType === "task_node").length).toBe(1);
+    expect(h.audit.records.filter((record) => record.objectType === "task_node").length).toBe(0);
   });
 
   it("干系人（Push 324）：提交写入台账 + 项目关联（分类 / 提交时间 / 填写者匹配账号）", async () => {
@@ -1532,6 +1541,7 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(h.projects.inserted).toHaveLength(0);
     const result = await h.service.commit({
       previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: preview.nodes.find((node) => node.name === "通电测试")!.groupIndex, action: "existing", nodeId: "lib-1" }],
       conflictChoices: [{ key: "existing:lib-1", taskIndex: 1 }],
     }, ACTOR_ID, "zh");
     expect(result.counts.tasks).toBe(4);
@@ -1559,24 +1569,76 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
   });
 
 
-  it("人工更正错误的语义匹配为新节点时，保留源表英文名", async () => {
+  it("名称一致仍自动关联，AI 建议可保留原名并选择个人模板", async () => {
     const h = createHarness();
     h.matcher.byTitle.set("通电测试", { kind: "semantic", nodeId: "lib-1" });
+    h.templateService.available = [{ id: "personal-1", name: "我的模板", stageKey: "install", version: 2 }];
     const preview = await runPreview(h);
     const node = preview.nodes.find((item) => item.name === "通电测试")!;
-    expect(node.sourceNameEn).toBe("Power-on Test");
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
+    await h.service.commit({
+      previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: node.groupIndex, action: "standalone", nodeId: null }],
+      personalTemplateSelections: [{ groupIndex: node.groupIndex, templateId: "personal-1", version: 2 }],
+    }, ACTOR_ID, "zh");
+    expect(h.previews.tasks[0]?.taskNodeId).toBe("lib-1");
+    expect(h.previews.tasks[1]).toMatchObject({ taskNodeId: null, title: "通电测试" });
+    expect(h.templateService.additions).toEqual([{ templateId: "personal-1", version: 2, stageKey: "install", title: "通电测试", titleEn: "Power-on Test" }]);
+    expect(h.nodes.inserts).toEqual([]);
+  });
+
+  it("相同描述的语义任务也能逐条选择，不沿用的任务不会形成节点冲突", async () => {
+    const h = createHarness();
+    h.nodes.library = [{ id: "lib-1", stageKey: "install", seq: 10, title: "空箱上架", titleEn: "Empty box shelving", version: 1 }];
+    h.matcher.byTitle.set("第一批空箱上架", { kind: "semantic", nodeId: "lib-1" });
+    const sheets: SheetInput[] = [{ name: "任务", rows: [TASK_HEADER,
+      ["第一批空箱上架", "硬件实施", "待开始", "0"],
+      ["第一批空箱上架", "硬件实施", "待开始", "0"],
+    ] }];
+    const preview = await h.service.preview({ bytes: buildWorkbook(sheets), fileName: "[TEST] UK-导入.xlsx", actorId: ACTOR_ID, locale: "zh" });
+    expect(preview.nodes).toHaveLength(2);
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("placeholder.png"));
+    await expectCode(() => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY,
+      nodeDecisions: [{ groupIndex: preview.nodes[0]!.groupIndex, action: "existing", nodeId: "lib-1" }],
+    }, ACTOR_ID, "zh"), "VALIDATION_FAILED");
+    await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY, nodeDecisions: [
+      { groupIndex: preview.nodes[0]!.groupIndex, action: "existing", nodeId: "lib-1" },
+      { groupIndex: preview.nodes[1]!.groupIndex, action: "standalone", nodeId: null },
+    ] }, ACTOR_ID, "zh");
+    expect(h.previews.tasks.map((task) => [task.title, task.taskNodeId])).toEqual([["空箱上架", "lib-1"], ["第一批空箱上架", null]]);
+  });
+
+  it("名称一致不能改成独立任务，AI 建议不能替换为其他节点", async () => {
+    const h = createHarness();
+    h.nodes.library.push({ id: "lib-alt", stageKey: "install", seq: 20, title: "备用标准节点", titleEn: null, version: 1 });
+    h.matcher.byTitle.set("通电测试", { kind: "semantic", nodeId: "lib-1" });
+    const preview = await runPreview(h);
+    h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
+    const exact = preview.nodes.find((item) => item.name === "人员进场、场地检查、施工对接")!;
+    const semantic = preview.nodes.find((item) => item.name === "通电测试")!;
+    for (const decision of [
+      { groupIndex: exact.groupIndex, action: "standalone" as const, nodeId: null },
+      { groupIndex: semantic.groupIndex, action: "existing" as const, nodeId: "lib-alt" },
+    ]) await expectCode(() => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY, nodeDecisions: [decision] }, ACTOR_ID, "zh"), "VALIDATION_FAILED");
+    expect(h.projects.inserted).toEqual([]);
+  });
+
+  it("旧客户端要求补库时，未匹配任务仍只导入项目", async () => {
+    const h = createHarness();
+    const preview = await runPreview(h);
+    const node = preview.nodes.find((item) => item.name === "通电测试")!;
+    expect(node.matchKind).toBe("new");
     h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
     const result = await h.service.commit({
       previewId: preview.previewId, ...COMMIT_BODY,
       nodeDecisions: [{ groupIndex: node.groupIndex, action: "new", nodeId: null }],
     }, ACTOR_ID, "zh");
-    expect(result.counts.nodesAdded).toBe(1);
-    expect(h.nodes.inserts[0]).toMatchObject({ title: "通电测试", titleEn: "Power-on Test" });
-    expect(h.previews.tasks[1]?.title).toBe("通电测试");
+    expect(result.counts.nodesAdded).toBe(0);
+    expect(h.nodes.inserts).toEqual([]);
+    expect(h.previews.tasks[1]).toMatchObject({ taskNodeId: null, title: "通电测试", titleEn: "Power-on Test" });
   });
 
-
-  it("缺少英文时补全预览、临时任务和确认入库的新节点，保留源表及标准节点英文", async () => {
+  it("缺少英文时补全预览及未匹配任务，保留源表及标准节点英文", async () => {
     const h = createHarness();
     h.matcher.englishByTitle.set("通电测试", "Power-on test");
     h.matcher.englishByTitle.set("现场补装", "On-site installation");
@@ -1592,7 +1654,7 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(preview.nodes.find((node) => node.name === "人员进场、场地检查、施工对接")?.nameEn).toBe("Standard site entry");
     h.storage.objects.set(h.previews.row!.objectKey, mediaZip("image1.png", "image2.png"));
     await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
-    expect(h.nodes.inserts[0]?.titleEn).toBe("Power-on test");
+    expect(h.nodes.inserts).toEqual([]);
     expect(h.previews.tasks[1]?.titleEn).toBe("Power-on test");
     expect(h.previews.tasks[3]?.titleEn).toBe("On-site installation");
     expect(h.previews.tasks[0]?.titleEn).toBe("Standard site entry");
@@ -1639,7 +1701,7 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(h.projects.inserted).toHaveLength(0);
   });
 
-  it("不勾选补节点：任务按文件原名导入（taskNodeId 为空），节点库不动", async () => {
+  it("未匹配任务按文件原名导入（taskNodeId 为空），节点库不动", async () => {
     const h = createHarness();
     const preview = await runPreview(h);
     h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, mediaZip("image1.png", "image2.png"));

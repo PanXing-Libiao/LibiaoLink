@@ -31,7 +31,7 @@ import { AuditService } from "../admin/index.js";
 import type { UserRow } from "../identity/index.js";
 import { PermissionService, ProjectManagerEligibilityService } from "../permission/index.js";
 import { FlowService, ProjectMemberRepository, ProjectRepository } from "../project/index.js";
-import { TaskNodeRepository } from "../template/index.js";
+import { TaskNodeRepository, TemplateService } from "../template/index.js";
 import { TranslateService } from "../translate/index.js";
 import { convertLegacyWorkbook } from "./legacy.js";
 import type {
@@ -71,7 +71,7 @@ import type { ParsedWorkbook } from "./xlsx.js";
  * 口径铁律：
  * 1. 照原值导入 + 提醒（日期笔误 / 三档提醒见 legacy.ts 的 seeds；不因提醒阻断）；
  * 2. 五档进度 = 0 / 0.25 / 0.5 / 0.75 / 1（进行中封顶 75%；完成日期未填 = 不算完成）；
- * 3. 任务节点：同阶段精确 / 语义匹配复用并采用标准名称；不确定项人工确认，新节点由开关决定是否补库；
+ * 3. 任务节点：同阶段精确匹配自动复用；AI 建议逐条选择，保留原名可选加入个人模板；
  *    阶段外为临时任务，多任务指向同一节点时人工选择一条关联并保留其他任务；
  * 4. 账号：只对账不建号 —— 测试环境缺号需先在账号体系建号并登录一次（面板列出 isNew 账号）；正式环境用户目录完整、
  *    全部直接命中，无需任何建号动作（业务口径 2026-10-14：自动创号仅测试环境需要）。提交时账号仍不存在不阻断 ——
@@ -181,6 +181,7 @@ export class ProjectImportService implements OnModuleInit {
     private readonly translate: TranslateService,
     private readonly admission: ImportAdmissionGate,
     private readonly nodeMatcher: ImportNodeMatcher,
+    private readonly templateService: TemplateService,
   ) {}
 
   /** 启动清掉上次进程崩溃遗留的导入临时目录（按前缀 + mtime 保龄，不碰活跃请求）。 */
@@ -226,7 +227,9 @@ export class ProjectImportService implements OnModuleInit {
     }
     const extraSeeds: LegacyIssueSeed[] = [];
     const resolution = await this.resolveAccounts(collectPeople(parse));
-    const { groups, groupIndexByTask, library } = await this.buildNodeGroups(parse.tasks);
+    const grouping = await this.buildNodeGroups(parse.tasks);
+    let groups = grouping.groups;
+    const { groupIndexByTask, library } = grouping;
     const candidates = groups.flatMap((group, index) =>
       group.matchKind === "uncertain" && group.stageKey !== null
         ? [{ index, stageKey: group.stageKey, title: group.title, titleEn: group.titleEn }]
@@ -265,6 +268,10 @@ export class ProjectImportService implements OnModuleInit {
         (/^[\x20-\x7e]+$/.test(selected.title) ? selected.title : nodeKey(selected.title) === nodeKey(group.title) ? group.sourceTitleEn : null);
       for (const taskIndex of group.taskIndexes) parse.tasks[taskIndex]!.titleEn ??= group.sourceTitleEn;
     });
+    // 语义建议按任务逐条确认，即使源表中有完全相同的描述。
+    groups = groups.flatMap((group) => group.matchKind === "semantic" && group.taskIndexes.length > 1
+      ? group.taskIndexes.map((taskIndex) => ({ ...group, taskCount: 1, taskIndexes: [taskIndex] })) : [group]);
+    groups.forEach((group, index) => group.taskIndexes.forEach((taskIndex) => { groupIndexByTask[taskIndex] = index; }));
     const previewId = randomUUID();
     const objectKey = "imports/" + previewId + "/source." + extensionOf(fileName);
     await this.putSource(objectKey, input, sizeBytes);
@@ -297,7 +304,7 @@ export class ProjectImportService implements OnModuleInit {
       imagesManual: parse.manualFiles.length,
       stakeholders: parse.stakeholders.length,
       accountsNew: resolution.accounts.filter((account) => account.isNew).length,
-      nodesNew: groups.filter((group) => group.matchKind === "new").length,
+      nodesNew: 0, // 兼容旧客户端字段：导入不再向节点库新增节点。
     };
     if (parse.stakeholderSheetName === null) {
       extraSeeds.push(stakeholderSheetMissingSeed());
@@ -331,6 +338,7 @@ export class ProjectImportService implements OnModuleInit {
       imagesManual: parse.manualFiles.map((file, index) => manualImageOf(file, index, input.locale)),
       nodes: groups.map((group, index) => contractNodeOf(group, index, parse.tasks)),
       nodeLibrary: library,
+      personalTemplates: await this.templateService.listPersonalImportTemplates(input.actorId),
       issues,
     };
   }
@@ -438,6 +446,16 @@ export class ProjectImportService implements OnModuleInit {
     if (payload.nodeSnapshot === undefined) throw new AppError("VALIDATION_FAILED", "导入预览已更新，请重新选择文件解析");
     const { groups, groupIndexByTask } = payload.nodeSnapshot;
     const nodePlan = resolveNodePlan(payload.nodeSnapshot, body, await this.nodes.list(null));
+    const selectedGroups = new Set<number>();
+    const personalSelections = (body.personalTemplateSelections ?? []).map((selection) => {
+      const group = groups[selection.groupIndex];
+      const plan = nodePlan.groups[selection.groupIndex];
+      if (group === undefined || group.stageKey === null || plan === undefined || plan.node !== null || selectedGroups.has(selection.groupIndex)) {
+        throw new AppError("VALIDATION_FAILED", "个人模板的任务选择无效");
+      }
+      selectedGroups.add(selection.groupIndex);
+      return { templateId: selection.templateId, version: selection.version, stageKey: group.stageKey, title: group.title, titleEn: group.sourceTitleEn };
+    });
     // 人工改选的标准节点可能没有英文；按最终名称生成，避免沿用不同源任务的译文。
     const selectedEnglish = new Map<string, string>();
     const missingSelected = new Map<string, { index: number; title: string }>();
@@ -576,6 +594,7 @@ export class ProjectImportService implements OnModuleInit {
     throwIfCancelled(signal);
     const commitTx = this.database.db.transaction(async (tx) => {
       throwIfCancelled(signal);
+      await this.templateService.appendImportedPrivateNodes(personalSelections, actorId, tx);
       const projectRow = await this.projects.insert(
         {
           id: projectId,
@@ -606,42 +625,6 @@ export class ProjectImportService implements OnModuleInit {
         await this.members.upsert(projectRow.id, actorId, "project_member", at, tx);
       }
 
-      // 经用户确认的新节点按开关补库；阶段外任务不补。
-      const nodeIdByGroup = new Map<number, string | null>();
-      let nodesAdded = 0;
-      if (body.addMissingNodes) {
-        const seqCursor = new Map<string, number>();
-        for (let index = 0; index < groups.length; index += 1) {
-          throwIfCancelled(signal);
-          const group = groups[index]!;
-          if (nodePlan.groups[index]!.action !== "new" || group.stageKey === null) continue;
-          let seq = seqCursor.get(group.stageKey);
-          if (seq === undefined) seq = await this.nodes.maxSeq(group.stageKey, tx);
-          seq += 10;
-          seqCursor.set(group.stageKey, seq);
-          const nodeRow = await this.nodes.insert(
-            { stageKey: group.stageKey, seq, title: clipText(group.title, 200), titleEn: clipNullable(group.sourceTitleEn, 200) },
-            tx,
-          );
-          nodesAdded += 1;
-          nodeIdByGroup.set(index, nodeRow.id);
-          await this.audit.record(tx, {
-            actorId,
-            action: "create",
-            objectType: "task_node",
-            objectId: nodeRow.id,
-            projectId: projectRow.id,
-            summary: "导入表导入新增任务节点：" + nodeRow.title,
-            changes: [
-              { field: "stageKey", from: null, to: nodeRow.stageKey },
-              { field: "title", from: null, to: nodeRow.title },
-              { field: "titleEn", from: null, to: nodeRow.titleEn },
-            ],
-            metadata: { source: "project-import", previewId: preview.id },
-          });
-        }
-      }
-
       // 任务：同一阶段内 sortIndex 递增（0 起、密集）；ownerIds 只挂库内已有账号（缺号进提醒，不阻断）。
       const sortCursor = new Map<string, number>();
       const taskRows: ImportTaskInsert[] = parse.tasks.map((task, taskIndex) => {
@@ -664,7 +647,7 @@ export class ProjectImportService implements OnModuleInit {
         return {
           stageKey: task.stageKey,
           taskNodeId: nodeChoice.key !== null && nodePlan.linkedTaskByKey.get(nodeChoice.key) === taskIndex
-            ? (nodeChoice.node?.id ?? nodeIdByGroup.get(groupIndex) ?? null) : null,
+            ? (nodeChoice.node?.id ?? null) : null,
           title: clipText(nodeChoice.node?.title ?? task.title, 200),
           titleEn: clipNullable(nodeChoice.node === null ? task.titleEn : nodeChoice.node.titleEn ?? selectedEnglish.get(nodeChoice.node.id) ??
             (nodeKey(nodeChoice.node.title) === nodeKey(task.title) ? task.titleEn : null), 200),
@@ -804,7 +787,7 @@ export class ProjectImportService implements OnModuleInit {
         stakeholders: stakeholderRows.length,
         images: fileRows.length,
         accountsCreated: resolution.accounts.length,
-        nodesAdded,
+        nodesAdded: 0,
       };
       throwIfCancelled(signal);
       await this.audit.record(tx, {
@@ -841,7 +824,6 @@ export class ProjectImportService implements OnModuleInit {
           previewId: preview.id,
           fileName: preview.fileName,
           counts,
-          addMissingNodes: body.addMissingNodes,
         },
       });
       throwIfCancelled(signal);
@@ -1212,7 +1194,6 @@ function contractNodeOf(group: NodeGroup, groupIndex: number, tasks: readonly Le
 }
 
 type NodePlanGroup = {
-  action: "existing" | "new" | "standalone";
   node: ImportLibraryNode | null;
   key: string | null;
 };
@@ -1239,13 +1220,20 @@ function resolveNodePlan(
       if (choice !== undefined && choice.action !== "standalone") {
         throw new AppError("VALIDATION_FAILED", "阶段外任务不能关联或新增任务节点");
       }
-      return { action: "standalone", node: null, key: null };
+      return { node: null, key: null };
     }
-    const action = choice?.action ?? (
-      group.matchKind === "exact" || group.matchKind === "semantic" ? "existing" :
-      group.matchKind === "new" ? "new" : null
+    if (group.matchKind === "exact" && choice !== undefined && (choice.action !== "existing" || choice.nodeId !== group.libraryId)) {
+      throw new AppError("VALIDATION_FAILED", "名称一致的任务须使用节点库标准名称");
+    }
+    if (group.matchKind === "semantic" && choice?.action === "existing" && choice.nodeId !== group.libraryId) {
+      throw new AppError("VALIDATION_FAILED", "请选择 AI 建议的节点或保留 Excel 名称");
+    }
+    const requestedAction = choice?.action ?? (
+      group.matchKind === "exact" ? "existing" : group.matchKind === "new" ? "standalone" : null
     );
-    if (action === null) throw new AppError("VALIDATION_FAILED", "请先处理待人工确认的任务节点");
+    if (requestedAction === null) throw new AppError("VALIDATION_FAILED", "请先处理待人工确认的任务节点");
+    // 旧客户端的 new 选择只保留任务，不再创建节点。
+    const action = requestedAction === "new" ? "standalone" : requestedAction;
     if (choice !== undefined && action !== "existing" && choice.nodeId !== null) {
       throw new AppError("VALIDATION_FAILED", "节点处理选择无效，请重新确认");
     }
@@ -1263,18 +1251,13 @@ function resolveNodePlan(
       }
       node = current;
       key = "existing:" + current.id;
-    } else if (action === "new" && body.addMissingNodes) {
-      if (currentLibrary.some((item) => item.stageKey === group.stageKey && nodeKey(item.title) === nodeKey(group.title))) {
-        throw new AppError("VERSION_CONFLICT", "节点库已有同名节点，请重新选择文件解析");
-      }
-      key = "new:" + String(groupIndex);
     }
     if (key !== null) {
       const indexes = tasksByKey.get(key) ?? [];
       for (const taskIndex of group.taskIndexes) indexes.push(taskIndex);
       tasksByKey.set(key, indexes);
     }
-    return { action, node, key };
+    return { node, key };
   });
 
   const conflictChoices = new Map<string, number>();

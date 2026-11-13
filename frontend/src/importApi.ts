@@ -47,7 +47,7 @@ export type ImportManualImage = {
   reason: string;
 };
 
-/** 任务节点匹配：精确 / 语义命中复用，未知项人工确认，已确认新节点可补库。 */
+/** 任务节点匹配：精确命中复用，语义建议逐条选择，保留原名可加入个人模板。 */
 export type ImportTaskNode = {
   name: string;
   /** 节点英文名（节点库 title_en 口径 / 未匹配时取源表英文列）：节点库中英文名成对，导入新节点时一并落库；源表没英文 = null。 */
@@ -91,19 +91,21 @@ export type ProjectImportPreview = {
   imagesManual: ImportManualImage[];
   nodes: ImportTaskNode[];
   nodeLibrary: Array<{ id: string; stageKey: string; title: string; titleEn: string | null; version: number }>;
+  personalTemplates: Array<{ id: string; name: string; stageKey: string; version: number }>;
   issues: ImportIssue[];
 };
 
-/** 确认导入（落位确认 + 节点补库开关）。 */
+/** 确认导入（落位、人工确认及冲突选择）。 */
 export type ProjectImportCommitInput = {
   previewId: string;
   /** 项目地区（标准国家 / 地区名或字典码）—— 源表识别不出时必须由用户在面板里选。 */
   region: string;
   /** 项目类型（字典 projectType 的码）；空串 = 未指定（解析按源表关键字给默认，如 AIRROB → 飞箱）。 */
   projectType: string;
-  /** 是否把文件里未匹配的新任务节点补进「任务节点」库（阶段范围外的任务按临时任务处理）。 */
-  addMissingNodes: boolean;
-  nodeDecisions?: Array<{ groupIndex: number; action: "existing" | "new" | "standalone"; nodeId: string | null }>;
+  /** 兼容旧服务端，明确关闭节点补库。 */
+  addMissingNodes?: false;
+  nodeDecisions?: Array<{ groupIndex: number; action: "existing" | "standalone"; nodeId: string | null }>;
+  personalTemplateSelections?: Array<{ groupIndex: number; templateId: string; version: number }>;
   conflictChoices?: Array<{ key: string; taskIndex: number }>;
 };
 

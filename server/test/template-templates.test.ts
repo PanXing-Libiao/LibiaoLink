@@ -190,6 +190,7 @@ class FakePermissionService {
     this.lastKey = key;
     if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "无权限：" + key);
   }
+  async canManageTaskTemplates(): Promise<boolean> { return this.allowed; }
   async assertCanManageTaskTemplates(_actorId: string, message?: string): Promise<void> {
     this.lastKey = "taskTemplate.manage";
     if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "维护公共任务模板需要项目经理或管理员权限");
@@ -655,5 +656,39 @@ describe("删除模板（软删 + 审计快照）", () => {
     });
     expect(second.repo.rows).toHaveLength(1);
     expect(second.audit.records).toHaveLength(0);
+  });
+});
+
+
+describe("导入到个人模板", () => {
+  const selection = { templateId: TEMPLATE, version: 0, stageKey: "install", title: "第一批空箱上架", titleEn: "First batch shelving" };
+
+  it("只列出自己的个人模板并把节点保存为该模板私有", async () => {
+    const { service, repo, nodes, audit } = makeService();
+    repo.rows = [makeTemplate({ visibility: "private", createdBy: ACTOR }), makeTemplate({ id: OTHER, visibility: "private", createdBy: OTHER })];
+    expect(await service.listPersonalImportTemplates(ACTOR)).toEqual([{ id: TEMPLATE, name: "硬件实施模板一", stageKey: "install", version: 0 }]);
+    await service.appendImportedPrivateNodes([selection, selection], ACTOR, {} as DbClient);
+    expect(nodes.inserts).toHaveLength(1);
+    expect(nodes.inserts[0]).toMatchObject({ ownerTemplateId: TEMPLATE, title: selection.title });
+    expect(repo.refs.filter((ref) => ref.templateId === TEMPLATE)).toHaveLength(2);
+    expect(audit.records.map((item) => item.objectType)).toEqual(["task_node", "task_template"]);
+  });
+
+  it("无模板编辑权限时不提供个人模板选项", async () => {
+    const { service, repo } = makeService({ allowed: false });
+    repo.rows = [makeTemplate({ visibility: "private", createdBy: ACTOR })];
+    expect(await service.listPersonalImportTemplates(ACTOR)).toEqual([]);
+  });
+
+  it("拒绝别人的模板、公共模板、跨阶段和过期版本", async () => {
+    const { service, repo, nodes } = makeService();
+    for (const row of [makeTemplate({ visibility: "private", createdBy: OTHER }), makeTemplate({ visibility: "public", createdBy: ACTOR })]) {
+      repo.rows = [row];
+      await expect(service.appendImportedPrivateNodes([selection], ACTOR, {} as DbClient)).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    }
+    repo.rows = [makeTemplate({ visibility: "private", createdBy: ACTOR, version: 1 })];
+    await expect(service.appendImportedPrivateNodes([selection], ACTOR, {} as DbClient)).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    await expect(service.appendImportedPrivateNodes([{ ...selection, version: 1, stageKey: "design" }], ACTOR, {} as DbClient)).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect(nodes.inserts).toEqual([]);
   });
 });
