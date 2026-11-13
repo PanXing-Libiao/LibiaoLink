@@ -204,7 +204,7 @@ type PlaceholderPageProps = {
   page: PlaceholderPageKey;
   /** 任务模板页当前板块（来自 URL 的 `?section=`；缺省 / 不认识的值回落到第一个板块） */
   section: string | null;
-  /** 是否可维护公共任务节点库（系统管理员，或至少管理一个有效项目的项目经理）。 */
+  /** 是否可维护公共任务节点库（仅系统管理员；模板私有节点按单份模板维护权判定）。 */
   canManageNodes: boolean;
   /** 是否可新建公共任务模板（管理员，或至少管理一个有效项目的项目经理）。 */
   canManageTemplates: boolean;
@@ -1400,11 +1400,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                       >
                         {nodeCount === 0 ? (
                           <p className="flex min-h-[160px] flex-1 items-center justify-center px-4 text-center text-xs text-zinc-400">
-                            {canManageThisTemplate
-                              ? canManageNodes
-                                ? t("tpl.dropHereOrAdd")
-                                : t("tpl.dropHere")
-                              : t("tpl.dropHereReadonly")}
+                            {canManageThisTemplate ? t("tpl.dropHereOrAdd") : t("tpl.dropHereReadonly")}
                           </p>
                         ) : (
                           <div className="space-y-3 p-3">

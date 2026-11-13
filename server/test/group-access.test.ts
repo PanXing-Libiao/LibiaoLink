@@ -1349,7 +1349,7 @@ describe("PermissionService 群组接入", () => {
     expect((await service.permissionsOf(PROJECT_A)).groupProjectAccess).toBe("allowed");
   });
 
-  it("流程蓝图仅管理员；节点库只认管理员或有效项目经理，部门编辑范围不授予", async () => {
+  it("流程蓝图与公共节点库仅管理员；公共模板新建仍认有效项目经理，部门编辑范围不授予", async () => {
     const view = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "all", accessLevel: "view" })],
@@ -1376,7 +1376,8 @@ describe("PermissionService 群组接入", () => {
     const manager = serviceWith({ groupKeys: [], rules: [] });
     manager.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_A], deletedAt: null });
     expect(await manager.service.canManageBlueprint(PROJECT_A)).toBe(false);
-    expect(await manager.service.canManageTaskNodes(PROJECT_A)).toBe(true);
+    expect(await manager.service.canManageTaskNodes(PROJECT_A)).toBe(false);
+    await expect(manager.service.assertCanManageTaskNodes(PROJECT_A)).rejects.toMatchObject({ code: "FORBIDDEN" });
 
     const admin = serviceWith({ groupKeys: ["libiaorobot.com/系统管理员"], rules: [], groupEnforced: false });
     expect(await admin.service.canManageBlueprint(PROJECT_A)).toBe(true);
@@ -1412,10 +1413,11 @@ describe("PermissionService 群组接入", () => {
 
     const managerOfRecord = serviceWith({ groupKeys: [], rules: [] });
     managerOfRecord.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_A], deletedAt: null });
-    expect(await managerOfRecord.service.canManageTaskNodes(PROJECT_A)).toBe(true);
+    expect(await managerOfRecord.service.canManageTaskNodes(PROJECT_A)).toBe(false);
     expect(await managerOfRecord.service.canManageTaskTemplates(PROJECT_A)).toBe(true);
+    await expect(managerOfRecord.service.assertCanManageTaskNodes(PROJECT_A)).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(await managerOfRecord.service.permissionsOf(PROJECT_A)).toMatchObject({
-      taskNodeManage: true,
+      taskNodeManage: false,
       taskTemplateRead: true,
       taskTemplateManage: true,
     });

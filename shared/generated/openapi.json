@@ -202,7 +202,7 @@
           },
           "taskNodeManage": {
             "type": "boolean",
-            "description": "是否可新增 / 编辑 / 删除公共任务节点库：管理员，或至少管理一个未删除项目的项目经理；部门编辑范围不授予"
+            "description": "是否可新增 / 编辑 / 删除公共任务节点库：仅系统管理员；项目经理、部门编辑范围与普通成员均不授予"
           },
           "taskTemplateRead": {
             "type": "boolean",
@@ -17799,7 +17799,7 @@
         "tags": [
           "templates"
         ],
-        "summary": "新增任务节点（管理端维护节点库；同阶段同名 409）",
+        "summary": "新增公共任务节点（仅系统管理员；同阶段同名 409）",
         "parameters": [
           {
             "schema": {
@@ -17869,7 +17869,7 @@
         "tags": [
           "templates"
         ],
-        "summary": "编辑任务节点（改名 / 英文名；乐观锁 version 必传）",
+        "summary": "编辑公共任务节点（仅系统管理员；乐观锁 version 必传）",
         "parameters": [
           {
             "schema": {
@@ -17947,7 +17947,7 @@
         "tags": [
           "templates"
         ],
-        "summary": "删除任务节点（物理删行；删除前快照写审计；已生成的项目任务不变）",
+        "summary": "删除公共任务节点（仅系统管理员；物理删行；已生成的项目任务不变）",
         "parameters": [
           {
             "schema": {
