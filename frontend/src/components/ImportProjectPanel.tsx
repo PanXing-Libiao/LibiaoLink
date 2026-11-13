@@ -60,7 +60,7 @@ type ManualUploadOutcome = {
 /** 一项待上传的补充附件（id = 预览清单 id；fileId 给出 = 只重挂变更）。 */
 type ManualUploadItem = { id: string; name: string; file: File | null; fileId: string | null };
 
-type NodeCategory = "ai" | "review" | "new" | "manual";
+type NodeCategory = "ai" | "review" | "new";
 
 type Phase =
   | { kind: "parsing" }
@@ -568,22 +568,21 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   const newNodes = scopedNodes.filter((node) => node.matchKind === "new");
   const exactMatches = scopedNodes.filter((node) => node.matchKind === "exact");
   const aiMatchedNodes = scopedNodes.filter((node) => node.matchKind === "semantic");
-  const manualNodes = scopedNodes.filter((node) => node.matchKind === "uncertain" && nodeChoice(node) !== "");
-
+  /**
+   * 分类只看「AI 判定结果」，**不**按用户是否已选择来搬移 —— 原来选了「保留 Excel 原名」的行会被挪进
+   * 「已人工处理」一栏（业务口径 2026-11-13 收口：不要那一栏，申请入口直接留在 AI 同义 / 未匹配的原位）。
+   */
   const nodesByCategory: Record<NodeCategory, ImportTaskNode[]> = {
-    ai: aiMatchedNodes, review: reviewNodes, new: newNodes, manual: manualNodes,
+    ai: aiMatchedNodes, review: reviewNodes, new: newNodes,
   };
-  const hasCategorizedNodes = aiMatchedNodes.length + reviewNodes.length + newNodes.length + manualNodes.length > 0;
+  const hasCategorizedNodes = aiMatchedNodes.length + reviewNodes.length + newNodes.length > 0;
   const currentNodeCategory: NodeCategory = selectedNodeCategory ??
-    (aiMatchedNodes.length > 0 ? "ai" : reviewNodes.length > 0 ? "review" : newNodes.length > 0 ? "new" : manualNodes.length > 0 ? "manual" : "ai");
+    (aiMatchedNodes.length > 0 ? "ai" : reviewNodes.length > 0 ? "review" : newNodes.length > 0 ? "new" : "ai");
   const nodeCategoryTabs: Array<{ category: NodeCategory; label: string }> = [
     { category: "ai", label: t("import.nodes.summaryAi", { n: aiMatchedNodes.length }) },
     { category: "review", label: t("import.nodes.summaryReview", { n: reviewNodes.length }) },
     { category: "new", label: t("import.nodes.summaryNew", { n: newNodes.length }) },
   ];
-  if (manualNodes.length > 0 || currentNodeCategory === "manual") {
-    nodeCategoryTabs.push({ category: "manual", label: t("import.nodes.summaryManual", { n: manualNodes.length }) });
-  }
   const conflictBuckets = new Map<string, { name: string; tasks: Array<{ index: number; row: number; name: string }> }>();
   for (const node of scopedNodes) {
     const choice = nodeChoice(node);
@@ -631,9 +630,6 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
 
   const secondaryButtonClass = "rounded-lg border border-zinc-300 px-3.5 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100";
   const applyNodeChoice = (node: ImportTaskNode, choice: string): void => {
-    if (currentNodeCategory === "review" && reviewNodes.length === 1) {
-      setSelectedNodeCategory("manual");
-    }
     setNodeChoices((current) => ({ ...current, [node.groupIndex]: choice }));
     if (choice !== "standalone") {
       setPersonalTemplateChoices((current) => ({ ...current, [node.groupIndex]: "" }));
@@ -658,6 +654,8 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
         const suggested = node.matchKind === "semantic" ? preview?.nodeLibrary.find((item) => item.id === node.libraryId) : undefined;
         const personalTemplates = (preview?.personalTemplates ?? []).filter((item) => item.stageKey === node.stageKey);
         const request = nodeRequestOf(node);
+        /** 这一行是否已经选定复用公共节点库里的某条（此时申请无意义，置灰）。 */
+        const usingExisting = choice.startsWith("existing:");
         const pickerOpen = nodePickerIndex === node.groupIndex;
         const query = nodeQuery.trim().toLocaleLowerCase();
         const stageNodes = pickerOpen ? (preview?.nodeLibrary ?? []).filter((item) => item.stageKey === node.stageKey) : [];
@@ -705,38 +703,51 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                 </button>
               </div>
             )}
-            {choice !== "standalone" || !node.inStageScope ? null : (
+            {!node.inStageScope ? null : (
               <div className="mt-3 border-t border-zinc-100 pt-3">
-                <p className="text-xs font-medium text-zinc-700">{t("import.nodes.personalTemplate")}</p>
-                {personalTemplates.length === 0 ? (
-                  <p className="mt-1 text-xs text-zinc-500">{t("import.nodes.noPersonalTemplate")}</p>
-                ) : (
-                  <div className="mt-1.5 max-w-md" data-import-personal-template={node.groupIndex}>
-                    <SelectMenu
-                      ariaLabel={t("import.nodes.personalTemplate") + " · " + node.name}
-                      value={personalTemplateChoices[node.groupIndex] ?? ""}
-                      options={[{ value: "", label: t("import.nodes.noTemplate") }, ...personalTemplates.map((template) => ({ value: template.id, label: template.name }))]}
-                      onChange={(value) => setPersonalTemplateChoices((current) => ({ ...current, [node.groupIndex]: value }))}
-                      popoverClassName="z-[80]"
-                    />
-                  </div>
+                {choice !== "standalone" ? null : (
+                  <>
+                    <p className="text-xs font-medium text-zinc-700">{t("import.nodes.personalTemplate")}</p>
+                    {personalTemplates.length === 0 ? (
+                      <p className="mt-1 text-xs text-zinc-500">{t("import.nodes.noPersonalTemplate")}</p>
+                    ) : (
+                      <div className="mt-1.5 max-w-md" data-import-personal-template={node.groupIndex}>
+                        <SelectMenu
+                          ariaLabel={t("import.nodes.personalTemplate") + " · " + node.name}
+                          value={personalTemplateChoices[node.groupIndex] ?? ""}
+                          options={[{ value: "", label: t("import.nodes.noTemplate") }, ...personalTemplates.map((template) => ({ value: template.id, label: template.name }))]}
+                          onChange={(value) => setPersonalTemplateChoices((current) => ({ ...current, [node.groupIndex]: value }))}
+                          popoverClassName="z-[80]"
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
-                {/* 公共节点申请（业务口径 2026-11-13「给一个申请的渠道，让管理员审核」）：与个人模板互相独立，可以同时选；
-                    申请本身不写节点库、也不影响本次导入 —— 审核通过前进公共节点库，不通过就仍按 Excel 原名导入。
-                    中英文名就地可改：中文名空着时提交按钮禁用（服务端 title 必填）。 */}
-                <div className="mt-3 border-t border-zinc-100 pt-3">
-                  <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-700">
+                {/* 公共节点申请（业务口径 2026-11-13）：常驻在节点原本的分类里，不再等用户先选「保留原名」被挪去
+                    「已人工处理」；勾选即等于保留 Excel 原名（未选时自动补上 standalone）。沿用已有节点时这条不适用，
+                    置灰并说明，避免提交一条与「用标准名」矛盾的申请。 */}
+                <div className={"mt-3 border-t border-zinc-100 pt-3" + (choice !== "standalone" ? "" : " border-t-0 pt-0")}>
+                  <label
+                    className={"flex items-center gap-2 text-xs font-medium " + (usingExisting ? "cursor-not-allowed text-zinc-400" : "cursor-pointer text-zinc-700")}
+                  >
                     <input
                       type="checkbox"
                       checked={request.on}
-                      onChange={(event) => updateNodeRequest(node, { on: event.currentTarget.checked })}
-                      className="h-3.5 w-3.5 shrink-0 rounded border-zinc-300 accent-zinc-800"
+                      disabled={usingExisting}
+                      onChange={(event) => {
+                        const next = event.currentTarget.checked;
+                        if (next && nodeChoice(node) === "") applyNodeChoice(node, "standalone");
+                        updateNodeRequest(node, { on: next });
+                      }}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-zinc-300 accent-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
                       data-import-request-node={node.groupIndex}
                     />
                     {t("import.nodes.requestTitle")}
                   </label>
-                  <p className="mt-1 text-[11px] leading-5 text-zinc-500">{t("import.nodes.requestHint")}</p>
-                  {request.on ? (
+                  <p className="mt-1 text-[11px] leading-5 text-zinc-500">
+                    {usingExisting ? t("import.nodes.requestSkipExisting") : t("import.nodes.requestHint")}
+                  </p>
+                  {!request.on || usingExisting ? null : (
                     <div className="mt-2 grid gap-2 sm:grid-cols-2">
                       <input
                         type="text"
@@ -759,8 +770,8 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                         data-import-request-title-en={node.groupIndex}
                       />
                     </div>
-                  ) : null}
-                  {request.on && request.title.trim() === "" ? (
+                  )}
+                  {request.on && !usingExisting && request.title.trim() === "" ? (
                     <p className="mt-1 text-[11px] text-rose-600" data-import-request-name-error={node.groupIndex}>
                       {t("import.nodes.requestNameRequired")}
                     </p>
@@ -1153,14 +1164,12 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                             (currentNodeCategory === "ai" ? "text-blue-900" : currentNodeCategory === "review" ? "text-amber-900" : "text-zinc-900")}>
                             {currentNodeCategory === "ai" ? t("import.nodes.aiMatchesTitle", { n: aiMatchedNodes.length }) :
                               currentNodeCategory === "review" ? t("import.nodes.reviewTitle", { n: reviewNodes.length }) :
-                              currentNodeCategory === "new" ? t("import.nodes.title", { n: newNodes.length }) :
-                              t("import.nodes.manualTitle", { n: manualNodes.length })}
+                              t("import.nodes.title", { n: newNodes.length })}
                           </h4>
                           <p className={"mt-1 text-xs " +
                             (currentNodeCategory === "ai" ? "text-blue-800" : currentNodeCategory === "review" ? "text-amber-800" : "text-zinc-500")}>
                             {currentNodeCategory === "ai" ? t("import.nodes.aiMatchesHint") :
-                              currentNodeCategory === "review" ? t("import.nodes.reviewHint") :
-                              currentNodeCategory === "new" ? t("import.nodes.hint") : t("import.nodes.manualHint")}
+                              currentNodeCategory === "review" ? t("import.nodes.reviewHint") : t("import.nodes.hint")}
                           </p>
                           {renderNodeRows(nodesByCategory[currentNodeCategory])}
                         </>
