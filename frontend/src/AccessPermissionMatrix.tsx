@@ -84,21 +84,6 @@ export function AccessPermissionMatrix({ open, onClose }: { open: boolean; onClo
         </div>
 
         <div className="overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
-          <div className="mb-4 grid gap-2 sm:grid-cols-3">
-            <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-xs text-blue-800">
-              <strong className="font-semibold">{t("access.matrixRuleMerge")}</strong>
-              <span className="mt-1 block text-[11px] leading-5 text-blue-700/80">{t("access.matrixRuleMergeDesc")}</span>
-            </div>
-            <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2.5 text-xs text-emerald-800">
-              <strong className="font-semibold">{t("access.matrixRuleDynamic")}</strong>
-              <span className="mt-1 block text-[11px] leading-5 text-emerald-700/80">{t("access.matrixRuleDynamicDesc")}</span>
-            </div>
-            <div className="rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-2.5 text-xs text-amber-800">
-              <strong className="font-semibold">{t("access.matrixRuleAdditive")}</strong>
-              <span className="mt-1 block text-[11px] leading-5 text-amber-700/80">{t("access.matrixRuleAdditiveDesc")}</span>
-            </div>
-          </div>
-
           <div className="hidden overflow-hidden rounded-xl border border-zinc-200 md:block">
             <div className="grid grid-cols-[132px_92px_170px_116px_minmax(0,1fr)] bg-zinc-50 text-[11px] font-medium text-zinc-500">
               <div className="border-r border-zinc-200 px-3 py-2.5">{t("access.matrixRole")}</div>

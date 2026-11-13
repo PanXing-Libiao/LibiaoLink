@@ -428,9 +428,7 @@ export function CategoryFilterSidebar({
             {savedFilters.length === 0 ? (
               compose === null ? (
                 <p className="mt-3 text-xs leading-5 text-zinc-400">
-                  {canQuickAdd
-                    ? t("filter.empty.quickAdd")
-                    : t("filter.empty.add")}
+                  {t("filter.empty.add")}
                 </p>
               ) : null
             ) : (
@@ -633,7 +631,7 @@ export function CategoryFilterSidebar({
           <span className="text-xs text-zinc-400">
             {compose === null
               ? activeCount === 0
-                ? t("filter.footer.none")
+                ? null
                 : t("filter.footer.count", { n: activeCount })
               : t("filter.footer.compose", { n: draftCount })}
           </span>

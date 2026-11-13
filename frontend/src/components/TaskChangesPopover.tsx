@@ -165,11 +165,6 @@ export function TaskChangesPopover({ task, members, onOpenLinkedTask }: {
               );
             })}
           </div>
-          {scrollState.atStart && scrollState.atEnd ? null : (
-            <div className="border-t border-zinc-100 px-3 py-2">
-              <span className="text-[11px] text-zinc-400">{t("changePopover.hint")}</span>
-            </div>
-          )}
         </div>,
         document.body,
       ) : null}
