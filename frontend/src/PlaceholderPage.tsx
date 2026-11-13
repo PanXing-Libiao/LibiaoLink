@@ -11,6 +11,7 @@ import { SelectMenu } from "./components/SelectMenu";
 import { PROJECT_STAGES } from "./data/projects";
 import { ApiError } from "./api";
 import {
+  approveTaskNodeRequest,
   createStageNode,
   createTaskTemplate,
   createTemplateStageNode,
@@ -18,14 +19,21 @@ import {
   deleteTaskTemplate,
   fetchStageNodes,
   fetchStageTemplates,
+  listTaskNodeRequests,
+  nodeRequestWriteMessage,
   nodeWriteMessage,
+  rejectTaskNodeRequest,
   templateWriteMessage,
   updateStageNode,
   updateTaskTemplate,
+  withdrawTaskNodeRequest,
   type TaskNodeItem,
+  type TaskNodeRequest,
   type TemplateItem,
   type TemplateVisibility,
 } from "./templateApi";
+import { formatDateTime } from "./projectApi";
+import { stageNameOf } from "./taskApi";
 import { replaceTemplateSection, templateSectionFromParam, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import { isLocalizedLocale, stageText, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT } from "./i18n";
 import { lockBodyScroll } from "./scrollLock";
@@ -152,6 +160,31 @@ function unsavedHintTitle(template: TemplateDraft, t: ReturnType<typeof useT>): 
 
 /** 空阶段兜底用的空数组（避免每次渲染都新建一个）。 */
 const EMPTY_TEMPLATE_LIST: TemplateDraft[] = [];
+
+/** 公共节点申请的状态徽标文案（four locales 同一套键；顺序 = 申请生命周期）。 */
+const NODE_REQUEST_STATUS_KEY: Record<
+  TaskNodeRequest["status"],
+  "nodeRequests.statusPending" | "nodeRequests.statusApproved" | "nodeRequests.statusRejected" | "nodeRequests.statusWithdrawn"
+> = {
+  pending: "nodeRequests.statusPending",
+  approved: "nodeRequests.statusApproved",
+  rejected: "nodeRequests.statusRejected",
+  withdrawn: "nodeRequests.statusWithdrawn",
+};
+
+/** 状态徽标配色：待审 = 琥珀（等审核）、通过 = 绿、驳回 = 玫瑰、撤销 = 灰。 */
+const NODE_REQUEST_STATUS_STYLE: Record<TaskNodeRequest["status"], string> = {
+  pending: "border-amber-200 bg-amber-50 text-amber-700",
+  approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  rejected: "border-rose-200 bg-rose-50 text-rose-700",
+  withdrawn: "border-zinc-200 bg-zinc-100 text-zinc-500",
+};
+
+/** 来源项目展示（编号 · 名称；两个都空 = 「—」，老数据 / 非导入来源可能没有）。 */
+function sourceProjectLabel(request: TaskNodeRequest): string {
+  const parts = [request.projectCode, request.projectName].filter((part): part is string => part !== null && part !== "");
+  return parts.length === 0 ? "—" : parts.join(" · ");
+}
 
 /** 按住卡片后位移超过这个数才算「拖动」（没过阈值就是点一下，什么都不改）。 */
 const DRAG_THRESHOLD = 4;
@@ -293,6 +326,35 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const [nodesVersion, setNodesVersion] = useState(0);
   const activeNodes = nodesByStage[activeSection] ?? EMPTY_NODE_LIST;
 
+  /**
+   * 公共节点申请（业务口径 2026-11-13「给一个申请的渠道，让管理员审核」）：入口在左列列头，
+   * 任何登录账号都能打开（看「我的申请」）；有节点库维护权（canManageNodes = taskNodeManage 同口径）的账号
+   * 额外看到待审数量角标，并在「待审核」标签里逐条通过 / 驳回 —— 通过时才写公共节点库。
+   */
+  const [nodeRequestsOpen, setNodeRequestsOpen] = useState(false);
+  const [nodeRequestsTab, setNodeRequestsTab] = useState<"pending" | "mine">("mine");
+  /** 审核视角的待审列表（需节点库维护权；无权限时保持空数组，不发请求）。 */
+  const [pendingRequests, setPendingRequests] = useState<TaskNodeRequest[]>([]);
+  /** 本人视角的申请（全部状态；任何登录账号都可看）。 */
+  const [myRequests, setMyRequests] = useState<TaskNodeRequest[]>([]);
+  /** 两个视角各自的待审条数（审核视角 = 全局待审；本人视角 = 本人待审）。 */
+  const [reviewPendingCount, setReviewPendingCount] = useState(0);
+  const [myPendingCount, setMyPendingCount] = useState(0);
+  const [nodeRequestsLoading, setNodeRequestsLoading] = useState(false);
+  const [nodeRequestsError, setNodeRequestsError] = useState<string | null>(null);
+  /** 申请取数版本号：浮层打开 / 审核动作成功后 +1（数量角标与列表一起重取）。 */
+  const [nodeRequestsVersion, setNodeRequestsVersion] = useState(0);
+  /** 审核行里就地编辑的中英文名（键 = 申请 id；缺省 = 申请原值）。 */
+  const [requestDrafts, setRequestDrafts] = useState<Record<string, { title: string; titleEn: string }>>({});
+  /** 正在填驳回原因的那一条（一次只展开一条，避免多行输入框同时抢占高度）。 */
+  const [rejectingRequestId, setRejectingRequestId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  /** 正在提交审核动作的申请 id（按钮置灰，防重复点击）。 */
+  const [actingRequestId, setActingRequestId] = useState<string | null>(null);
+  /** 审核动作的结果提示（顶部 Toast，成功 / 失败同一位置）。 */
+  const [nodeRequestNotice, setNodeRequestNotice] = useState<{ kind: "ok" | "error" | "info"; text: string } | null>(null);
+  const nodeRequestsTrapRef = useFocusTrap<HTMLDivElement>(nodeRequestsOpen);
+
   useEffect(() => subscribeLiveHints((resources) => {
     if (!resources.includes("templates")) return;
     setNodesByStage((previous) => Object.fromEntries(Object.entries(previous).filter(([stage]) => stage === activeSection)));
@@ -347,6 +409,91 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
       alive = false;
     };
   }, [page, activeSection, nodesVersion]);
+
+  /**
+   * 待审数量（进页面 / 切板块后各取一次）：失败一律静默 —— 角标只是入口提示，取不到就不显示数字，不打断页面；
+   * 审核视角需要节点库维护权（无权限会 403），所以只有 canManageNodes 才取。
+   */
+  useEffect(() => {
+    if (page !== "templates") {
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const mine = await listTaskNodeRequests({ mine: true, status: "pending" });
+        if (alive) {
+          setMyPendingCount(mine.pendingCount);
+        }
+      } catch {
+        // 静默：本人视角取不到只是不显示数字
+      }
+      if (!canManageNodes) {
+        return;
+      }
+      try {
+        const all = await listTaskNodeRequests({ status: "pending" });
+        if (alive) {
+          setReviewPendingCount(all.pendingCount);
+        }
+      } catch {
+        // 静默：无权限 / 网络异常都当作「不显示角标」
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [page, activeSection, canManageNodes, nodeRequestsVersion]);
+
+  /**
+   * 浮层数据：打开时才取完整列表（加载态 + 失败可重试）；「我的申请」任何账号都取，
+   * 「待审核」只在有节点库维护权时取 —— 无权限时不发这个请求，也就不会把 403 摆到界面上。
+   */
+  useEffect(() => {
+    if (page !== "templates" || !nodeRequestsOpen) {
+      return;
+    }
+    let alive = true;
+    setNodeRequestsLoading(true);
+    setNodeRequestsError(null);
+    void (async () => {
+      try {
+        const mine = await listTaskNodeRequests({ mine: true });
+        if (!alive) {
+          return;
+        }
+        setMyRequests(mine.items);
+        setMyPendingCount(mine.pendingCount);
+        if (!canManageNodes) {
+          return;
+        }
+        const all = await listTaskNodeRequests({ status: "pending" });
+        if (!alive) {
+          return;
+        }
+        setPendingRequests(all.items);
+        setReviewPendingCount(all.pendingCount);
+      } catch (error) {
+        if (alive) {
+          // 403 = 审核视角没权限（比如刚被撤销项目经理）：给一句人话，别把裸错误码摆出来
+          setNodeRequestsError(
+            error instanceof ApiError && error.code === "FORBIDDEN"
+              ? t("nodeRequests.noPermission")
+              : error instanceof Error
+                ? error.message
+                : t("tpl.err.retryLater"),
+          );
+        }
+      } finally {
+        if (alive) {
+          setNodeRequestsLoading(false);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [page, nodeRequestsOpen, canManageNodes, nodeRequestsVersion]);
 
   useEffect(() => {
     prefetchLocalizedText(Object.values(templatesByStage).flat().map((item) => item.name));
@@ -596,12 +743,13 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const deleteTemplateConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteTemplate !== null);
   const newTemplateTrapRef = useFocusTrap<HTMLDivElement>(newTemplateVisibilityOpen);
 
+  // 两个弹层任意一个开着都锁背景滚动（节点申请浮层同款：窄屏整宽、独立滚动区）
   useEffect(() => {
-    if (!newTemplateVisibilityOpen) {
+    if (!newTemplateVisibilityOpen && !nodeRequestsOpen) {
       return;
     }
     return lockBodyScroll();
-  }, [newTemplateVisibilityOpen]);
+  }, [newTemplateVisibilityOpen, nodeRequestsOpen]);
 
   /** 新建模板后的聚焦：状态一置上就等这次渲染提交完，把名字输入框聚焦 + 全选（落完即清）。 */
   useEffect(() => {
@@ -806,6 +954,134 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
         setNodeNotice(t("tpl.err.delete", { name: node.title, message: nodeErrorMessage(error, t("tpl.err.retryLater")) }));
       }
     })();
+  };
+
+  /** 申请 / 审核失败的统一文案（403 无审核权、409 并发、VALIDATION_FAILED 已处理都转人话；其它给兜底）。 */
+  const nodeRequestErrorMessage = (error: unknown, fallback: string): string =>
+    error instanceof ApiError ? nodeRequestWriteMessage(error) : fallback;
+
+  /** 审核行当前的中英文名（没编辑过 = 申请原值；英文名空串 = 无英文，提交时传 null）。 */
+  const requestDraftOf = (request: TaskNodeRequest): { title: string; titleEn: string } =>
+    requestDrafts[request.id] ?? { title: request.title, titleEn: request.titleEn ?? "" };
+
+  /** 就地改名：先把缺省值固化再打补丁，避免输入框中途「回跳」到申请原值。 */
+  const patchRequestDraft = (request: TaskNodeRequest, patch: Partial<{ title: string; titleEn: string }>): void => {
+    setRequestDrafts((current) => ({
+      ...current,
+      [request.id]: { ...(current[request.id] ?? { title: request.title, titleEn: request.titleEn ?? "" }), ...patch },
+    }));
+  };
+
+  /** 动作成功后清掉该条的本地编辑态（列表会按服务端最新值重画）。 */
+  const clearRequestLocalState = (requestId: string): void => {
+    setRequestDrafts((current) => {
+      const next = { ...current };
+      delete next[requestId];
+      return next;
+    });
+    setRejectingRequestId((current) => (current === requestId ? null : current));
+    setRejectReason("");
+  };
+
+  /**
+   * 通过：直接提交审核行里的中英文名（没改过 = 申请原值，与申请值相同也没关系 —— 服务端按同阶段同名判重，
+   * 已有同名节点则只关联不新建，故 linkedExisting 的提示文案分开）。
+   * 通过后节点库可能多出一条：复用节点库重取版本号让左列立刻看到，模板里的节点名也顺手刷新。
+   */
+  const approveRequest = (request: TaskNodeRequest): void => {
+    if (actingRequestId !== null) {
+      return;
+    }
+    const draft = requestDraftOf(request);
+    const title = draft.title.trim();
+    if (title === "") {
+      return;
+    }
+    setActingRequestId(request.id);
+    void (async () => {
+      try {
+        const outcome = await approveTaskNodeRequest(request.id, {
+          title,
+          titleEn: draft.titleEn.trim() === "" ? null : draft.titleEn.trim(),
+        });
+        setNodeRequestNotice({
+          kind: "ok",
+          text: outcome.linkedExisting ? t("nodeRequests.linkedExisting") : t("nodeRequests.approved"),
+        });
+        clearRequestLocalState(request.id);
+        setNodesVersion((version) => version + 1);
+        setTemplatesVersion((version) => version + 1);
+        setNodeRequestsVersion((version) => version + 1);
+      } catch (error) {
+        setNodeRequestNotice({
+          kind: "error",
+          text: t("nodeRequests.actionFailed", { message: nodeRequestErrorMessage(error, t("tpl.err.retryLater")) }),
+        });
+      } finally {
+        setActingRequestId(null);
+      }
+    })();
+  };
+
+  /** 驳回：原因必填（1..200，服务端复核）；成功后刷新列表，申请人随后能在「我的申请」看到原因。 */
+  const rejectRequest = (request: TaskNodeRequest): void => {
+    if (actingRequestId !== null) {
+      return;
+    }
+    const reason = rejectReason.trim();
+    if (reason === "") {
+      return;
+    }
+    setActingRequestId(request.id);
+    void (async () => {
+      try {
+        await rejectTaskNodeRequest(request.id, reason);
+        setNodeRequestNotice({ kind: "ok", text: t("nodeRequests.rejected") });
+        clearRequestLocalState(request.id);
+        setNodeRequestsVersion((version) => version + 1);
+      } catch (error) {
+        setNodeRequestNotice({
+          kind: "error",
+          text: t("nodeRequests.actionFailed", { message: nodeRequestErrorMessage(error, t("tpl.err.retryLater")) }),
+        });
+      } finally {
+        setActingRequestId(null);
+      }
+    })();
+  };
+
+  /** 撤销本人待审申请（只能撤自己的 pending；服务端复核）。 */
+  const withdrawRequest = (request: TaskNodeRequest): void => {
+    if (actingRequestId !== null) {
+      return;
+    }
+    setActingRequestId(request.id);
+    void (async () => {
+      try {
+        await withdrawTaskNodeRequest(request.id);
+        setNodeRequestNotice({ kind: "ok", text: t("nodeRequests.withdrawn") });
+        clearRequestLocalState(request.id);
+        setNodeRequestsVersion((version) => version + 1);
+      } catch (error) {
+        setNodeRequestNotice({
+          kind: "error",
+          text: t("nodeRequests.actionFailed", { message: nodeRequestErrorMessage(error, t("tpl.err.retryLater")) }),
+        });
+      } finally {
+        setActingRequestId(null);
+      }
+    })();
+  };
+
+  /** 实际展示的标签：没有节点库维护权时「待审核」这个标签不存在，一律回落到「我的申请」。 */
+  const shownRequestsTab: "pending" | "mine" = canManageNodes ? nodeRequestsTab : "mine";
+
+  /** 入口按钮：默认停在有待审条目的标签（无权限 / 没有待审 = 「我的申请」）。 */
+  const openNodeRequests = (): void => {
+    setNodeRequestsTab(canManageNodes && reviewPendingCount > 0 ? "pending" : "mine");
+    setRejectingRequestId(null);
+    setRejectReason("");
+    setNodeRequestsOpen(true);
   };
 
   /**
@@ -1091,6 +1367,27 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                         ? t("tpl.nodes.count", { n: activeNodes.length })
                         : t("tpl.nodes.countFiltered", { shown: visibleNodes.length, total: activeNodes.length })}
                     </span>
+                    {/* 公共节点申请入口：任何登录账号都能打开看「我的申请」；有节点库维护权（taskNodeManage 同口径）
+                        的账号额外显示审核视角的待审数量角标（无权限 = 不显示数字）。 */}
+                    <button
+                      type="button"
+                      onClick={openNodeRequests}
+                      aria-haspopup="dialog"
+                      aria-expanded={nodeRequestsOpen}
+                      title={t("nodeRequests.entry")}
+                      data-node-requests-entry=""
+                      className="shrink-0 whitespace-nowrap rounded-md border border-white/70 bg-white/60 px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-white hover:text-zinc-900"
+                    >
+                      {t("nodeRequests.entry")}
+                      {canManageNodes && reviewPendingCount > 0 ? (
+                        <span
+                          className="ml-1 inline-block rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+                          data-node-requests-badge=""
+                        >
+                          {t("nodeRequests.pendingBadge", { n: reviewPendingCount })}
+                        </span>
+                      ) : null}
+                    </button>
                     {canManageNodes ? (
                       <button
                         type="button"
@@ -1478,6 +1775,298 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
               </div>
             </div>
           </div>
+          {/* 公共节点申请浮层（业务口径 2026-11-13「让管理员审核」）：窄屏整宽、独立滚动区，与新建模板弹窗同材质。
+              「待审核」= 节点库维护权账号逐条通过 / 驳回（通过前可改中英文名）；「我的申请」= 任何登录账号看自己的申请与结果。 */}
+          {nodeRequestsOpen ? (
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/30 px-4 py-6 backdrop-blur-[2px]"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setNodeRequestsOpen(false);
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setNodeRequestsOpen(false);
+                }
+              }}
+            >
+              <div
+                ref={nodeRequestsTrapRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="node-requests-title"
+                data-node-requests-dialog=""
+                className="flex max-h-[min(720px,calc(100dvh-3rem))] w-full max-w-2xl flex-col overflow-clip rounded-2xl border border-white/80 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.28)]"
+              >
+                <div className="flex items-center gap-3 border-b border-zinc-200 px-5 py-3.5">
+                  <h2 id="node-requests-title" className="text-base font-semibold text-zinc-900">
+                    {t("nodeRequests.entry")}
+                  </h2>
+                  <button
+                    type="button"
+                    aria-label={t("toast.close")}
+                    onClick={() => { setNodeRequestsOpen(false); }}
+                    className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </div>
+                {/* 标签：待审核只给有节点库维护权的账号；默认停在「待审核」（有待审时）否则「我的申请」 */}
+                <div role="tablist" aria-label={t("nodeRequests.entry")} className="flex flex-wrap items-center gap-1 border-b border-zinc-100 px-4 text-sm">
+                  {canManageNodes ? (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={shownRequestsTab === "pending"}
+                      data-node-request-tab="pending"
+                      onClick={() => { setNodeRequestsTab("pending"); setRejectingRequestId(null); setRejectReason(""); }}
+                      className={
+                        "border-b-2 px-3 py-2 font-medium transition " +
+                        (shownRequestsTab === "pending"
+                          ? "border-zinc-900 text-zinc-900"
+                          : "border-transparent text-zinc-500 hover:text-zinc-800")
+                      }
+                    >
+                      {t("nodeRequests.tabPending")}
+                      {reviewPendingCount === 0 ? null : (
+                        <span className="ml-1 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                          {t("nodeRequests.pendingBadge", { n: reviewPendingCount })}
+                        </span>
+                      )}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={shownRequestsTab === "mine"}
+                    data-node-request-tab="mine"
+                    onClick={() => { setNodeRequestsTab("mine"); setRejectingRequestId(null); setRejectReason(""); }}
+                    className={
+                      "border-b-2 px-3 py-2 font-medium transition " +
+                      (shownRequestsTab === "mine"
+                        ? "border-zinc-900 text-zinc-900"
+                        : "border-transparent text-zinc-500 hover:text-zinc-800")
+                    }
+                  >
+                    {t("nodeRequests.tabMine")}
+                    {myPendingCount === 0 ? null : (
+                      <span className="ml-1 rounded-full bg-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-zinc-600">
+                        {t("nodeRequests.pendingBadge", { n: myPendingCount })}
+                      </span>
+                    )}
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                  {nodeRequestsError === null ? null : (
+                    <p className="rounded-xl border border-dashed border-rose-200 bg-rose-50/70 px-4 py-6 text-center text-xs text-rose-700">
+                      {t("nodeRequests.loadFailed", { message: nodeRequestsError })}
+                      <button
+                        type="button"
+                        onClick={() => { setNodeRequestsVersion((version) => version + 1); }}
+                        className="ml-2 rounded border border-rose-200 bg-white px-2 py-0.5 text-[11px] text-rose-700 transition hover:bg-rose-50"
+                      >
+                        {t("common.retry")}
+                      </button>
+                    </p>
+                  )}
+
+                  {nodeRequestsLoading ? (
+                    <p className="py-10 text-center text-xs text-zinc-500">{t("common.loading")}</p>
+                  ) : null}
+
+                  {!nodeRequestsLoading && nodeRequestsError === null && canManageNodes && shownRequestsTab === "pending" ? (
+                    pendingRequests.length === 0 ? (
+                      <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyPending")}</p>
+                    ) : (
+                      <>
+                        <p className="mb-3 text-[11px] leading-5 text-zinc-500">{t("nodeRequests.editHint")}</p>
+                        <ul className="space-y-3">
+                          {pendingRequests.map((request) => {
+                            const draft = requestDraftOf(request);
+                            const titleEmpty = draft.title.trim() === "";
+                            const acting = actingRequestId === request.id;
+                            const rejecting = rejectingRequestId === request.id;
+                            return (
+                              <li
+                                key={request.id}
+                                data-node-request-item={request.id}
+                                data-node-request-status={request.status}
+                                className="rounded-xl border border-zinc-200 bg-white px-3 py-3 text-xs"
+                              >
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                  <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">
+                                    {stageText(locale, stageNameOf(request.stageKey))}
+                                  </span>
+                                  <span className="text-[11px] text-zinc-500">
+                                    {t("nodeRequests.requestedBy", { name: request.requestedByName ?? "—" })}
+                                  </span>
+                                  <span className="text-[11px] text-zinc-500">
+                                    {"· " + t("nodeRequests.submittedAt", { time: formatDateTime(request.requestedAt) })}
+                                  </span>
+                                  <span className="ml-auto text-[11px] text-zinc-400">
+                                    {t("nodeRequests.sourceProject", { name: sourceProjectLabel(request) })}
+                                  </span>
+                                </div>
+                                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                  <input
+                                    type="text"
+                                    value={draft.title}
+                                    onChange={(event) => { patchRequestDraft(request, { title: event.currentTarget.value }); }}
+                                    placeholder={t("import.nodes.requestName")}
+                                    aria-label={t("import.nodes.requestName") + " · " + request.title}
+                                    maxLength={200}
+                                    className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+                                    data-node-request-title={request.id}
+                                  />
+                                  <input
+                                    type="text"
+                                    value={draft.titleEn}
+                                    onChange={(event) => { patchRequestDraft(request, { titleEn: event.currentTarget.value }); }}
+                                    placeholder={t("import.nodes.requestNameEn")}
+                                    aria-label={t("import.nodes.requestNameEn") + " · " + request.title}
+                                    maxLength={200}
+                                    className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+                                    data-node-request-title-en={request.id}
+                                  />
+                                </div>
+                                {!titleEmpty ? null : (
+                                  <p className="mt-1 text-[11px] text-rose-600">{t("import.nodes.requestNameRequired")}</p>
+                                )}
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={acting || titleEmpty}
+                                    onClick={() => { approveRequest(request); }}
+                                    data-node-request-approve={request.id}
+                                    className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                                  >
+                                    {t("nodeRequests.approve")}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={acting}
+                                    onClick={() => {
+                                      setRejectingRequestId(rejecting ? null : request.id);
+                                      setRejectReason("");
+                                    }}
+                                    data-node-request-reject={request.id}
+                                    className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {t("nodeRequests.reject")}
+                                  </button>
+                                  {!acting ? null : <span className="text-[11px] text-zinc-400">{t("common.saving")}</span>}
+                                </div>
+                                {!rejecting ? null : (
+                                  <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-2.5">
+                                    <label
+                                      className="block text-[11px] font-medium text-zinc-600"
+                                      htmlFor={"node-request-reject-" + request.id}
+                                    >
+                                      {t("nodeRequests.rejectReason")}
+                                    </label>
+                                    <input
+                                      id={"node-request-reject-" + request.id}
+                                      type="text"
+                                      value={rejectReason}
+                                      onChange={(event) => { setRejectReason(event.currentTarget.value); }}
+                                      placeholder={t("nodeRequests.rejectPlaceholder")}
+                                      aria-label={t("nodeRequests.rejectReason")}
+                                      maxLength={200}
+                                      className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+                                      data-node-request-reject-reason={request.id}
+                                    />
+                                    <div className="mt-2 flex items-center justify-end gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => { setRejectingRequestId(null); setRejectReason(""); }}
+                                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50"
+                                      >
+                                        {t("common.cancel")}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={acting || rejectReason.trim() === ""}
+                                        onClick={() => { rejectRequest(request); }}
+                                        data-node-request-reject-confirm={request.id}
+                                        className="rounded-md bg-rose-500 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-rose-600 disabled:cursor-not-allowed disabled:bg-rose-200"
+                                      >
+                                        {t("nodeRequests.reject")}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </>
+                    )
+                  ) : null}
+
+                  {!nodeRequestsLoading && nodeRequestsError === null && shownRequestsTab === "mine" ? (
+                    myRequests.length === 0 ? (
+                      <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyMine")}</p>
+                    ) : (
+                      <ul className="space-y-3">
+                        {myRequests.map((request) => (
+                          <li
+                            key={request.id}
+                            data-node-request-item={request.id}
+                            data-node-request-status={request.status}
+                            className="rounded-xl border border-zinc-200 bg-white px-3 py-3 text-xs"
+                          >
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">
+                                {stageText(locale, stageNameOf(request.stageKey))}
+                              </span>
+                              <span className="min-w-0 font-medium text-zinc-800">
+                                {request.title}
+                                {request.titleEn === null || request.titleEn === "" ? "" : " · " + request.titleEn}
+                              </span>
+                              <span
+                                className={"ml-auto rounded-md border px-1.5 py-0.5 text-[11px] font-medium " + NODE_REQUEST_STATUS_STYLE[request.status]}
+                                data-node-request-status-badge={request.status}
+                              >
+                                {t(NODE_REQUEST_STATUS_KEY[request.status])}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[11px] text-zinc-500">
+                              {t("nodeRequests.submittedAt", { time: formatDateTime(request.requestedAt) })}
+                              {" · "}
+                              {t("nodeRequests.sourceProject", { name: sourceProjectLabel(request) })}
+                            </p>
+                            {request.reviewNote === null || request.reviewNote === "" ? null : (
+                              <p className="mt-1 text-[11px] text-zinc-600">
+                                {(request.status === "rejected" ? t("nodeRequests.rejectReason") : t("nodeRequests.reviewNote")) +
+                                  " · " +
+                                  request.reviewNote}
+                              </p>
+                            )}
+                            {request.status !== "pending" ? null : (
+                              <div className="mt-2 flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={actingRequestId !== null}
+                                  onClick={() => { withdrawRequest(request); }}
+                                  data-node-request-withdraw={request.id}
+                                  className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {t("nodeRequests.withdraw")}
+                                </button>
+                              </div>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
           {newTemplateVisibilityOpen ? (
             <div
               className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/30 px-4 backdrop-blur-[2px]"
@@ -1576,6 +2165,15 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
               kind="error"
               text={templateNotice}
               onClose={() => { setTemplateNotice(null); }}
+            />
+          )}
+          {/* 申请审核 / 撤销的结果提示（成功与失败同一位置；通过时区分「新建」与「已关联同名节点」） */}
+          {nodeRequestNotice === null ? null : (
+            <Toast
+              kind={nodeRequestNotice.kind}
+              text={nodeRequestNotice.text}
+              onClose={() => { setNodeRequestNotice(null); }}
+              anchor={{ name: "data-node-request-notice", value: nodeRequestNotice.kind }}
             />
           )}
         </main>

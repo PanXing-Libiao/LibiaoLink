@@ -1,5 +1,7 @@
 import { z } from "../zod.ts";
 import { DateTimeSchema, UuidSchema } from "../common/conventions.ts";
+import { StageKeySchema } from "../common/dicts.ts";
+import { TaskNodeRequestStatusSchema } from "./templates.ts";
 
 /**
  * 导入表导入（直连 API 导入 · 业务口径 2026-10-14；前端 Push 316 已接线，服务端本次落地）：
@@ -201,6 +203,17 @@ export const ProjectImportCommitBodySchema = z
       key: z.string().min(1).max(80),
       taskIndex: z.number().int().min(0),
     })).max(2000).optional(),
+    nodeRequests: z
+      .array(
+        z.object({
+          groupIndex: z.number().int().min(0).openapi({ description: "预览 nodes[] 的分组下标（必须是保留 Excel 原名的阶段内节点）" }),
+          title: z.string().min(1).max(200).optional().openapi({ description: "申请的中文名（缺省 = 源表原名）" }),
+          titleEn: z.string().max(200).nullable().optional().openapi({ description: "申请的英文名（缺省 = 预览补全的英文；可空）" }),
+        }),
+      )
+      .max(2000)
+      .optional()
+      .openapi({ description: "公共节点申请：随导入同一事务提交，管理员审核通过后才进公共节点库（不阻塞导入）" }),
     addMissingNodes: z
       .boolean()
       .default(false)
@@ -236,6 +249,18 @@ export const ProjectImportResultSchema = z
     code: z.string().min(1).max(64),
     name: z.string().min(1).max(200),
     counts: ImportResultCountsSchema,
+    nodeRequests: z
+      .array(
+        z.object({
+          id: UuidSchema,
+          stageKey: StageKeySchema,
+          title: z.string(),
+          status: TaskNodeRequestStatusSchema,
+        }),
+      )
+      .max(2000)
+      .default([])
+      .openapi({ description: "本次随导入提交的公共节点申请（含已存在同名待审申请而合并的；前端在完成页提示「等待管理员审核」）" }),
     manualTargets: z
       .array(ImportManualTargetSchema)
       .max(2000)

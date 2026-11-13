@@ -34,6 +34,9 @@ import { useFocusTrap } from "./useFocusTrap";
  * 干系人（Push 324）：「干系人」表随导入落台账。
  * 手动文件就地补传（Push 396）：预览清单每行可选本地文件，确认导入后按提交结果的任务 / 变更目标一并直传；失败可重试。
  * 加载文案（业务口径 2026-10-14「项目在导入那个时间改成预计要多久」）：加载态从「已用 N 秒」改「还需要多长时间：N 秒」，并按墙钟已用时间每秒递减；文案口径「还需要  N 秒」（未完成前保底 1 秒）。
+ * 公共节点申请（业务口径 2026-11-13「给一个申请的渠道，那边能够申请加入公共，然后让管理员审核」）：
+ * 保留 Excel 原名的阶段内节点可以顺带申请加入公共节点库（与个人模板互相独立）；申请不改节点库、不阻塞导入，
+ * 管理员在任务模板页审核通过后才落公共节点；完成页复述本次提交的申请条数与前几条名称。
  */
 
 /** 一个补充附件未完成（上传失败，或已上传但变更回挂失败）。 */
@@ -290,6 +293,12 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   const [projectType, setProjectType] = useState("");
   const [nodeChoices, setNodeChoices] = useState<Record<number, string>>({});
   const [personalTemplateChoices, setPersonalTemplateChoices] = useState<Record<number, string>>({});
+  /**
+   * 「申请加入公共节点库」逐行状态（键 = groupIndex）：只对「保留 Excel 原名」的阶段内节点有效。
+   * 缺省值现算（中文名 = 源表原名、英文名 = 预览补全值），所以用户没动过就不用往 state 里塞副本；
+   * 与个人模板互相独立（两者可同时选）。申请本身不改节点库，导入后由管理员审核。
+   */
+  const [nodeRequestChoices, setNodeRequestChoices] = useState<Record<number, { on: boolean; title: string; titleEn: string }>>({});
   const [selectedNodeCategory, setSelectedNodeCategory] = useState<NodeCategory | null>(null);
   const nodeTabId = useId();
   const [nodePickerIndex, setNodePickerIndex] = useState<number | null>(null);
@@ -326,6 +335,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
       setProjectType("");
       setNodeChoices({});
       setPersonalTemplateChoices({});
+      setNodeRequestChoices({});
       setSelectedNodeCategory(null);
       setNodePickerIndex(null);
       setNodeQuery("");
@@ -455,6 +465,15 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     const selectedFiles: ManualUploadItem[] = preview.imagesManual
       .filter((image) => manualSelections[image.id] !== undefined)
       .map((image) => ({ id: image.id, name: manualSelections[image.id]!.name, file: manualSelections[image.id]!, fileId: null }));
+    // 公共节点申请：只取「阶段内 + 保留 Excel 原名 + 开关打开」的行；英文名空串按「无英文」传 null
+    // （缺省不传会被服务端当成「用预览补全的英文」，明确清空必须显式 null）。
+    const nodeRequestsInput = preview.nodes
+      .filter((node) => node.inStageScope && nodeChoice(node) === "standalone" && nodeRequestOf(node).on)
+      .map((node) => {
+        const state = nodeRequestOf(node);
+        const titleEn = state.titleEn.trim();
+        return { groupIndex: node.groupIndex, title: state.title.trim(), titleEn: titleEn === "" ? null : titleEn };
+      });
     setPhase({ kind: "committing", preview });
     commitProjectImport(
       {
@@ -472,6 +491,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
           return template === undefined || nodeChoice(node) !== "standalone" ? [] :
             [{ groupIndex: node.groupIndex, templateId: template.id, version: template.version }];
         }),
+        nodeRequests: nodeRequestsInput,
         conflictChoices: conflicts.map(([key]) => ({ key, taskIndex: conflictChoices[key]! })),
       },
       controller.signal,
@@ -533,6 +553,16 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     if (selected.id === node.libraryId) return node.nameEn;
     return selected.title.replace(/\s+/g, "").toLowerCase() === node.name.replace(/\s+/g, "").toLowerCase() ? node.sourceNameEn : null;
   };
+  /** 某行的申请状态（没动过 = 关；中文名缺省源表原名、英文名缺省预览补全值）。 */
+  const nodeRequestOf = (node: ImportTaskNode): { on: boolean; title: string; titleEn: string } =>
+    nodeRequestChoices[node.groupIndex] ?? { on: false, title: node.name, titleEn: nodeEnglish(node) ?? "" };
+  /** 改一行申请状态（开关 / 中英文名）：先把缺省值固化下来再打补丁，避免输入框中途「回跳」到默认值。 */
+  const updateNodeRequest = (node: ImportTaskNode, patch: Partial<{ on: boolean; title: string; titleEn: string }>): void => {
+    setNodeRequestChoices((current) => ({
+      ...current,
+      [node.groupIndex]: { ...(current[node.groupIndex] ?? { on: false, title: node.name, titleEn: nodeEnglish(node) ?? "" }), ...patch },
+    }));
+  };
   const scopedNodes = preview?.nodes.filter((node) => node.inStageScope) ?? [];
   const reviewNodes = scopedNodes.filter((node) => node.matchKind === "uncertain" && nodeChoice(node) === "");
   const newNodes = scopedNodes.filter((node) => node.matchKind === "new");
@@ -565,8 +595,13 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     conflictBuckets.set(key, bucket);
   }
   const conflicts = [...conflictBuckets.entries()].filter(([, bucket]) => bucket.tasks.length > 1);
+  /** 打开了公共节点申请、但中文名还空着的行（服务端 title 必填：这一行必须补全才能提交）。 */
+  const requestNodesMissingName = scopedNodes.filter(
+    (node) => nodeChoice(node) === "standalone" && nodeRequestOf(node).on && nodeRequestOf(node).title.trim() === "",
+  );
   const canCommit = phase.kind === "preview" && blockingCount === 0 && region !== "" && reviewNodes.length === 0 &&
     aiMatchedNodes.every((node) => nodeChoice(node) !== "") &&
+    requestNodesMissingName.length === 0 &&
     conflicts.every(([key, bucket]) => bucket.tasks.some((task) => task.index === conflictChoices[key]));
   const selectedManualCount = preview === null ? 0 : preview.imagesManual.filter((image) => manualSelections[image.id] !== undefined).length;
   const doneManualPending =
@@ -600,7 +635,15 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
       setSelectedNodeCategory("manual");
     }
     setNodeChoices((current) => ({ ...current, [node.groupIndex]: choice }));
-    if (choice !== "standalone") setPersonalTemplateChoices((current) => ({ ...current, [node.groupIndex]: "" }));
+    if (choice !== "standalone") {
+      setPersonalTemplateChoices((current) => ({ ...current, [node.groupIndex]: "" }));
+      // 改选「已有节点」= 这行不再保留 Excel 原名，申请也就没有对象了（开关 / 名称一并作废，回到默认值）
+      setNodeRequestChoices((current) => {
+        const next = { ...current };
+        delete next[node.groupIndex];
+        return next;
+      });
+    }
     setConflictChoices({});
     setNodePickerIndex(null);
     setNodeQuery("");
@@ -614,6 +657,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
           : undefined;
         const suggested = node.matchKind === "semantic" ? preview?.nodeLibrary.find((item) => item.id === node.libraryId) : undefined;
         const personalTemplates = (preview?.personalTemplates ?? []).filter((item) => item.stageKey === node.stageKey);
+        const request = nodeRequestOf(node);
         const pickerOpen = nodePickerIndex === node.groupIndex;
         const query = nodeQuery.trim().toLocaleLowerCase();
         const stageNodes = pickerOpen ? (preview?.nodeLibrary ?? []).filter((item) => item.stageKey === node.stageKey) : [];
@@ -677,6 +721,51 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                     />
                   </div>
                 )}
+                {/* 公共节点申请（业务口径 2026-11-13「给一个申请的渠道，让管理员审核」）：与个人模板互相独立，可以同时选；
+                    申请本身不写节点库、也不影响本次导入 —— 审核通过前进公共节点库，不通过就仍按 Excel 原名导入。
+                    中英文名就地可改：中文名空着时提交按钮禁用（服务端 title 必填）。 */}
+                <div className="mt-3 border-t border-zinc-100 pt-3">
+                  <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-700">
+                    <input
+                      type="checkbox"
+                      checked={request.on}
+                      onChange={(event) => updateNodeRequest(node, { on: event.currentTarget.checked })}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-zinc-300 accent-zinc-800"
+                      data-import-request-node={node.groupIndex}
+                    />
+                    {t("import.nodes.requestTitle")}
+                  </label>
+                  <p className="mt-1 text-[11px] leading-5 text-zinc-500">{t("import.nodes.requestHint")}</p>
+                  {request.on ? (
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <input
+                        type="text"
+                        value={request.title}
+                        onChange={(event) => updateNodeRequest(node, { title: event.currentTarget.value })}
+                        placeholder={t("import.nodes.requestName")}
+                        aria-label={t("import.nodes.requestName") + " · " + node.name}
+                        maxLength={200}
+                        className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+                        data-import-request-title={node.groupIndex}
+                      />
+                      <input
+                        type="text"
+                        value={request.titleEn}
+                        onChange={(event) => updateNodeRequest(node, { titleEn: event.currentTarget.value })}
+                        placeholder={t("import.nodes.requestNameEn")}
+                        aria-label={t("import.nodes.requestNameEn") + " · " + node.name}
+                        maxLength={200}
+                        className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+                        data-import-request-title-en={node.groupIndex}
+                      />
+                    </div>
+                  ) : null}
+                  {request.on && request.title.trim() === "" ? (
+                    <p className="mt-1 text-[11px] text-rose-600" data-import-request-name-error={node.groupIndex}>
+                      {t("import.nodes.requestNameRequired")}
+                    </p>
+                  ) : null}
+                </div>
               </div>
             )}
             {node.matchKind !== "uncertain" || !pickerOpen ? null : (
@@ -1187,6 +1276,22 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                   </p>
                 )}
               </div>
+
+              {phase.result.nodeRequests === undefined || phase.result.nodeRequests.length === 0 ? null : (
+                <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-5" data-import-done-node-requests="">
+                  <h3 className="text-sm font-semibold text-zinc-900">
+                    {t("import.done.nodeRequests", { n: phase.result.nodeRequests.length })}
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-zinc-600">
+                    <span>{phase.result.nodeRequests.slice(0, 5).map((request) => request.title).join("、")}</span>
+                    {phase.result.nodeRequests.length > 5 ? (
+                      <span className="ml-1 text-zinc-500">
+                        {t("import.done.nodeRequestsMore", { n: phase.result.nodeRequests.length })}
+                      </span>
+                    ) : null}
+                  </p>
+                </section>
+              )}
 
               {phase.result.issues.length === 0 ? null : (
                 <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-5" data-import-done-issues="">

@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import { check, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./identity.js";
+import { projects } from "./projects.js";
+import { projectImportPreviews } from "./imports.js";
 import { STAGE_KEYS, sqlValueList } from "./literals.js";
 
 /**
@@ -63,6 +65,54 @@ export const taskNodes = pgTable(
     check("ck_task_nodes_seq", sql`${table.seq} > 0`),
     check("ck_task_nodes_title", sql`char_length(btrim(${table.title})) between 1 and 200`),
     check("ck_task_nodes_version", sql`${table.version} >= 0`),
+  ],
+);
+
+/**
+ * task_node_requests（0095 · 2026-11-13）：公共任务节点申请 —— 导入侧发起、节点库维护侧审核。
+ * 申请本身不写 task_nodes；审核通过时才按同阶段同名判重建公共节点（已有同名则直接关联）。
+ * 同阶段同名只允许一条 pending（部分唯一索引）；状态机 pending → approved / rejected / withdrawn 不可回退。
+ */
+export const taskNodeRequests = pgTable(
+  "task_node_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    stageKey: text("stage_key").notNull(),
+    title: text("title").notNull(),
+    titleEn: text("title_en"),
+    status: text("status").notNull().default("pending"),
+    requestedBy: uuid("requested_by").notNull().references(() => users.id),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
+    sourcePreviewId: uuid("source_preview_id").references(() => projectImportPreviews.id, { onDelete: "set null" }),
+    reviewedBy: uuid("reviewed_by").references(() => users.id),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewNote: text("review_note"),
+    nodeId: uuid("node_id").references(() => taskNodes.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("uq_task_node_requests_pending_title")
+      .on(table.stageKey, table.title)
+      .where(sql`status = 'pending'`),
+    index("ix_task_node_requests_status").on(table.status, table.requestedAt, table.id),
+    index("ix_task_node_requests_requester").on(table.requestedBy, table.requestedAt, table.id),
+    index("ix_task_node_requests_node").on(table.nodeId).where(sql`node_id is not null`),
+    check("ck_task_node_requests_stage_key", sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`),
+    check("ck_task_node_requests_status", sql`${table.status} in ('pending', 'approved', 'rejected', 'withdrawn')`),
+    check("ck_task_node_requests_title", sql`char_length(btrim(${table.title})) between 1 and 200`),
+    check(
+      "ck_task_node_requests_title_en",
+      sql`${table.titleEn} is null or char_length(btrim(${table.titleEn})) between 1 and 200`,
+    ),
+    check(
+      "ck_task_node_requests_node_source",
+      sql`(${table.status} = 'pending' and ${table.reviewedBy} is null and ${table.reviewedAt} is null and ${table.reviewNote} is null and ${table.nodeId} is null)
+        or (${table.status} = 'approved' and ${table.reviewedBy} is not null and ${table.reviewedAt} is not null and ${table.nodeId} is not null)
+        or (${table.status} = 'rejected' and ${table.reviewedBy} is not null and ${table.reviewedAt} is not null and ${table.reviewNote} is not null and ${table.nodeId} is null)
+        or (${table.status} = 'withdrawn' and ${table.reviewedBy} is null and ${table.reviewedAt} is null and ${table.nodeId} is null)`,
+    ),
   ],
 );
 

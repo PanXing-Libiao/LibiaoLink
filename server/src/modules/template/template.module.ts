@@ -3,6 +3,9 @@ import { AdminModule } from "../admin/index.js";
 import { IdentityModule } from "../identity/index.js";
 import { PermissionModule } from "../permission/index.js";
 import { TaskNodeRepository } from "./task-node.repository.js";
+import { TaskNodeRequestController } from "./task-node-request.controller.js";
+import { TaskNodeRequestRepository } from "./task-node-request.repository.js";
+import { TaskNodeRequestService } from "./task-node-request.service.js";
 import { TaskTemplateController } from "./task-template.controller.js";
 import { TaskTemplateRepository } from "./template.repository.js";
 import { TemplateController } from "./template.controller.js";
@@ -17,8 +20,14 @@ import { TemplateService } from "./template.service.js";
  */
 @Module({
   imports: [IdentityModule, PermissionModule, AdminModule],
-  controllers: [TemplateController, TaskTemplateController],
-  providers: [TaskNodeRepository, TaskTemplateRepository, TemplateService],
-  exports: [TemplateService, TaskNodeRepository],
+  controllers: [TemplateController, TaskTemplateController, TaskNodeRequestController],
+  providers: [
+    TaskNodeRepository,
+    TaskNodeRequestRepository,
+    TaskNodeRequestService,
+    TaskTemplateRepository,
+    TemplateService,
+  ],
+  exports: [TemplateService, TaskNodeRepository, TaskNodeRequestService],
 })
 export class TemplateModule {}

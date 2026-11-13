@@ -11,6 +11,7 @@
  * 字段面 = 前端消费面；正式契约由后端落 shared/src/modules/imports.ts（见《前端功能需求》§3.9）。
  */
 import { apiRequest, apiSend } from "./api";
+import type { TaskNodeRequestStatus } from "./templateApi";
 
 /** 提醒等级：error = 阻断（处理完才能导入）；warning = 照原值导入只提示；info = 口径说明。 */
 export type ImportIssueLevel = "error" | "warning" | "info";
@@ -106,6 +107,12 @@ export type ProjectImportCommitInput = {
   addMissingNodes?: false;
   nodeDecisions?: Array<{ groupIndex: number; action: "existing" | "standalone"; nodeId: string | null }>;
   personalTemplateSelections?: Array<{ groupIndex: number; templateId: string; version: number }>;
+  /**
+   * 公共节点申请（可选）：只允许对「保留 Excel 原名」的阶段内节点提交，同一 groupIndex 只能出现一次。
+   * title 缺省 = 源表原名；titleEn 缺省 = 预览补全的英文；显式 null = 无英文。
+   * 申请与导入同一事务提交 —— 申请失败不影响项目写入，反之亦然（整批回滚）。
+   */
+  nodeRequests?: Array<{ groupIndex: number; title?: string; titleEn?: string | null }>;
   conflictChoices?: Array<{ key: string; taskIndex: number }>;
 };
 
@@ -134,6 +141,8 @@ export type ProjectImportResult = {
   };
   /** 手动文件落位目标（与预览 imagesManual 同序；旧服务端缺省 = 空数组）。 */
   manualTargets?: ImportManualTarget[];
+  /** 本次随导入提交的公共节点申请（含合并到同名待审申请的；旧服务端缺省 = 空数组）。完成页据此提示「等待管理员审核」。 */
+  nodeRequests?: Array<{ id: string; stageKey: string; title: string; status: TaskNodeRequestStatus }>;
   issues: ImportIssue[];
 };
 

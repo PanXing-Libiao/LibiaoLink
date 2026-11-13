@@ -2881,6 +2881,282 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/task-node-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 公共任务节点申请列表（审核人看全部；本人视角只看自己） */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 按阶段过滤；缺省 = 全部阶段 */
+                    stage?: components["schemas"]["StageKey"] & unknown;
+                    /** @description 按状态过滤；缺省 = 全部状态 */
+                    status?: components["schemas"]["TaskNodeRequestStatus"] & unknown;
+                    /** @description true = 只看本人申请（任何登录账号可用）；false / 缺省 = 审核人视角看全部申请（需节点库维护权） */
+                    mine?: "true" | "false";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 申请列表 + 待审条数 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskNodeRequestListResponse"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/task-node-requests/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 通过公共节点申请（可先改中英文名；同阶段已有同名节点则直接关联） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskNodeRequestApproveBody"];
+                };
+            };
+            responses: {
+                /** @description 审核结果（含创建或关联到的节点） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskNodeRequestDecisionResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/task-node-requests/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 驳回公共节点申请（原因必填，申请人可见） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskNodeRequestRejectBody"];
+                };
+            };
+            responses: {
+                /** @description 驳回结果 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskNodeRequestDecisionResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/task-node-requests/{id}/withdraw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 撤销本人的待审申请（仅 pending 可撤销） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 撤销结果 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskNodeRequestDecisionResponse"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/task-templates": {
         parameters: {
             query?: never;
@@ -11010,10 +11286,10 @@ export interface components {
             windowId: number | null;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24） / ai_model_provider 模型服务（对象 id = 服务 id；不记录密钥）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_node_request 公共任务节点申请（对象 id = 申请 id；导入侧提交不单独留痕，审核通过 / 驳回 / 申请人撤销写审计） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24） / ai_model_provider 模型服务（对象 id = 服务 id；不记录密钥）
          * @enum {string}
          */
-        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user" | "wecom_dm_binding" | "automation_rule" | "notify_delivery" | "group_access_rule" | "group_access_admin" | "ai_model_provider";
+        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_node_request" | "task_template" | "user" | "wecom_dm_binding" | "automation_rule" | "notify_delivery" | "group_access_rule" | "group_access_admin" | "ai_model_provider";
         /**
          * @description 审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）
          * @enum {string}
@@ -13447,6 +13723,15 @@ export interface components {
                 key: string;
                 taskIndex: number;
             }[];
+            /** @description 公共节点申请：随导入同一事务提交，管理员审核通过后才进公共节点库（不阻塞导入） */
+            nodeRequests?: {
+                /** @description 预览 nodes[] 的分组下标（必须是保留 Excel 原名的阶段内节点） */
+                groupIndex: number;
+                /** @description 申请的中文名（缺省 = 源表原名） */
+                title?: string;
+                /** @description 申请的英文名（缺省 = 预览补全的英文；可空） */
+                titleEn?: string | null;
+            }[];
             /**
              * @description 已停用，仅兼容旧客户端；不再通过此字段新增公共节点
              * @default false
@@ -13484,6 +13769,16 @@ export interface components {
             code: string;
             name: string;
             counts: components["schemas"]["ImportResultCounts"];
+            /**
+             * @description 本次随导入提交的公共节点申请（含已存在同名待审申请而合并的；前端在完成页提示「等待管理员审核」）
+             * @default []
+             */
+            nodeRequests: {
+                id: components["schemas"]["Uuid"];
+                stageKey: components["schemas"]["StageKey"];
+                title: string;
+                status: components["schemas"]["TaskNodeRequestStatus"];
+            }[];
             /**
              * @description 手动文件落位目标（与预览 imagesManual 同序；前端据此在导入后一并上传）
              * @default []
@@ -14160,6 +14455,74 @@ export interface components {
             items: components["schemas"]["TaskNode"][];
             total: number;
         };
+        /** @description 公共任务节点申请（导入侧发起，节点库维护侧审核） */
+        TaskNodeRequest: {
+            id: components["schemas"]["Uuid"];
+            stageKey: components["schemas"]["StageKey"];
+            /**
+             * @description 申请加入公共节点库的中文名（申请时 = 源表原名，审核通过时按审核人口径定稿）
+             * @example 货架复检
+             */
+            title: string;
+            /** @description 申请的英文名（可空；审核通过时按审核人口径定稿） */
+            titleEn: string | null;
+            status: components["schemas"]["TaskNodeRequestStatus"];
+            requestedBy: components["schemas"]["Uuid"];
+            /** @description 申请人显示名（users.display_name） */
+            requestedByName: string | null;
+            requestedAt: components["schemas"]["DateTime"];
+            projectId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 来源项目编号（读面冗余，方便审核人判断上下文） */
+            projectCode: string | null;
+            projectName: string | null;
+            reviewedBy: components["schemas"]["Uuid"] & (string | null);
+            reviewedByName: string | null;
+            reviewedAt: components["schemas"]["DateTime"] & (string | null);
+            /** @description 审核意见（驳回原因必填；通过时可空） */
+            reviewNote: string | null;
+            nodeId: components["schemas"]["Uuid"] & (string | null);
+            createdAt: components["schemas"]["DateTime"];
+            updatedAt: components["schemas"]["DateTime"];
+        };
+        /** @description 通过公共节点申请（可改中英文名后建节点） */
+        TaskNodeRequestApproveBody: {
+            /**
+             * @description 定稿中文名（缺省 = 申请时的名称）
+             * @example 货架复检
+             */
+            title?: string;
+            /** @description 定稿英文名（缺省 = 申请时的英文；显式 null = 清空） */
+            titleEn?: string | null;
+            /** @description 审核意见（可空） */
+            note?: string;
+        };
+        /** @description 申请审核 / 撤销结果 */
+        TaskNodeRequestDecisionResponse: {
+            request: components["schemas"]["TaskNodeRequest"];
+            node: components["schemas"]["TaskNode"] & (Record<string, never> | null);
+            /** @description true = 通过时该阶段已有同名公共节点，本次直接关联而未新建 */
+            linkedExisting: boolean;
+        };
+        /** @description 公共节点申请列表 */
+        TaskNodeRequestListResponse: {
+            items: components["schemas"]["TaskNodeRequest"][];
+            total: number;
+            /** @description 当前视角下的待审核条数（审核人 = 全局待审；本人视角 = 本人待审） */
+            pendingCount: number;
+        };
+        /** @description 驳回公共节点申请（原因必填） */
+        TaskNodeRequestRejectBody: {
+            /**
+             * @description 驳回原因（必填；申请人可见）
+             * @example 与现有节点重复，请改用其它名称
+             */
+            reason: string;
+        };
+        /**
+         * @description pending = 待审核；approved = 已通过（已建或已关联公共节点）；rejected = 已驳回；withdrawn = 申请人已撤销
+         * @enum {string}
+         */
+        TaskNodeRequestStatus: "pending" | "approved" | "rejected" | "withdrawn";
         /** @description 编辑任务节点（改名 / 英文名；乐观锁 version 必传） */
         TaskNodeUpdateBody: {
             /**
