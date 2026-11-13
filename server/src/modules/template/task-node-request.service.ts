@@ -27,7 +27,14 @@ function nodeSnapshot(row: TaskNodeRow): Record<string, unknown> {
 }
 
 /** 申请快照（审计字段级留痕口径）：状态 / 名称 / 审核结论 / 最终节点。 */
-function requestSnapshot(row: TaskNodeRequestRow): Record<string, unknown> {
+function requestSnapshot(row: {
+  status: string;
+  stageKey: string;
+  title: string;
+  titleEn: string | null;
+  reviewNote: string | null;
+  nodeId: string | null;
+}): Record<string, unknown> {
   return {
     status: row.status,
     stageKey: row.stageKey,
@@ -157,7 +164,7 @@ export class TaskNodeRequestService {
     await this.permission.assertCanManageTaskNodes(actorId, "审核公共节点申请需要项目经理或管理员权限");
     const at = new Date();
     const outcome = await this.database.db.transaction(async (tx) => {
-      const before = await this.requests.findById(id, tx, true);
+      const before = await this.requests.lockById(id, tx);
       if (before === null) throw new AppError("NOT_FOUND", "公共节点申请不存在：" + id);
       if (before.status !== "pending") {
         throw new AppError("VALIDATION_FAILED", "该申请已处理，请刷新后重试");
@@ -222,7 +229,7 @@ export class TaskNodeRequestService {
     if (reason === "") throw new AppError("VALIDATION_FAILED", "驳回原因不能为空");
     const at = new Date();
     const after = await this.database.db.transaction(async (tx) => {
-      const before = await this.requests.findById(id, tx, true);
+      const before = await this.requests.lockById(id, tx);
       if (before === null) throw new AppError("NOT_FOUND", "公共节点申请不存在：" + id);
       if (before.status !== "pending") {
         throw new AppError("VALIDATION_FAILED", "该申请已处理，请刷新后重试");
@@ -251,7 +258,7 @@ export class TaskNodeRequestService {
   async withdraw(id: string, actorId: string): Promise<TaskNodeRequestDecisionResponse> {
     const at = new Date();
     const after = await this.database.db.transaction(async (tx) => {
-      const before = await this.requests.findById(id, tx, true);
+      const before = await this.requests.lockById(id, tx);
       if (before === null) throw new AppError("NOT_FOUND", "公共节点申请不存在：" + id);
       if (before.requestedBy !== actorId) {
         throw new AppError("FORBIDDEN", "只能撤销本人的申请");

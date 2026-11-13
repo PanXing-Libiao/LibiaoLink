@@ -29,6 +29,9 @@ export interface TaskNodeRequestRow {
   updatedAt: Date;
 }
 
+/** 本表原始行（行锁读取用；不含 join 出来的显示名 / 项目字段）。 */
+export type TaskNodeRequestDbRow = typeof taskNodeRequests.$inferSelect;
+
 export interface TaskNodeRequestListFilter {
   stageKey: string | null;
   status: string | null;
@@ -82,12 +85,28 @@ export class TaskNodeRequestRepository {
     return Number(rows[0]?.value ?? 0);
   }
 
-  /** 单条（审核 / 撤销前读取）；for update = 行锁，保证同一申请不会被两个审核人同时处理。 */
-  async findById(id: string, tx?: DbClient, forUpdate = false): Promise<TaskNodeRequestRow | null> {
+  /** 单条（读面带 join：申请人 / 审核人显示名 + 来源项目）。 */
+  async findById(id: string, tx?: DbClient): Promise<TaskNodeRequestRow | null> {
     const db = tx ?? this.database.db;
-    const query = this.selectRows(db).where(eq(taskNodeRequests.id, id)).limit(1);
-    const rows = forUpdate ? await query.for("update") : await query;
+    const rows = await this.selectRows(db).where(eq(taskNodeRequests.id, id)).limit(1);
     return rows.length === 0 ? null : toRow(rows[0]!);
+  }
+
+  /**
+   * 行锁读取（审核 / 撤销前读取，保证同一申请不会被两个审核人同时处理）。
+   * 只查本表、不带 join —— PostgreSQL 不允许 FOR UPDATE 作用在 outer join 的可空侧
+   * （真机报错：FOR UPDATE cannot be applied to the nullable side of an outer join）；
+   * 需要读面字段时在本行锁之后另取 findById。
+   */
+  async lockById(id: string, tx?: DbClient): Promise<TaskNodeRequestDbRow | null> {
+    const db = tx ?? this.database.db;
+    const rows = await db
+      .select()
+      .from(taskNodeRequests)
+      .where(eq(taskNodeRequests.id, id))
+      .limit(1)
+      .for("update");
+    return rows.length === 0 ? null : rows[0]!;
   }
 
   /** 同阶段同名待审申请（导入内去重：已有待审则复用，不重复插入）。 */

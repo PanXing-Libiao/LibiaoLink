@@ -92,6 +92,11 @@ class FakeRequestRepository {
     return row === undefined ? null : { ...row };
   }
 
+  /** 行锁读取（真库走 SELECT ... FOR UPDATE；替身只按 id 取，字段与服务层用到的本表字段一致）。 */
+  async lockById(id: string): Promise<TaskNodeRequestRow | null> {
+    return this.findById(id);
+  }
+
   async findPendingByTitle(stageKey: string, title: string): Promise<TaskNodeRequestRow | null> {
     const row = this.rows.find((item) => item.stageKey === stageKey && item.title === title && item.status === "pending");
     return row === undefined ? null : { ...row };

@@ -45,6 +45,7 @@
 - **读**：`GET /api/v1/task-node-requests?stage=&status=&mine=` —— `mine=true` 只看本人（任何登录账号，含本人待审数）；缺省 = 审核人视角全部（服务层 `assertCanManageTaskNodes`，无权限 403），响应带全局 `pendingCount`；排序 = pending 优先 → 提交时间倒序。
 - **留痕**：通过 / 驳回 / 撤销各一条审计（`objectType = task_node_request`，`changes` 记状态 / 名称 / 审核意见 / 最终节点）；通过时新建节点另写一条 `task_node` create 审计（`metadata.source = task_node_request` + `requestId`）。**导入内提交申请不单独留痕**（已由导入的 project create 审计覆盖上下文）。不写 outbox。
 - **边界**：申请**不写** `task_nodes`；只通过审核通过这一条路径落公共节点（与直接 `POST /task-nodes` 并存）。不接消息推送（一期只有待审列表与数量角标）。
+- **并发口径（真机复验修正）**：审核 / 撤销前的行锁用 `lockById`（只查 `task_node_requests` 本表 + `FOR UPDATE`）；**不能**在读面带 `LEFT JOIN` 的查询上加 `FOR UPDATE` —— PostgreSQL 直接报 `FOR UPDATE cannot be applied to the nullable side of an outer join`（2026-11-13 本地真库 + 浏览器全链路实测暴露，单测替身无法覆盖）。读面字段在行锁之后另取 `findById`。
 
 ## 验证
 
