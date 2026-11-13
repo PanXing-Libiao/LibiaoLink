@@ -16,7 +16,7 @@ import type { DbClient } from "../src/db/db-client.js";
 import type { AuditRecordInput, AuditService } from "../src/modules/admin/index.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
 import { TemplateService } from "../src/modules/template/template.service.js";
-import type { TaskNodeRepository, TaskNodeRow } from "../src/modules/template/index.js";
+import type { TaskNodeInsertInput, TaskNodeRepository, TaskNodeRow } from "../src/modules/template/index.js";
 import type { TaskTemplateNodeRef, TaskTemplateRepository, TaskTemplateRow, TaskTemplateUpdatePatch } from "../src/modules/template/index.js";
 
 const ACTOR = "11111111-1111-4111-8111-111111111111";
@@ -24,11 +24,13 @@ const TEMPLATE = "55555555-5555-4555-8555-555555555555";
 const OTHER = "66666666-6666-4666-8666-666666666666";
 const OTHER_NODE = "77777777-7777-4777-8777-777777777777";
 const MISSING = "33333333-3333-4333-8333-333333333333";
+const LOCAL_NODE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const AT = new Date("2026-09-24T03:00:00Z");
 
 function makeNode(overrides: Partial<TaskNodeRow> = {}): TaskNodeRow {
   return {
     id: OTHER_NODE,
+    ownerTemplateId: null,
     stageKey: "install",
     seq: 10,
     title: "货架组装",
@@ -58,8 +60,49 @@ function makeTemplate(overrides: Partial<TaskTemplateRow> = {}): TaskTemplateRow
 /** 节点仓库替身：模板用例只用到 listByIds（存在 + 同阶段校验）。 */
 class FakeTaskNodeRepository {
   rows: TaskNodeRow[] = [makeNode()];
+  inserts: TaskNodeInsertInput[] = [];
+  deletedOwned: string[] = [];
+  private counter = 0;
+
   async listByIds(ids: string[]): Promise<TaskNodeRow[]> {
     return this.rows.filter((row) => ids.includes(row.id)).map((row) => ({ ...row }));
+  }
+
+  async findByTitle(stageKey: string, title: string, ownerTemplateId: string | null): Promise<TaskNodeRow | null> {
+    const row = this.rows.find(
+      (item) => item.stageKey === stageKey && item.title === title && item.ownerTemplateId === ownerTemplateId,
+    );
+    return row === undefined ? null : { ...row };
+  }
+
+  async maxOwnerSeq(ownerTemplateId: string): Promise<number> {
+    const values = this.rows
+      .filter((row) => row.ownerTemplateId === ownerTemplateId)
+      .map((row) => row.seq);
+    return values.length === 0 ? 0 : Math.max(...values);
+  }
+
+  async insert(input: TaskNodeInsertInput): Promise<TaskNodeRow> {
+    this.counter += 1;
+    this.inserts.push({ ...input });
+    const row = makeNode({
+      ...input,
+      id: "9999999" + this.counter + "-9999-4999-8999-99999999999" + this.counter,
+      ownerTemplateId: input.ownerTemplateId ?? null,
+    });
+    this.rows.push(row);
+    return { ...row };
+  }
+
+  async deleteUnreferencedOwned(templateId: string, keepIds: string[]): Promise<string[]> {
+    const removed = this.rows.filter(
+      (row) => row.ownerTemplateId === templateId && !keepIds.includes(row.id),
+    );
+    this.rows = this.rows.filter(
+      (row) => row.ownerTemplateId !== templateId || keepIds.includes(row.id),
+    );
+    this.deletedOwned.push(...removed.map((row) => row.id));
+    return removed.map((row) => row.id);
   }
 }
 
@@ -353,6 +396,81 @@ describe("新建模板（写 = taskTemplate.manage）", () => {
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(repo.rows).toHaveLength(1);
     expect(audit.records).toHaveLength(0);
+  });
+});
+
+describe("模板私有节点（不进入公共节点库）", () => {
+  it("新增节点写入 owner_template_id，模板版本不变，审计标记模板范围", async () => {
+    const { service, repo, nodes, audit, permission } = makeService();
+    const created = await service.createTemplateNode(
+      TEMPLATE,
+      { title: " 私有复检 ", titleEn: "Private check" },
+      ACTOR,
+    );
+    expect(permission.lastKey).toBe("taskTemplate.manage");
+    expect(created).toMatchObject({ seq: 10, title: "私有复检", titleEn: "Private check" });
+    expect(nodes.inserts).toHaveLength(1);
+    expect(nodes.inserts[0]).toMatchObject({
+      ownerTemplateId: TEMPLATE,
+      stageKey: "install",
+      seq: 10,
+      title: "私有复检",
+      titleEn: "Private check",
+    });
+    expect(repo.rows[0]?.version).toBe(0);
+    expect(audit.records[0]).toMatchObject({
+      objectType: "task_node",
+      objectId: created.nodeId,
+      metadata: { ownerTemplateId: TEMPLATE, templateId: TEMPLATE, scope: "template" },
+    });
+  });
+
+  it("同一模板内同名 409；公共节点同名不阻止模板私有节点", async () => {
+    const { service, nodes, audit } = makeService();
+    nodes.rows.push(makeNode({ id: LOCAL_NODE, ownerTemplateId: TEMPLATE, title: "私有复检" }));
+    await expect(
+      service.createTemplateNode(TEMPLATE, { title: "私有复检" }, ACTOR),
+    ).rejects.toMatchObject({ code: "NODE_ALREADY_EXISTS" });
+    expect(nodes.inserts).toHaveLength(0);
+    expect(audit.records).toHaveLength(0);
+
+    await expect(
+      service.createTemplateNode(TEMPLATE, { title: "货架组装" }, ACTOR),
+    ).resolves.toMatchObject({ title: "货架组装" });
+    expect(nodes.inserts).toHaveLength(1);
+  });
+
+  it("空白标题 400，不落库不留痕", async () => {
+    const { service, nodes, audit } = makeService();
+    await expect(
+      service.createTemplateNode(TEMPLATE, { title: "   " }, ACTOR),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(nodes.inserts).toHaveLength(0);
+    expect(audit.records).toHaveLength(0);
+  });
+
+  it("保存模板不能引用其它模板的私有节点", async () => {
+    const { service, nodes, repo } = makeService();
+    nodes.rows.push(makeNode({ id: LOCAL_NODE, ownerTemplateId: OTHER, title: "别家私有" }));
+    await expect(
+      service.updateTemplate(TEMPLATE, { nodeIds: [LOCAL_NODE], version: 0 }, ACTOR),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(repo.refs.map((ref) => ref.nodeId)).toEqual([OTHER_NODE]);
+  });
+
+  it("模板保存保留选中私有节点，移除后清理该模板私有行", async () => {
+    const { service, nodes, repo } = makeService();
+    const local = makeNode({ id: LOCAL_NODE, ownerTemplateId: TEMPLATE, title: "私有复检" });
+    nodes.rows.push(local);
+    repo.nodesByRef.set(LOCAL_NODE, { title: local.title, titleEn: local.titleEn });
+
+    const saved = await service.updateTemplate(TEMPLATE, { nodeIds: [OTHER_NODE, LOCAL_NODE], version: 0 }, ACTOR);
+    expect(saved.nodes.map((node) => node.nodeId)).toEqual([OTHER_NODE, LOCAL_NODE]);
+    expect(nodes.deletedOwned).toEqual([]);
+
+    await service.updateTemplate(TEMPLATE, { nodeIds: [OTHER_NODE], version: 1 }, ACTOR);
+    expect(nodes.deletedOwned).toEqual([LOCAL_NODE]);
+    expect(nodes.rows.some((row) => row.id === LOCAL_NODE)).toBe(false);
   });
 });
 

@@ -13,6 +13,7 @@ import { ApiError } from "./api";
 import {
   createStageNode,
   createTaskTemplate,
+  createTemplateStageNode,
   deleteTaskNode,
   deleteTaskTemplate,
   fetchStageNodes,
@@ -288,7 +289,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const [nodesByStage, setNodesByStage] = useState<Record<string, readonly TaskNodeItem[]>>({});
   const [nodesLoading, setNodesLoading] = useState(false);
   const [nodesError, setNodesError] = useState<string | null>(null);
-  /** 取数版本号：新增 / 删除成功后 +1 重取，保证左列与节点库一致。 */
+  /** 公共节点库取数版本号：左侧新增 / 删除成功后 +1；模板内新增私有节点不触发这里。 */
   const [nodesVersion, setNodesVersion] = useState(0);
   const activeNodes = nodesByStage[activeSection] ?? EMPTY_NODE_LIST;
 
@@ -638,7 +639,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const templateErrorMessage = (error: unknown, fallback: string): string =>
     error instanceof ApiError ? templateWriteMessage(error) : fallback;
 
-  /** 打开「新增节点」表单（清空旧输入；同一入口再点一次就收起）。`templateId` = 保存后一并加入哪份模板，null = 只进节点库。 */
+  /** 打开「新增节点」表单（清空旧输入；同一入口再点一次就收起）。`templateId` = 新建该模板私有节点，null = 新建公共节点库节点。 */
   const openCreateForm = (templateId: string | null = null): void => {
     setFormError(null);
     if (nodeForm?.mode === "create" && nodeForm.templateId === templateId) {
@@ -683,26 +684,29 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
     setFormError(null);
     void (async () => {
       try {
-        if (form.mode === "create") {
-          const created = await createStageNode(activeSection, title, formTitleEn.trim());
-          if (form.templateId !== null) {
-            updateTemplates((previous) =>
-              previous.map((entry) =>
-                entry.id === form.templateId && !entry.nodes.some((node) => node.id === created.id)
-                  ? { ...entry, nodes: [...entry.nodes, created] }
-                  : entry,
-              ),
-            );
-          }
+        if (form.mode === "create" && form.templateId !== null) {
+          // 模板内新增 = 模板私有节点：只追加到当前模板草稿，不重取公共节点库。
+          const created = await createTemplateStageNode(form.templateId, title, formTitleEn.trim());
+          updateTemplates((previous) =>
+            previous.map((entry) =>
+              entry.id === form.templateId && !entry.nodes.some((node) => node.id === created.id)
+                ? { ...entry, nodes: [...entry.nodes, created] }
+                : entry,
+            ),
+          );
+        } else if (form.mode === "create") {
+          await createStageNode(activeSection, title, formTitleEn.trim());
         } else {
           await updateStageNode(form.node.id, { title, titleEn: formTitleEn.trim(), version: form.node.version });
         }
         setNodeForm(null);
         setFormTitle("");
         setFormTitleEn("");
-        setNodesVersion((version) => version + 1);
-        // 节点名变了：模板面板里的节点摘要跟着刷新（本地没有未保存改动时才会被覆盖）
-        setTemplatesVersion((version) => version + 1);
+        if (form.mode === "edit" || (form.mode === "create" && form.templateId === null)) {
+          setNodesVersion((version) => version + 1);
+          // 节点名变了：模板面板里的节点摘要跟着刷新（本地没有未保存改动时才会被覆盖）
+          setTemplatesVersion((version) => version + 1);
+        }
       } catch (error) {
         setFormError(nodeErrorMessage(error, form.mode === "create" ? t("tpl.err.nodeCreate") : t("tpl.err.nodeSave")));
       } finally {
@@ -1251,7 +1255,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                             <span aria-label={t("tpl.nodes.selectedAria")} className="shrink-0 text-xs text-zinc-500">
                               {t("tpl.nodes.n", { n: nodeCount })}
                             </span>
-                            {canManageThisTemplate && canManageNodes ? (
+                            {canManageThisTemplate ? (
                               <button
                                 type="button"
                                 data-template-add-node={template.id}

@@ -2,10 +2,11 @@
  * 任务模板仓库（M3-05 余 · 第二段 · 0033）：只读写 task_templates / task_template_nodes 两张表。
  * - 读面恒带 `deleted_at is null`（软删模板对列表 / 详情 / 写操作一律不可见 → 服务层转 404）；
  * - 模板内节点顺序 = task_template_nodes.seq 升序（全量替换时按 nodeIds 下标重排为 10/20/30…）；
- * - 标题 / 英文名不落模板表：读面 join task_nodes 实时取（节点改名后模板预览随即更新，不存快照）。
+ * - 标题 / 英文名不落模板表：读面 join task_nodes 实时取（节点改名后模板预览随即更新，不存快照）；
+ * - 模板只能引用公共节点，或 owner_template_id = 本模板的私有节点。
  */
 import { Injectable } from "@nestjs/common";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { users } from "../../db/schema/identity.js";
@@ -116,7 +117,13 @@ export class TaskTemplateRepository {
         titleEn: taskNodes.titleEn,
       })
       .from(taskTemplateNodes)
-      .innerJoin(taskNodes, eq(taskNodes.id, taskTemplateNodes.nodeId))
+      .innerJoin(
+        taskNodes,
+        and(
+          eq(taskNodes.id, taskTemplateNodes.nodeId),
+          or(isNull(taskNodes.ownerTemplateId), eq(taskNodes.ownerTemplateId, taskTemplateNodes.templateId)),
+        ),
+      )
       .where(inArray(taskTemplateNodes.templateId, templateIds))
       .orderBy(asc(taskTemplateNodes.templateId), asc(taskTemplateNodes.seq), asc(taskTemplateNodes.nodeId));
     return rows.map((row) => ({

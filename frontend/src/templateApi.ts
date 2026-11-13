@@ -4,6 +4,7 @@
  * - 新增 POST /api/v1/task-nodes（写 = 系统管理员 / 部门编辑账号；同阶段同名 409 NODE_ALREADY_EXISTS）
  * - 编辑 PATCH /api/v1/task-nodes/{id}（写 = 节点库维护权（系统管理员或有效项目经理）；乐观锁 version 必传：过期 409 VERSION_CONFLICT）
  * - 删除 DELETE /api/v1/task-nodes/{id}（写 = blueprint.manage；物理删行 + 审计留痕；已生成的项目任务不受影响）
+ * - 模板内新增 POST /api/v1/task-templates/{id}/nodes（只写当前模板私有节点，不进入公共节点库）
  * 任务模板（第二段 · Push 182）：GET/POST /api/v1/task-templates、PATCH/DELETE /api/v1/task-templates/{id}
  *   —— 写同样 = 模板管理权（新建：管理员或有效项目经理；编辑 / 删除：创建人或管理员）；新建时可选 private（仅自己）/ public（有浏览权的人），
  *      创建后只有填写人本人可随 PATCH 切换可见范围；
@@ -57,6 +58,20 @@ export async function createStageNode(stageName: string, title: string, titleEn:
     titleEn: titleEn.trim() === "" ? null : titleEn,
   });
   return toNodeItem(payload);
+}
+
+/** 在指定模板内新增私有节点；返回值只用于追加当前模板草稿，不进入左侧公共节点库。 */
+export async function createTemplateStageNode(
+  templateId: string,
+  title: string,
+  titleEn: string,
+): Promise<TaskNodeItem> {
+  const payload = await apiSend<{ nodeId: string; seq: number; title: string; titleEn: string | null }>(
+    "/api/v1/task-templates/" + encodeURIComponent(templateId) + "/nodes",
+    "POST",
+    { title, titleEn: titleEn.trim() === "" ? null : titleEn },
+  );
+  return { id: payload.nodeId, title: payload.title, titleEn: payload.titleEn ?? "", version: 0 };
 }
 
 /**
