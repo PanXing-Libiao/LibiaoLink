@@ -38,7 +38,7 @@ function nodeSnapshot(row: TaskNodeRow): Record<string, unknown> {
 /**
  * 任务模板域用例（M3-05 余 · 第一段：任务节点库）。
  * - 读（GET /api/v1/task-nodes）：管理员、有项目数据范围，或至少有一个有效项目关系（经理 / 成员 / 任务负责人）—— 任务模板页左列与「项目总览 → 添加任务」卡片的节点来源；仅登录账号 403；
- * - 写（POST / PATCH / DELETE）：系统管理员，或至少管理一个有效项目的项目经理；
+ * - 写公共节点（POST / PATCH / DELETE）：仅系统管理员；模板内私有节点另随模板编辑权；
  * - 留痕：新增 / 编辑 / 删除各写一条审计（对象类型 task_node；编辑写字段级 changes、删除为物理删行快照进 changes）；不写 outbox（与字典维护同口径）。
  * 第二段（任务模板 TaskTemplate）：读面与节点库相同；新建 = 系统管理员或至少管理一个有效项目的项目经理，编辑 / 删除还要求创建人本人或管理员，留痕 objectType = task_template、不写 outbox；
  * 可见范围：public 对所有具备模板浏览权的账号可见；private 仅填写人本人可见（列表 / 详情 / 从模板生成任务统一过滤）；只有填写人本人可随编辑保存
@@ -472,9 +472,9 @@ export class TemplateService {
     }
   }
 
-  /** 节点库维护：系统管理员，或至少管理一个有效项目的项目经理。 */
+  /** 公共节点库维护：仅系统管理员；模板私有节点不走此闸。 */
   private async assertNodeEditor(actorId: string, action: string): Promise<void> {
-    await this.permission.assertCanManageTaskNodes(actorId, action + "需要项目经理或管理员权限");
+    await this.permission.assertCanManageTaskNodes(actorId, action + "需要系统管理员权限");
   }
 
   /** 公共任务模板维护：系统管理员，或至少管理一个有效项目的项目经理；任务负责人只读。 */

@@ -109,7 +109,7 @@ export const ActorPermissionsSchema = z
     groupAllEdit: z.boolean().optional().openapi({ description: "当前账号是否拥有全部项目编辑权限（字典 / 日历 / 自动化等全局写入口）" }),
     groupOwnEdit: z.boolean().optional().openapi({ description: "当前账号是否拥有自己的项目编辑权限（可用于新建项目）" }),
     groupSelectedEdit: z.boolean().optional().openapi({ description: "当前账号是否拥有指定项目编辑权限" }),
-    taskNodeManage: z.boolean().optional().openapi({ description: "是否可新增 / 编辑 / 删除公共任务节点库：管理员，或至少管理一个未删除项目的项目经理；部门编辑范围不授予" }),
+    taskNodeManage: z.boolean().optional().openapi({ description: "是否可新增 / 编辑 / 删除公共任务节点库：仅系统管理员；项目经理、部门编辑范围与普通成员均不授予" }),
     taskTemplateRead: z.boolean().optional().openapi({ description: "是否可浏览公共任务模板：管理员、有项目数据范围的账号，或至少有一个可浏览有效项目关系（项目经理 / 项目成员 / 任务负责人）" }),
     taskTemplateManage: z.boolean().optional().openapi({ description: "是否可新建公共任务模板：管理员，或至少管理一个未删除项目的项目经理；具体模板的编辑 / 删除还要求当前账号是创建人或管理员" }),
     auditScope: AuditScopeSchema.optional().openapi({ description: "当前账号操作记录可见范围；所有登录账号至少可查看本人记录" }),

@@ -2,7 +2,7 @@
  * 任务节点库 / 任务模板接口封装（M3-05 余 · 第一段接线 + 第二段模板落库）：契约 shared/src/modules/templates.ts。
  * - 列表 GET /api/v1/task-nodes?stage=<九阶段 key>（任务模板页左列与「添加任务」卡片的「任务节点」标签同源）
  * - 新增 POST /api/v1/task-nodes（写 = 系统管理员 / 部门编辑账号；同阶段同名 409 NODE_ALREADY_EXISTS）
- * - 编辑 PATCH /api/v1/task-nodes/{id}（写 = 节点库维护权（系统管理员或有效项目经理）；乐观锁 version 必传：过期 409 VERSION_CONFLICT）
+ * - 编辑 PATCH /api/v1/task-nodes/{id}（写 = 公共节点库维护权（仅系统管理员）；乐观锁 version 必传：过期 409 VERSION_CONFLICT）
  * - 删除 DELETE /api/v1/task-nodes/{id}（写 = blueprint.manage；物理删行 + 审计留痕；已生成的项目任务不受影响）
  * - 模板内新增 POST /api/v1/task-templates/{id}/nodes（只写当前模板私有节点，不进入公共节点库）
  * 任务模板（第二段 · Push 182）：GET/POST /api/v1/task-templates、PATCH/DELETE /api/v1/task-templates/{id}

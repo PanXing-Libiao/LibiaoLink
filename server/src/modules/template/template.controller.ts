@@ -11,7 +11,7 @@ const idParam = new ZodValidationPipe(UuidSchema);
 /**
  * 任务节点库接口（M3-05 余 · 第一段；契约 shared/src/modules/templates.ts · A1-16 / A1-17）。
  * 读 = 管理员、有项目数据范围或至少一个有效项目关系（任务模板页左列 / 「项目总览 → 添加任务」卡片的节点来源）；仅登录账号 403；
- * 写（新增 / 编辑 / 删除）= 服务层 `assertCanManageTaskNodes` 复核（系统管理员或至少管理一个有效项目的项目经理），每次变更写审计留痕。
+ * 写（新增 / 编辑 / 删除）= 服务层 `assertCanManageTaskNodes` 复核（仅系统管理员），每次变更写审计留痕。
  * 删除 = 物理删行（与字典条目硬删同口径，Push 173）；已按该节点生成的项目任务不受影响。
  * 模板（TaskTemplate）的读写随本域第二段落，本控制器暂不含。
  */
