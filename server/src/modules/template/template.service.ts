@@ -40,6 +40,8 @@ function nodeSnapshot(row: TaskNodeRow): Record<string, unknown> {
  * - 写（POST / PATCH / DELETE）：系统管理员，或至少管理一个有效项目的项目经理；
  * - 留痕：新增 / 编辑 / 删除各写一条审计（对象类型 task_node；编辑写字段级 changes、删除为物理删行快照进 changes）；不写 outbox（与字典维护同口径）。
  * 第二段（任务模板 TaskTemplate）：读面与节点库相同；新建 = 系统管理员或至少管理一个有效项目的项目经理，编辑 / 删除还要求创建人本人或管理员，留痕 objectType = task_template、不写 outbox；
+ * 可见范围：public 对所有具备模板浏览权的账号可见；private 仅填写人本人可见（列表 / 详情 / 从模板生成任务统一过滤）；只有填写人本人可随编辑保存
+ * 在 private / public 间切换，管理员也不能调整他人模板或系统预置模板。
  * 差异只有一处 —— 模板删除是**软删**（deleted_at / deleted_by，契约返回 deletedAt），节点库是物理删行。
  */
 @Injectable()
@@ -157,20 +159,23 @@ export class TemplateService {
 
   // ---------- 任务模板（第二段 · A1-16 / A1-17）----------
 
-  /** GET /api/v1/task-templates?stage=：模板列表（登录即可）；缺省全部阶段，排序 = 九阶段 → created_at → id。 */
-  async listTemplates(query: TaskTemplateListQuery): Promise<TaskTemplateListResponse> {
-    const rows = await this.templates.list(query.stage ?? null);
+  /** GET /api/v1/task-templates?stage=：模板列表；public 全员可见，private 仅填写人可见。 */
+  async listTemplates(query: TaskTemplateListQuery, actorId: string): Promise<TaskTemplateListResponse> {
+    const rows = (await this.templates.list(query.stage ?? null)).filter(
+      (row) => row.visibility === "public" || row.createdBy === actorId,
+    );
     const refs = await this.templates.nodeRefsOf(rows.map((row) => row.id));
     const grouped = groupNodeRefs(refs);
     return { items: rows.map((row) => toTemplateContract(row, grouped.get(row.id) ?? [])), total: rows.length };
   }
 
-  /** GET /api/v1/task-templates/{id}：详情（登录即可）；不存在 / 已软删 404。 */
-  async getTemplate(id: string): Promise<TaskTemplate> {
+  /** GET /api/v1/task-templates/{id}：详情；个人模板对非填写人按不存在处理。 */
+  async getTemplate(id: string, actorId: string): Promise<TaskTemplate> {
     const row = await this.templates.findById(id);
     if (row === null) {
       throw new AppError("NOT_FOUND", "任务模板不存在：" + id);
     }
+    this.assertTemplateVisible(row, actorId);
     return toTemplateContract(row, await this.templates.nodeRefsOf([id]));
   }
 
@@ -183,7 +188,10 @@ export class TemplateService {
     const name = normalizeTemplateName(body.name);
     const created = await this.database.db.transaction(async (tx) => {
       await this.assertNodesSameStage(body.stageKey, body.nodeIds, tx);
-      const row = await this.templates.insert({ name, stageKey: body.stageKey, createdBy: actorId }, tx);
+      const row = await this.templates.insert(
+        { name, stageKey: body.stageKey, visibility: body.visibility, createdBy: actorId },
+        tx,
+      );
       await this.templates.replaceNodes(row.id, body.nodeIds, tx);
       const refs = await this.templates.nodeRefsOf([row.id], tx);
       await this.audit.record(tx, {
@@ -193,7 +201,7 @@ export class TemplateService {
         objectId: row.id,
         summary: "新增任务模板：" + stageName(row.stageKey) + " · " + row.name,
         changes: diffRecords({}, templateSnapshot(row, refs)),
-        metadata: { stageKey: row.stageKey, nodeCount: refs.length },
+        metadata: { stageKey: row.stageKey, visibility: row.visibility, createdBy: row.createdBy, nodeCount: refs.length },
       });
       return { row, refs };
     });
@@ -202,7 +210,7 @@ export class TemplateService {
   }
 
   /**
-   * PATCH /api/v1/task-templates/{id}：改名 / 节点全量替换（不动的字段不传；`nodeIds` 传了就整体替换，含增删与重排）。
+   * PATCH /api/v1/task-templates/{id}：改名 / 可见范围 / 节点全量替换（不动的字段不传；`nodeIds` 传了就整体替换，含增删与重排）。
    * 不存在 / 已软删 404；`version` 过期 409 VERSION_CONFLICT；重复 id / 未知节点 / 跨阶段节点 400。
    */
   async updateTemplate(id: string, body: TaskTemplateUpdateBody, actorId: string): Promise<TaskTemplate> {
@@ -213,6 +221,7 @@ export class TemplateService {
       if (before === null) {
         throw new AppError("NOT_FOUND", "任务模板不存在：" + id);
       }
+      this.assertTemplateVisible(before, actorId);
       await this.permission.assertCanManageTaskTemplate(
         actorId,
         before.createdBy,
@@ -222,6 +231,12 @@ export class TemplateService {
       const patch: TaskTemplateUpdatePatch = {};
       if (body.name !== undefined) {
         patch.name = normalizeTemplateName(body.name);
+      }
+      if (body.visibility !== undefined && body.visibility !== before.visibility) {
+        if (before.createdBy === null || before.createdBy !== actorId) {
+          throw new AppError("FORBIDDEN", "仅填写人可以调整模板可见范围");
+        }
+        patch.visibility = body.visibility;
       }
       if (body.nodeIds !== undefined) {
         await this.assertNodesSameStage(before.stageKey, body.nodeIds, tx);
@@ -241,7 +256,7 @@ export class TemplateService {
         objectId: id,
         summary: "编辑任务模板：" + stageName(row.stageKey) + " · " + row.name,
         changes: diffRecords(templateSnapshot(before, beforeRefs), templateSnapshot(row, refs)),
-        metadata: { stageKey: row.stageKey, nodeCount: refs.length },
+        metadata: { stageKey: row.stageKey, visibility: row.visibility, createdBy: row.createdBy, nodeCount: refs.length },
       });
       return { row, refs };
     });
@@ -261,6 +276,7 @@ export class TemplateService {
       if (before === null) {
         throw new AppError("NOT_FOUND", "任务模板不存在：" + id);
       }
+      this.assertTemplateVisible(before, actorId);
       await this.permission.assertCanManageTaskTemplate(
         actorId,
         before.createdBy,
@@ -278,7 +294,7 @@ export class TemplateService {
         objectId: id,
         summary: "删除任务模板：" + stageName(before.stageKey) + " · " + before.name,
         changes: diffRecords(templateSnapshot(before, beforeRefs), {}),
-        metadata: { stageKey: before.stageKey, nodeCount: beforeRefs.length, deletedAt: at.toISOString() },
+        metadata: { stageKey: before.stageKey, visibility: before.visibility, nodeCount: beforeRefs.length, deletedAt: at.toISOString() },
       });
     });
     return { id, deletedAt: at.toISOString() };
@@ -315,6 +331,13 @@ export class TemplateService {
     }
   }
 
+  /** 个人模板仅填写人可见；公共模板对所有已过整体读权限的账号可见。 */
+  private assertTemplateVisible(row: TaskTemplateRow, actorId: string): void {
+    if (row.visibility === "private" && row.createdBy !== actorId) {
+      throw new AppError("NOT_FOUND", "任务模板不存在：" + row.id);
+    }
+  }
+
   /** 节点库维护：系统管理员，或至少管理一个有效项目的项目经理。 */
   private async assertNodeEditor(actorId: string, action: string): Promise<void> {
     await this.permission.assertCanManageTaskNodes(actorId, action + "需要项目经理或管理员权限");
@@ -345,6 +368,7 @@ function toTemplateContract(row: TaskTemplateRow, refs: TaskTemplateNodeRef[]): 
     id: row.id,
     name: row.name,
     stageKey: row.stageKey as TaskTemplate["stageKey"],
+    visibility: row.visibility,
     nodes: refs.map<TaskTemplateNode>((ref) => ({
       nodeId: ref.nodeId,
       seq: ref.seq,
@@ -373,9 +397,9 @@ function groupNodeRefs(refs: TaskTemplateNodeRef[]): Map<string, TaskTemplateNod
   return grouped;
 }
 
-/** 模板快照（审计字段级留痕口径）：名称 + 节点名顺序 —— 改名 / 增删 / 重排都能在 changes 里看出来。 */
+/** 模板快照（审计字段级留痕口径）：名称 + 可见范围 + 节点名顺序。 */
 function templateSnapshot(row: TaskTemplateRow, refs: TaskTemplateNodeRef[]): Record<string, unknown> {
-  return { name: row.name, nodes: refs.map((ref) => ref.title) };
+  return { name: row.name, nodes: refs.map((ref) => ref.title), visibility: row.visibility, createdBy: row.createdBy };
 }
 
 /** 模板名称归一（trim）；trim 后为空 400（契约 min(1) 挡不住全空白）。 */
