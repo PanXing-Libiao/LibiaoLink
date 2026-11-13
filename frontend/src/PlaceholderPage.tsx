@@ -1416,7 +1416,6 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                     <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyPending")}</p>
                   ) : (
                     <>
-                      <p className="mb-3 text-[11px] leading-5 text-zinc-500">{t("nodeRequests.editHint")}</p>
                       <ul className="space-y-3">
                         {pendingRequests.map((request) => {
                           const draft = requestDraftOf(request);

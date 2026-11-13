@@ -3570,10 +3570,6 @@ body {
     white-space: nowrap;
   }
 
-  [data-gantt-help] {
-    display: none !important;
-  }
-
   [data-gantt-scroll] {
     height: min(52rem, calc(100dvh - 20rem)) !important;
     min-height: 20rem !important;
@@ -3714,10 +3710,6 @@ body {
   [data-gantt-toolbar] {
     padding-top: 0.375rem !important;
     padding-bottom: 0.375rem !important;
-  }
-
-  [data-gantt-help] {
-    display: none !important;
   }
 
   [data-gantt-scroll] {

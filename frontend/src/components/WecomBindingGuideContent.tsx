@@ -32,7 +32,6 @@ export function WecomBindingGuideContent(props: {
         </span>
         <div className="min-w-0">
           <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">{t("settings.guide.title")}</h2>
-          <p className="mt-1 text-xs leading-5 text-zinc-500">{t("settings.guide.desc")}</p>
         </div>
       </div>
 

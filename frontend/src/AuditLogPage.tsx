@@ -226,8 +226,11 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
             <div>
               <h1 className="text-lg font-semibold text-zinc-900">操作记录</h1>
               <p className="mt-0.5 text-xs text-zinc-500">
+                {/* 说明文案保持中文-only（本页整体不接 i18n：auditFormat.ts 只做机器口径 → 中文页面口径）。
+                    2026-11-13 文案体检：原先那句把「新增 / 修改 / 删除 / 访问 / 预览 / 下载 / 越权尝试……」全枚举了一遍，
+                    属于自我介绍型废话，收敛成一句口径。 */}
                 {auditScope === "all"
-                  ? "全站关键操作的留痕（新增 / 修改 / 删除 / 访问 / 预览 / 下载 / 越权尝试……），按时间倒序。"
+                  ? "按时间倒序"
                   : auditScope === "project_manager"
                     ? "显示您本人的全部操作，以及由您担任项目经理且当前有权查看的项目的全部操作。"
                     : "仅显示您本人的操作记录，按时间倒序。"}
