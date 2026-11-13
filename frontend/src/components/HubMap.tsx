@@ -360,6 +360,9 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
             ? null
             : (pinnedPillar === null ? activePillar.projects.slice(0, PILLAR_MAX_ROWS) : activePillar.projects).map((project) => {
                 const canOpen = project.accessLevel !== null;
+                const projectName = localize(project.name);
+                const displayName = canOpen ? projectName : "****";
+                const rowLabel = canOpen ? t("hm.openProject", { name: projectName }) : t("hm.overviewOnlyHint");
                 return (
                   <li
                     key={project.id}
@@ -368,8 +371,8 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
                     data-openable={canOpen ? "true" : "false"}
                     role={canOpen ? "button" : undefined}
                     tabIndex={canOpen ? 0 : undefined}
-                    aria-label={canOpen ? t("hm.openProject", { name: localize(project.name) }) : t("hm.overviewOnlyLabel", { name: localize(project.name) })}
-                    title={canOpen ? t("hm.openProject", { name: localize(project.name) }) : t("hm.overviewOnlyHint")}
+                    aria-label={rowLabel}
+                    title={rowLabel}
                     onClick={canOpen ? () => openProject(project.id) : undefined}
                     onKeyDown={canOpen ? (event) => {
                       if (event.key === "Enter" || event.key === " ") {
@@ -379,8 +382,7 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
                     } : undefined}
                   >
                     <span className="hub-map-projects__dot" style={{ background: project.accent }} />
-                    <span className="hub-map-projects__name" title={isLocalizedLocale(locale) ? project.name : undefined}>{localize(project.name)}</span>
-                    {canOpen ? null : <span className="hub-map-projects__restricted-mark" aria-hidden="true">****</span>}
+                    <span className="hub-map-projects__name" title={canOpen && isLocalizedLocale(locale) ? project.name : undefined}>{displayName}</span>
                     <span className="hub-map-projects__status">{projectStatusTextOf(locale, project.status)}</span>
                     {canOpen ? (
                       <span className="hub-map-projects__chevron" aria-hidden="true">›</span>
