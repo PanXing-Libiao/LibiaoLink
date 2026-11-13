@@ -1100,7 +1100,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                     ) : null}
                   </span>
                 </div>
-                {nodeForm !== null && nodeForm.mode === "create" ? renderNodeForm(nodeForm) : null}
+                {nodeForm !== null && nodeForm.mode === "create" && nodeForm.templateId === null ? renderNodeForm(nodeForm) : null}
                 {/* 搜索框：按中 / 英文名过滤左列的节点卡片（切板块时自动清空） */}
                 <div className="relative mb-3">
                   <svg
