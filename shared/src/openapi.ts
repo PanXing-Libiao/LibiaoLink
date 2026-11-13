@@ -16,6 +16,7 @@ import {
   ProjectGroupPutBodySchema,
   ProjectListQuerySchema,
   ProjectListResponseSchema,
+  ProjectMapOverviewResponseSchema,
   ProjectManagerCandidateListSchema,
   ProjectMemberCreateBodySchema,
   ProjectMemberListResponseSchema,
@@ -316,6 +317,17 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     summary: "项目经理候选（有效项目部成员 ∪ 系统管理员；仅启用且未离职）",
     responses: {
       200: { description: "候选名单", ...json(ProjectManagerCandidateListSchema) },
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/map-overview",
+    tags: ["projects"],
+    summary: "蓝图地图项目概况（有项目浏览权即可读取全部未删除项目的最少字段；accessLevel=null 不可进入详情）",
+    responses: {
+      200: { description: "全部未删除项目概况 + 当前账号可否进入详情", ...json(ProjectMapOverviewResponseSchema) },
+      403: commonErrors[403],
     },
   });
 

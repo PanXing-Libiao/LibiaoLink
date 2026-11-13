@@ -9031,6 +9031,75 @@
         ],
         "description": "项目经理候选名单（GET /projects/manager-candidates）"
       },
+      "ProjectMapOverviewItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string",
+            "description": "项目落地地区（字典 region）"
+          },
+          "projectType": {
+            "type": "string",
+            "description": "项目类型（字典 project_type）"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          },
+          "accessLevel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "当前账号对该项目的最终访问级别；null = 仅可在蓝图地图看到概况，进入详情仍返回 404"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "region",
+          "projectType",
+          "status",
+          "accessLevel"
+        ],
+        "description": "蓝图地图项目概况（最小展示字段 + 当前账号是否可进入详情）"
+      },
+      "ProjectMapOverviewResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectMapOverviewItem"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "description": "蓝图地图全部未删除项目概况（不受项目详情可见集裁剪）"
+      },
       "ProjectMember": {
         "type": "object",
         "properties": {
@@ -14118,6 +14187,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProjectManagerCandidateList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/map-overview": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "蓝图地图项目概况（有项目浏览权即可读取全部未删除项目的最少字段；accessLevel=null 不可进入详情）",
+        "responses": {
+          "200": {
+            "description": "全部未删除项目概况 + 当前账号可否进入详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectMapOverviewResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }

@@ -30,6 +30,16 @@ export interface ProjectReferenceRow {
   name: string;
 }
 
+/** 蓝图地图总览行：只取落图与项目梳理所需字段，不加载项目详情。 */
+export interface ProjectMapOverviewRow {
+  id: string;
+  code: string;
+  name: string;
+  region: string;
+  projectType: string;
+  status: string;
+}
+
 export interface ProjectInsertInput {
   /** 显式主键（导入表导入：图片对象键要含 projectId，须在事务前定下项目 id）；缺省 = 库内 defaultRandom()。 */
   id?: string;
@@ -202,6 +212,23 @@ export class ProjectRepository {
       .where(and(eq(projects.id, id), isNull(projects.deletedAt)))
       .limit(1);
     return (rows[0] ?? null) as ProjectReferenceRow | null;
+  }
+
+  /** 蓝图地图总览：全部未删除项目的最少字段；项目级可见性由服务层另行标注。 */
+  async listMapOverview(client: DbClient = this.database.db): Promise<ProjectMapOverviewRow[]> {
+    const rows = await client
+      .select({
+        id: projects.id,
+        code: projects.code,
+        name: projects.name,
+        region: projects.region,
+        projectType: projects.projectType,
+        status: projects.status,
+      })
+      .from(projects)
+      .where(isNull(projects.deletedAt))
+      .orderBy(asc(projects.seqNo), asc(projects.id));
+    return rows as ProjectMapOverviewRow[];
   }
 
   async insert(input: ProjectInsertInput, at: Date, client: DbClient = this.database.db): Promise<ProjectRow> {
