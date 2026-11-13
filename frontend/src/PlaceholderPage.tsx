@@ -37,6 +37,7 @@ import { stageNameOf } from "./taskApi";
 import { replaceTemplateSection, templateSectionFromParam, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import { isLocalizedLocale, stageText, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT } from "./i18n";
 import { lockBodyScroll } from "./scrollLock";
+import { refreshTaskNodePending } from "./taskNodePending";
 import type { MeResponse } from "./types";
 
 /** 任务模板的九阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
@@ -339,12 +340,19 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const activeNodes = nodesByStage[activeSection] ?? EMPTY_NODE_LIST;
 
   /**
-   * 公共节点申请（业务口径 2026-11-13「给一个申请的渠道，让管理员审核」）：入口在左列列头，
-   * 任何登录账号都能打开（看「我的申请」）；有节点库维护权（canManageNodes = taskNodeManage 同口径）的账号
-   * 额外看到待审数量角标，并在「待审核」标签里逐条通过 / 驳回 —— 通过时才写公共节点库。
+   * 「入库审核」独立板块是否正在展示（远端 b66ffd88 新增的板块）：审核工作台挂在这个板块内容上方。
+   * 只有这个板块是开的才取申请列表，免得每个阶段板块都去打一次申请接口。
    */
-  const [nodeRequestsOpen, setNodeRequestsOpen] = useState(false);
-  const [nodeRequestsTab, setNodeRequestsTab] = useState<"pending" | "mine">("mine");
+  const nodeRequestsSectionActive = page === "templates" && activeSection === TEMPLATE_SPECIAL_SECTION;
+
+  /**
+   * 公共节点申请（业务口径 2026-11-13「给一个申请的渠道，让管理员审核」）：
+   * 2026-11-13 追订（用户口径「远端已经有审核的页面，用他的；我们的清单和他的审核页互补」）——
+   * 本地左列列头的入口按钮 + 申请浮层已删除，申请清单整体迁进「入库审核」板块顶部的工作台；
+   * 「待审核」只给有节点库维护权（canManageNodes = taskNodeManage，现仅系统管理员）的账号，可逐条改中英文名后通过 / 驳回；
+   * 「我的申请」任何登录账号都能看自己的申请与结果（pending 可撤销）。
+   */
+  const [nodeRequestsTab, setNodeRequestsTab] = useState<"pending" | "mine">("pending");
   /** 审核视角的待审列表（需节点库维护权；无权限时保持空数组，不发请求）。 */
   const [pendingRequests, setPendingRequests] = useState<TaskNodeRequest[]>([]);
   /** 本人视角的申请（全部状态；任何登录账号都可看）。 */
@@ -354,7 +362,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const [myPendingCount, setMyPendingCount] = useState(0);
   const [nodeRequestsLoading, setNodeRequestsLoading] = useState(false);
   const [nodeRequestsError, setNodeRequestsError] = useState<string | null>(null);
-  /** 申请取数版本号：浮层打开 / 审核动作成功后 +1（数量角标与列表一起重取）。 */
+  /** 申请取数版本号：进入「入库审核」板块 / 审核动作成功 / 点「重新加载」后 +1（计数与列表一起重取）。 */
   const [nodeRequestsVersion, setNodeRequestsVersion] = useState(0);
   /** 审核行里就地编辑的中英文名（键 = 申请 id；缺省 = 申请原值）。 */
   const [requestDrafts, setRequestDrafts] = useState<Record<string, { title: string; titleEn: string }>>({});
@@ -365,7 +373,6 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const [actingRequestId, setActingRequestId] = useState<string | null>(null);
   /** 审核动作的结果提示（顶部 Toast，成功 / 失败同一位置）。 */
   const [nodeRequestNotice, setNodeRequestNotice] = useState<{ kind: "ok" | "error" | "info"; text: string } | null>(null);
-  const nodeRequestsTrapRef = useFocusTrap<HTMLDivElement>(nodeRequestsOpen);
 
   useEffect(() => subscribeLiveHints((resources) => {
     if (!resources.includes("templates")) return;
@@ -423,46 +430,11 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   }, [page, activeSection, nodesVersion]);
 
   /**
-   * 待审数量（进页面 / 切板块后各取一次）：失败一律静默 —— 角标只是入口提示，取不到就不显示数字，不打断页面；
-   * 审核视角需要节点库维护权（无权限会 403），所以只有 canManageNodes 才取。
-   */
-  useEffect(() => {
-    if (page !== "templates") {
-      return;
-    }
-    let alive = true;
-    void (async () => {
-      try {
-        const mine = await listTaskNodeRequests({ mine: true, status: "pending" });
-        if (alive) {
-          setMyPendingCount(mine.pendingCount);
-        }
-      } catch {
-        // 静默：本人视角取不到只是不显示数字
-      }
-      if (!canManageNodes) {
-        return;
-      }
-      try {
-        const all = await listTaskNodeRequests({ status: "pending" });
-        if (alive) {
-          setReviewPendingCount(all.pendingCount);
-        }
-      } catch {
-        // 静默：无权限 / 网络异常都当作「不显示角标」
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [page, activeSection, canManageNodes, nodeRequestsVersion]);
-
-  /**
-   * 浮层数据：打开时才取完整列表（加载态 + 失败可重试）；「我的申请」任何账号都取，
+   * 工作台数据：进入「入库审核」板块时才取完整列表（加载态 + 失败可重试；两个标签的计数也由这次响应回填）；「我的申请」任何账号都取，
    * 「待审核」只在有节点库维护权时取 —— 无权限时不发这个请求，也就不会把 403 摆到界面上。
    */
   useEffect(() => {
-    if (page !== "templates" || !nodeRequestsOpen) {
+    if (!nodeRequestsSectionActive) {
       return;
     }
     let alive = true;
@@ -505,7 +477,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
     return () => {
       alive = false;
     };
-  }, [page, nodeRequestsOpen, canManageNodes, nodeRequestsVersion]);
+  }, [nodeRequestsSectionActive, canManageNodes, nodeRequestsVersion]);
 
   useEffect(() => {
     prefetchLocalizedText(Object.values(templatesByStage).flat().map((item) => item.name));
@@ -755,13 +727,13 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const deleteTemplateConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteTemplate !== null);
   const newTemplateTrapRef = useFocusTrap<HTMLDivElement>(newTemplateVisibilityOpen);
 
-  // 两个弹层任意一个开着都锁背景滚动（节点申请浮层同款：窄屏整宽、独立滚动区）
+  // 新建模板的可见范围弹窗开着时锁背景滚动（入库审核已改成板块内工作台，不再有浮层）
   useEffect(() => {
-    if (!newTemplateVisibilityOpen && !nodeRequestsOpen) {
+    if (!newTemplateVisibilityOpen) {
       return;
     }
     return lockBodyScroll();
-  }, [newTemplateVisibilityOpen, nodeRequestsOpen]);
+  }, [newTemplateVisibilityOpen]);
 
   /** 新建模板后的聚焦：状态一置上就等这次渲染提交完，把名字输入框聚焦 + 全选（落完即清）。 */
   useEffect(() => {
@@ -1024,6 +996,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
         setNodesVersion((version) => version + 1);
         setTemplatesVersion((version) => version + 1);
         setNodeRequestsVersion((version) => version + 1);
+        // 待处理条数变了：让「任务模板」导航红点跟着重算
+        void refreshTaskNodePending(canManageNodes);
       } catch (error) {
         setNodeRequestNotice({
           kind: "error",
@@ -1051,6 +1025,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
         setNodeRequestNotice({ kind: "ok", text: t("nodeRequests.rejected") });
         clearRequestLocalState(request.id);
         setNodeRequestsVersion((version) => version + 1);
+        // 待处理条数变了：让「任务模板」导航红点跟着重算
+        void refreshTaskNodePending(canManageNodes);
       } catch (error) {
         setNodeRequestNotice({
           kind: "error",
@@ -1074,6 +1050,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
         setNodeRequestNotice({ kind: "ok", text: t("nodeRequests.withdrawn") });
         clearRequestLocalState(request.id);
         setNodeRequestsVersion((version) => version + 1);
+        // 待处理条数变了：让「任务模板」导航红点跟着重算
+        void refreshTaskNodePending(canManageNodes);
       } catch (error) {
         setNodeRequestNotice({
           kind: "error",
@@ -1087,14 +1065,6 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
 
   /** 实际展示的标签：没有节点库维护权时「待审核」这个标签不存在，一律回落到「我的申请」。 */
   const shownRequestsTab: "pending" | "mine" = canManageNodes ? nodeRequestsTab : "mine";
-
-  /** 入口按钮：默认停在有待审条目的标签（无权限 / 没有待审 = 「我的申请」）。 */
-  const openNodeRequests = (): void => {
-    setNodeRequestsTab(canManageNodes && reviewPendingCount > 0 ? "pending" : "mine");
-    setRejectingRequestId(null);
-    setRejectReason("");
-    setNodeRequestsOpen(true);
-  };
 
   /**
    * 鼠标底下是「哪块面板的第几格」（Push 116）：`data-template-panel` 认面板、卡片中线认格 ——
@@ -1356,6 +1326,281 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
             ) : null}
           </div>
 
+          {/* 入库审核工作台（2026-11-13 用户口径「远端仓库已经有审核的页面，我们用他的；本地的不用」
+              「我们的清单和他的审核页正好互补」）：本地左列列头的入口按钮 + 申请浮层已删除，
+              申请清单（待审核 / 我的申请）整体迁到「入库审核」板块内容上方；该板块原有的节点库 / 模板面板
+              （远端 b66ffd88 的实现）保持不动。「待审核」只给 canManageNodes（现仅系统管理员）的账号。 */}
+          {nodeRequestsSectionActive ? (
+            <section
+              data-node-requests-workbench=""
+              aria-label={t("nodeRequests.entry")}
+              className="mt-6 overflow-clip rounded-2xl border border-white/80 bg-white/85 shadow-[0_8px_32px_rgba(15,23,42,0.10)] backdrop-blur-xl"
+            >
+              <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 px-5 py-3.5">
+                <h2 className="text-base font-semibold text-zinc-900">{t("nodeRequests.entry")}</h2>
+                {/* 列表只在进入板块时取一次：停在板块里等新申请时，用它手动重取（复用「重新加载」键） */}
+                <button
+                  type="button"
+                  onClick={() => { setNodeRequestsVersion((version) => version + 1); }}
+                  disabled={nodeRequestsLoading}
+                  data-node-requests-refresh=""
+                  className="ml-auto shrink-0 rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t("common.reload")}
+                </button>
+              </div>
+              <div role="tablist" aria-label={t("nodeRequests.entry")} className="flex flex-wrap items-center gap-1 border-b border-zinc-100 px-4 text-sm">
+                {canManageNodes ? (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={shownRequestsTab === "pending"}
+                    data-node-request-tab="pending"
+                    onClick={() => { setNodeRequestsTab("pending"); setRejectingRequestId(null); setRejectReason(""); }}
+                    className={
+                      "border-b-2 px-3 py-2 font-medium transition " +
+                      (shownRequestsTab === "pending"
+                        ? "border-zinc-900 text-zinc-900"
+                        : "border-transparent text-zinc-500 hover:text-zinc-800")
+                    }
+                  >
+                    {t("nodeRequests.tabPending")}
+                    {reviewPendingCount === 0 ? null : (
+                      <span className="ml-1 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                        {t("nodeRequests.pendingBadge", { n: reviewPendingCount })}
+                      </span>
+                    )}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={shownRequestsTab === "mine"}
+                  data-node-request-tab="mine"
+                  onClick={() => { setNodeRequestsTab("mine"); setRejectingRequestId(null); setRejectReason(""); }}
+                  className={
+                    "border-b-2 px-3 py-2 font-medium transition " +
+                    (shownRequestsTab === "mine"
+                      ? "border-zinc-900 text-zinc-900"
+                      : "border-transparent text-zinc-500 hover:text-zinc-800")
+                  }
+                >
+                  {t("nodeRequests.tabMine")}
+                  {myPendingCount === 0 ? null : (
+                    <span className="ml-1 rounded-full bg-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-zinc-600">
+                      {t("nodeRequests.pendingBadge", { n: myPendingCount })}
+                    </span>
+                  )}
+                </button>
+              </div>
+              <div className="max-h-[min(560px,72vh)] overflow-y-auto px-5 py-4">
+                {nodeRequestsError === null ? null : (
+                  <p className="rounded-xl border border-dashed border-rose-200 bg-rose-50/70 px-4 py-6 text-center text-xs text-rose-700">
+                    {t("nodeRequests.loadFailed", { message: nodeRequestsError })}
+                    <button
+                      type="button"
+                      onClick={() => { setNodeRequestsVersion((version) => version + 1); }}
+                      className="ml-2 rounded border border-rose-200 bg-white px-2 py-0.5 text-[11px] text-rose-700 transition hover:bg-rose-50"
+                    >
+                      {t("common.retry")}
+                    </button>
+                  </p>
+                )}
+
+                {nodeRequestsLoading ? (
+                  <p className="py-10 text-center text-xs text-zinc-500">{t("common.loading")}</p>
+                ) : null}
+
+                {!nodeRequestsLoading && nodeRequestsError === null && canManageNodes && shownRequestsTab === "pending" ? (
+                  pendingRequests.length === 0 ? (
+                    <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyPending")}</p>
+                  ) : (
+                    <>
+                      <p className="mb-3 text-[11px] leading-5 text-zinc-500">{t("nodeRequests.editHint")}</p>
+                      <ul className="space-y-3">
+                        {pendingRequests.map((request) => {
+                          const draft = requestDraftOf(request);
+                          const titleEmpty = draft.title.trim() === "";
+                          const acting = actingRequestId === request.id;
+                          const rejecting = rejectingRequestId === request.id;
+                          return (
+                            <li
+                              key={request.id}
+                              data-node-request-item={request.id}
+                              data-node-request-status={request.status}
+                              className="rounded-xl border border-zinc-200 bg-white px-3 py-3 text-xs"
+                            >
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">
+                                  {stageText(locale, stageNameOf(request.stageKey))}
+                                </span>
+                                <span className="text-[11px] text-zinc-500">
+                                  {t("nodeRequests.requestedBy", { name: request.requestedByName ?? "—" })}
+                                </span>
+                                <span className="text-[11px] text-zinc-500">
+                                  {"· " + t("nodeRequests.submittedAt", { time: formatDateTime(request.requestedAt) })}
+                                </span>
+                                <span className="ml-auto text-[11px] text-zinc-400">
+                                  {t("nodeRequests.sourceProject", { name: sourceProjectLabel(request) })}
+                                </span>
+                              </div>
+                              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                <input
+                                  type="text"
+                                  value={draft.title}
+                                  onChange={(event) => { patchRequestDraft(request, { title: event.currentTarget.value }); }}
+                                  placeholder={t("import.nodes.requestName")}
+                                  aria-label={t("import.nodes.requestName") + " · " + request.title}
+                                  maxLength={200}
+                                  className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+                                  data-node-request-title={request.id}
+                                />
+                                <input
+                                  type="text"
+                                  value={draft.titleEn}
+                                  onChange={(event) => { patchRequestDraft(request, { titleEn: event.currentTarget.value }); }}
+                                  placeholder={t("import.nodes.requestNameEn")}
+                                  aria-label={t("import.nodes.requestNameEn") + " · " + request.title}
+                                  maxLength={200}
+                                  className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+                                  data-node-request-title-en={request.id}
+                                />
+                              </div>
+                              {!titleEmpty ? null : (
+                                <p className="mt-1 text-[11px] text-rose-600">{t("import.nodes.requestNameRequired")}</p>
+                              )}
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={acting || titleEmpty}
+                                  onClick={() => { approveRequest(request); }}
+                                  data-node-request-approve={request.id}
+                                  className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                                >
+                                  {t("nodeRequests.approve")}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={acting}
+                                  onClick={() => {
+                                    setRejectingRequestId(rejecting ? null : request.id);
+                                    setRejectReason("");
+                                  }}
+                                  data-node-request-reject={request.id}
+                                  className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {t("nodeRequests.reject")}
+                                </button>
+                                {!acting ? null : <span className="text-[11px] text-zinc-400">{t("common.saving")}</span>}
+                              </div>
+                              {!rejecting ? null : (
+                                <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-2.5">
+                                  <label
+                                    className="block text-[11px] font-medium text-zinc-600"
+                                    htmlFor={"node-request-reject-" + request.id}
+                                  >
+                                    {t("nodeRequests.rejectReason")}
+                                  </label>
+                                  <input
+                                    id={"node-request-reject-" + request.id}
+                                    type="text"
+                                    value={rejectReason}
+                                    onChange={(event) => { setRejectReason(event.currentTarget.value); }}
+                                    placeholder={t("nodeRequests.rejectPlaceholder")}
+                                    aria-label={t("nodeRequests.rejectReason")}
+                                    maxLength={200}
+                                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+                                    data-node-request-reject-reason={request.id}
+                                  />
+                                  <div className="mt-2 flex items-center justify-end gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => { setRejectingRequestId(null); setRejectReason(""); }}
+                                      className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50"
+                                    >
+                                      {t("common.cancel")}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={acting || rejectReason.trim() === ""}
+                                      onClick={() => { rejectRequest(request); }}
+                                      data-node-request-reject-confirm={request.id}
+                                      className="rounded-md bg-rose-500 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-rose-600 disabled:cursor-not-allowed disabled:bg-rose-200"
+                                    >
+                                      {t("nodeRequests.reject")}
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </>
+                  )
+                ) : null}
+
+                {!nodeRequestsLoading && nodeRequestsError === null && shownRequestsTab === "mine" ? (
+                  myRequests.length === 0 ? (
+                    <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyMine")}</p>
+                  ) : (
+                    <ul className="space-y-3">
+                      {myRequests.map((request) => (
+                        <li
+                          key={request.id}
+                          data-node-request-item={request.id}
+                          data-node-request-status={request.status}
+                          className="rounded-xl border border-zinc-200 bg-white px-3 py-3 text-xs"
+                        >
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">
+                              {stageText(locale, stageNameOf(request.stageKey))}
+                            </span>
+                            <span className="min-w-0 font-medium text-zinc-800">
+                              {request.title}
+                              {request.titleEn === null || request.titleEn === "" ? "" : " · " + request.titleEn}
+                            </span>
+                            <span
+                              className={"ml-auto rounded-md border px-1.5 py-0.5 text-[11px] font-medium " + NODE_REQUEST_STATUS_STYLE[request.status]}
+                              data-node-request-status-badge={request.status}
+                            >
+                              {t(NODE_REQUEST_STATUS_KEY[request.status])}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-zinc-500">
+                            {t("nodeRequests.submittedAt", { time: formatDateTime(request.requestedAt) })}
+                            {" · "}
+                            {t("nodeRequests.sourceProject", { name: sourceProjectLabel(request) })}
+                          </p>
+                          {request.reviewNote === null || request.reviewNote === "" ? null : (
+                            <p className="mt-1 text-[11px] text-zinc-600">
+                              {(request.status === "rejected" ? t("nodeRequests.rejectReason") : t("nodeRequests.reviewNote")) +
+                                " · " +
+                                request.reviewNote}
+                            </p>
+                          )}
+                          {request.status !== "pending" ? null : (
+                            <div className="mt-2 flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={actingRequestId !== null}
+                                onClick={() => { withdrawRequest(request); }}
+                                data-node-request-withdraw={request.id}
+                                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {t("nodeRequests.withdraw")}
+                              </button>
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+
           <div className="relative mt-6">
             {/* 毛玻璃底衬：玻璃要有可透的背景才看得出效果，这里垫一层很淡的色雾（纯装饰、不接收鼠标事件）。 */}
             <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 overflow-x-clip">
@@ -1383,27 +1628,6 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                         ? t("tpl.nodes.count", { n: activeNodes.length })
                         : t("tpl.nodes.countFiltered", { shown: visibleNodes.length, total: activeNodes.length })}
                     </span>
-                    {/* 公共节点申请入口：任何登录账号都能打开看「我的申请」；有节点库维护权（taskNodeManage 同口径）
-                        的账号额外显示审核视角的待审数量角标（无权限 = 不显示数字）。 */}
-                    <button
-                      type="button"
-                      onClick={openNodeRequests}
-                      aria-haspopup="dialog"
-                      aria-expanded={nodeRequestsOpen}
-                      title={t("nodeRequests.entry")}
-                      data-node-requests-entry=""
-                      className="shrink-0 whitespace-nowrap rounded-md border border-white/70 bg-white/60 px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-white hover:text-zinc-900"
-                    >
-                      {t("nodeRequests.entry")}
-                      {canManageNodes && reviewPendingCount > 0 ? (
-                        <span
-                          className="ml-1 inline-block rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
-                          data-node-requests-badge=""
-                        >
-                          {t("nodeRequests.pendingBadge", { n: reviewPendingCount })}
-                        </span>
-                      ) : null}
-                    </button>
                     {canManageNodes ? (
                       <button
                         type="button"
@@ -1787,298 +2011,6 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
               </div>
             </div>
           </div>
-          {/* 公共节点申请浮层（业务口径 2026-11-13「让管理员审核」）：窄屏整宽、独立滚动区，与新建模板弹窗同材质。
-              「待审核」= 节点库维护权账号逐条通过 / 驳回（通过前可改中英文名）；「我的申请」= 任何登录账号看自己的申请与结果。 */}
-          {nodeRequestsOpen ? (
-            <div
-              className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/30 px-4 py-6 backdrop-blur-[2px]"
-              onMouseDown={(event) => {
-                if (event.target === event.currentTarget) {
-                  setNodeRequestsOpen(false);
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  setNodeRequestsOpen(false);
-                }
-              }}
-            >
-              <div
-                ref={nodeRequestsTrapRef}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="node-requests-title"
-                data-node-requests-dialog=""
-                className="flex max-h-[min(720px,calc(100dvh-3rem))] w-full max-w-2xl flex-col overflow-clip rounded-2xl border border-white/80 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.28)]"
-              >
-                <div className="flex items-center gap-3 border-b border-zinc-200 px-5 py-3.5">
-                  <h2 id="node-requests-title" className="text-base font-semibold text-zinc-900">
-                    {t("nodeRequests.entry")}
-                  </h2>
-                  <button
-                    type="button"
-                    aria-label={t("toast.close")}
-                    onClick={() => { setNodeRequestsOpen(false); }}
-                    className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-                      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                </div>
-                {/* 标签：待审核只给有节点库维护权的账号；默认停在「待审核」（有待审时）否则「我的申请」 */}
-                <div role="tablist" aria-label={t("nodeRequests.entry")} className="flex flex-wrap items-center gap-1 border-b border-zinc-100 px-4 text-sm">
-                  {canManageNodes ? (
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={shownRequestsTab === "pending"}
-                      data-node-request-tab="pending"
-                      onClick={() => { setNodeRequestsTab("pending"); setRejectingRequestId(null); setRejectReason(""); }}
-                      className={
-                        "border-b-2 px-3 py-2 font-medium transition " +
-                        (shownRequestsTab === "pending"
-                          ? "border-zinc-900 text-zinc-900"
-                          : "border-transparent text-zinc-500 hover:text-zinc-800")
-                      }
-                    >
-                      {t("nodeRequests.tabPending")}
-                      {reviewPendingCount === 0 ? null : (
-                        <span className="ml-1 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
-                          {t("nodeRequests.pendingBadge", { n: reviewPendingCount })}
-                        </span>
-                      )}
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={shownRequestsTab === "mine"}
-                    data-node-request-tab="mine"
-                    onClick={() => { setNodeRequestsTab("mine"); setRejectingRequestId(null); setRejectReason(""); }}
-                    className={
-                      "border-b-2 px-3 py-2 font-medium transition " +
-                      (shownRequestsTab === "mine"
-                        ? "border-zinc-900 text-zinc-900"
-                        : "border-transparent text-zinc-500 hover:text-zinc-800")
-                    }
-                  >
-                    {t("nodeRequests.tabMine")}
-                    {myPendingCount === 0 ? null : (
-                      <span className="ml-1 rounded-full bg-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-zinc-600">
-                        {t("nodeRequests.pendingBadge", { n: myPendingCount })}
-                      </span>
-                    )}
-                  </button>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-                  {nodeRequestsError === null ? null : (
-                    <p className="rounded-xl border border-dashed border-rose-200 bg-rose-50/70 px-4 py-6 text-center text-xs text-rose-700">
-                      {t("nodeRequests.loadFailed", { message: nodeRequestsError })}
-                      <button
-                        type="button"
-                        onClick={() => { setNodeRequestsVersion((version) => version + 1); }}
-                        className="ml-2 rounded border border-rose-200 bg-white px-2 py-0.5 text-[11px] text-rose-700 transition hover:bg-rose-50"
-                      >
-                        {t("common.retry")}
-                      </button>
-                    </p>
-                  )}
-
-                  {nodeRequestsLoading ? (
-                    <p className="py-10 text-center text-xs text-zinc-500">{t("common.loading")}</p>
-                  ) : null}
-
-                  {!nodeRequestsLoading && nodeRequestsError === null && canManageNodes && shownRequestsTab === "pending" ? (
-                    pendingRequests.length === 0 ? (
-                      <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyPending")}</p>
-                    ) : (
-                      <>
-                        <p className="mb-3 text-[11px] leading-5 text-zinc-500">{t("nodeRequests.editHint")}</p>
-                        <ul className="space-y-3">
-                          {pendingRequests.map((request) => {
-                            const draft = requestDraftOf(request);
-                            const titleEmpty = draft.title.trim() === "";
-                            const acting = actingRequestId === request.id;
-                            const rejecting = rejectingRequestId === request.id;
-                            return (
-                              <li
-                                key={request.id}
-                                data-node-request-item={request.id}
-                                data-node-request-status={request.status}
-                                className="rounded-xl border border-zinc-200 bg-white px-3 py-3 text-xs"
-                              >
-                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                  <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">
-                                    {stageText(locale, stageNameOf(request.stageKey))}
-                                  </span>
-                                  <span className="text-[11px] text-zinc-500">
-                                    {t("nodeRequests.requestedBy", { name: request.requestedByName ?? "—" })}
-                                  </span>
-                                  <span className="text-[11px] text-zinc-500">
-                                    {"· " + t("nodeRequests.submittedAt", { time: formatDateTime(request.requestedAt) })}
-                                  </span>
-                                  <span className="ml-auto text-[11px] text-zinc-400">
-                                    {t("nodeRequests.sourceProject", { name: sourceProjectLabel(request) })}
-                                  </span>
-                                </div>
-                                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                                  <input
-                                    type="text"
-                                    value={draft.title}
-                                    onChange={(event) => { patchRequestDraft(request, { title: event.currentTarget.value }); }}
-                                    placeholder={t("import.nodes.requestName")}
-                                    aria-label={t("import.nodes.requestName") + " · " + request.title}
-                                    maxLength={200}
-                                    className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
-                                    data-node-request-title={request.id}
-                                  />
-                                  <input
-                                    type="text"
-                                    value={draft.titleEn}
-                                    onChange={(event) => { patchRequestDraft(request, { titleEn: event.currentTarget.value }); }}
-                                    placeholder={t("import.nodes.requestNameEn")}
-                                    aria-label={t("import.nodes.requestNameEn") + " · " + request.title}
-                                    maxLength={200}
-                                    className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
-                                    data-node-request-title-en={request.id}
-                                  />
-                                </div>
-                                {!titleEmpty ? null : (
-                                  <p className="mt-1 text-[11px] text-rose-600">{t("import.nodes.requestNameRequired")}</p>
-                                )}
-                                <div className="mt-2 flex flex-wrap items-center gap-2">
-                                  <button
-                                    type="button"
-                                    disabled={acting || titleEmpty}
-                                    onClick={() => { approveRequest(request); }}
-                                    data-node-request-approve={request.id}
-                                    className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                                  >
-                                    {t("nodeRequests.approve")}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={acting}
-                                    onClick={() => {
-                                      setRejectingRequestId(rejecting ? null : request.id);
-                                      setRejectReason("");
-                                    }}
-                                    data-node-request-reject={request.id}
-                                    className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                  >
-                                    {t("nodeRequests.reject")}
-                                  </button>
-                                  {!acting ? null : <span className="text-[11px] text-zinc-400">{t("common.saving")}</span>}
-                                </div>
-                                {!rejecting ? null : (
-                                  <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-2.5">
-                                    <label
-                                      className="block text-[11px] font-medium text-zinc-600"
-                                      htmlFor={"node-request-reject-" + request.id}
-                                    >
-                                      {t("nodeRequests.rejectReason")}
-                                    </label>
-                                    <input
-                                      id={"node-request-reject-" + request.id}
-                                      type="text"
-                                      value={rejectReason}
-                                      onChange={(event) => { setRejectReason(event.currentTarget.value); }}
-                                      placeholder={t("nodeRequests.rejectPlaceholder")}
-                                      aria-label={t("nodeRequests.rejectReason")}
-                                      maxLength={200}
-                                      className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
-                                      data-node-request-reject-reason={request.id}
-                                    />
-                                    <div className="mt-2 flex items-center justify-end gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => { setRejectingRequestId(null); setRejectReason(""); }}
-                                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50"
-                                      >
-                                        {t("common.cancel")}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={acting || rejectReason.trim() === ""}
-                                        onClick={() => { rejectRequest(request); }}
-                                        data-node-request-reject-confirm={request.id}
-                                        className="rounded-md bg-rose-500 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-rose-600 disabled:cursor-not-allowed disabled:bg-rose-200"
-                                      >
-                                        {t("nodeRequests.reject")}
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </>
-                    )
-                  ) : null}
-
-                  {!nodeRequestsLoading && nodeRequestsError === null && shownRequestsTab === "mine" ? (
-                    myRequests.length === 0 ? (
-                      <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyMine")}</p>
-                    ) : (
-                      <ul className="space-y-3">
-                        {myRequests.map((request) => (
-                          <li
-                            key={request.id}
-                            data-node-request-item={request.id}
-                            data-node-request-status={request.status}
-                            className="rounded-xl border border-zinc-200 bg-white px-3 py-3 text-xs"
-                          >
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">
-                                {stageText(locale, stageNameOf(request.stageKey))}
-                              </span>
-                              <span className="min-w-0 font-medium text-zinc-800">
-                                {request.title}
-                                {request.titleEn === null || request.titleEn === "" ? "" : " · " + request.titleEn}
-                              </span>
-                              <span
-                                className={"ml-auto rounded-md border px-1.5 py-0.5 text-[11px] font-medium " + NODE_REQUEST_STATUS_STYLE[request.status]}
-                                data-node-request-status-badge={request.status}
-                              >
-                                {t(NODE_REQUEST_STATUS_KEY[request.status])}
-                              </span>
-                            </div>
-                            <p className="mt-1 text-[11px] text-zinc-500">
-                              {t("nodeRequests.submittedAt", { time: formatDateTime(request.requestedAt) })}
-                              {" · "}
-                              {t("nodeRequests.sourceProject", { name: sourceProjectLabel(request) })}
-                            </p>
-                            {request.reviewNote === null || request.reviewNote === "" ? null : (
-                              <p className="mt-1 text-[11px] text-zinc-600">
-                                {(request.status === "rejected" ? t("nodeRequests.rejectReason") : t("nodeRequests.reviewNote")) +
-                                  " · " +
-                                  request.reviewNote}
-                              </p>
-                            )}
-                            {request.status !== "pending" ? null : (
-                              <div className="mt-2 flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  disabled={actingRequestId !== null}
-                                  onClick={() => { withdrawRequest(request); }}
-                                  data-node-request-withdraw={request.id}
-                                  className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  {t("nodeRequests.withdraw")}
-                                </button>
-                              </div>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          ) : null}
           {newTemplateVisibilityOpen ? (
             <div
               className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/30 px-4 backdrop-blur-[2px]"

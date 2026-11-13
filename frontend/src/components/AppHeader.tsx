@@ -6,6 +6,7 @@ import { clearHomePrefs } from "../homePrefs";
 import { clearLegacyPlanBoard } from "../myPlan";
 import { hasPageAccess, useMyPermissions } from "../permissions";
 import { useInboxBadge } from "../inbox";
+import { useTaskNodePendingBadge } from "../taskNodePending";
 import { resetWecomBindingStatus, useWecomBindingBound } from "../wecomBindingStatus";
 import { ACCESS_BASE_HASH, AUDIT_BASE_HASH, FILES_BASE_HASH, HUB_HASH, MODEL_SETTINGS_BASE_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
 import { firstAllowedHref } from "../accessRoutes";
@@ -116,16 +117,9 @@ function useViewportSize(): ViewportSize {
 type AppHeaderProps = {
   me: MeResponse;
   project?: Project | null;
-  /**
-   * 「任务模板」导航项的非数字红点（PM 反馈 2026-11-13「任务模板 这里加红点提醒吧」）：
-   * true = 当前账号有「入库审核」待处理事项。判定与取数在 App.tsx
-   * （有节点库维护权 = 全局待审 > 0；否则 = 本人 pending > 0），这里只透传给 TopNav；
-   * 取不到 / 未登录一律 false，红点只是入口提示，不打断页面。缺省 false。
-   */
-  templatesPending?: boolean;
 };
 
-export function AppHeader({ me, project, templatesPending = false }: AppHeaderProps) {
+export function AppHeader({ me, project }: AppHeaderProps) {
   const locale = useLocale();
   const t = useT();
   const user = me.user;
@@ -161,6 +155,12 @@ export function AppHeader({ me, project, templatesPending = false }: AppHeaderPr
   const inboxMenuRef = useRef<HTMLDivElement | null>(null);
   const localeLabel = LOCALES.find((item) => item.key === locale)?.label ?? "中文";
   const bgTierLabel = t(BG_TIER_TEXT_KEYS[bgTier]);
+  /**
+   * 「任务模板」导航红点（PM 反馈 2026-11-13「任务模板 这里加红点提醒吧」）：模块级 store
+   * （../taskNodePending），取数 = 有节点库维护权看全局待审、其他账号看本人 pending；
+   * 刷新时机由 App.tsx（登录 / 切页 / 60 秒）与任务模板页审核动作负责，这里只订阅，不自己发请求。
+   */
+  const templatesPending = useTaskNodePendingBadge();
   /** 顶栏站内信提示：../inbox 给未读数，../wecomBindingStatus 给未绑定态；切页不丢。 */
   const inboxBadge = useInboxBadge();
   const wecomBound = useWecomBindingBound();
