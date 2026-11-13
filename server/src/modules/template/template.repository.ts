@@ -37,6 +37,7 @@ export interface TaskTemplateNodeRef {
 export interface TaskTemplateUpdatePatch {
   name?: string;
   visibility?: "private" | "public";
+  createdBy?: string;
 }
 
 /** 九阶段顺序（列表排序用）：与 shared/src/common/dicts.ts 的 STAGE_KEYS 同序；未知 key 排最后。 */

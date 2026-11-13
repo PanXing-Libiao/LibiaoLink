@@ -11819,7 +11819,7 @@
                   "string",
                   "null"
                 ],
-                "description": "填写人 user id；存量种子 / 系统导入为空"
+                "description": "填写人 user id；存量种子 / 系统导入为空；管理员将无填写人的系统模板改为 private 时接管为当前管理员"
               }
             ]
           },
@@ -11979,7 +11979,7 @@
                 "$ref": "#/components/schemas/TaskTemplateVisibility"
               },
               {
-                "description": "可见范围（可选）：private 仅填写人可见，public 有模板浏览权的人可见；不传 = 保持原值"
+                "description": "可见范围（可选）：private 仅填写人可见，public 有模板浏览权的人可见；系统预置模板由管理员改为 private 时接管填写人；不传 = 保持原值"
               }
             ]
           },

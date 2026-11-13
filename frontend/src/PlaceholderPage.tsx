@@ -1277,7 +1277,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                             {t("tpl.creator", { name: template.createdByName ?? t("tpl.creatorSystem") })}
                           </span>
                           <span aria-hidden="true" className="shrink-0 text-zinc-300">·</span>
-                          {canManageThisTemplate && template.createdBy !== null ? (
+                          {canManageThisTemplate ? (
                             <div data-template-visibility-control={template.id} className="w-[8.75rem] shrink-0">
                               <SelectMenu
                                 compact

@@ -287,8 +287,9 @@ describe("新建模板（写 = taskTemplate.manage）", () => {
       objectType: "task_template",
       objectId: created.id,
       summary: "新增任务模板：硬件实施 · 英国订单",
-      metadata: { stageKey: "install", visibility: "public", nodeCount: 1 },
+      metadata: { stageKey: "install", visibility: "public", createdBy: ACTOR, nodeCount: 1 },
       changes: [
+        { field: "createdBy", from: null, to: ACTOR },
         { field: "name", from: null, to: "英国订单" },
         { field: "nodes", from: null, to: ["货架组装"] },
         { field: "visibility", from: null, to: "public" },
@@ -304,7 +305,7 @@ describe("新建模板（写 = taskTemplate.manage）", () => {
     );
     expect(created).toMatchObject({ visibility: "private", createdBy: ACTOR });
     expect(repo.rows.at(-1)).toMatchObject({ visibility: "private", createdBy: ACTOR });
-    expect(audit.records[0]?.metadata).toEqual({ stageKey: "install", visibility: "private", nodeCount: 0 });
+    expect(audit.records[0]?.metadata).toEqual({ stageKey: "install", visibility: "private", createdBy: ACTOR, nodeCount: 0 });
   });
 
   it("nodeIds 允许空数组（新建后逐步拖入）", async () => {
@@ -388,13 +389,27 @@ describe("编辑模板（改名 / 可见范围 / 节点全量替换 + 乐观锁�
     expect(audit.records[1]?.metadata).toMatchObject({ visibility: "public" });
   });
 
-  it("系统预置模板没有个人填写人，不能改为仅个人使用", async () => {
+  it("管理员可把系统预置模板改为仅个人使用，并接管为填写人", async () => {
     const { service, repo, audit } = makeService();
+    repo.rows = [makeTemplate({ createdBy: null, visibility: "public" })];
+
+    const hidden = await service.updateTemplate(TEMPLATE, { visibility: "private", version: 0 }, ACTOR);
+    expect(hidden).toMatchObject({ visibility: "private", createdBy: ACTOR, version: 1 });
+    expect(repo.rows[0]).toMatchObject({ visibility: "private", createdBy: ACTOR, version: 1 });
+    expect(audit.records[0]?.changes).toEqual([
+      { field: "createdBy", from: null, to: ACTOR },
+      { field: "visibility", from: "public", to: "private" },
+    ]);
+    expect(audit.records[0]?.metadata).toMatchObject({ visibility: "private", createdBy: ACTOR });
+  });
+
+  it("非管理员不能把系统预置模板改为仅个人使用", async () => {
+    const { service, repo, audit } = makeService({ admin: false });
     repo.rows = [makeTemplate({ createdBy: null, visibility: "public" })];
     await expect(
       service.updateTemplate(TEMPLATE, { visibility: "private", version: 0 }, ACTOR),
-    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
-    expect(repo.rows[0]).toMatchObject({ visibility: "public", version: 0 });
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(repo.rows[0]).toMatchObject({ visibility: "public", createdBy: null, version: 0 });
     expect(audit.records).toHaveLength(0);
   });
 
