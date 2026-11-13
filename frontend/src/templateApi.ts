@@ -6,7 +6,7 @@
  * - 删除 DELETE /api/v1/task-nodes/{id}（写 = blueprint.manage；物理删行 + 审计留痕；已生成的项目任务不受影响）
  * 任务模板（第二段 · Push 182）：GET/POST /api/v1/task-templates、PATCH/DELETE /api/v1/task-templates/{id}
  *   —— 写同样 = 模板管理权（新建：管理员或有效项目经理；编辑 / 删除：创建人或管理员）；新建时可选 private（仅自己）/ public（有浏览权的人），
- *      创建人 / 管理员也可随 PATCH 切换可见范围；PATCH 是「改名 + visibility + nodeIds 全量替换」，version 乐观锁必传；DELETE 是软删（带 version）。
+ *      创建后只有填写人本人可随 PATCH 切换可见范围；
  * 阶段名（界面板块）↔ 阶段 key 的换算复用 taskApi 的 stageKeyOfName（同一份九阶段字典，避免两处各写一份）。
  * 注意：任务侧还没有「节点库来源」字段（契约 taskNodeId 现解析为项目流程节点），
  * 「已添加」一律按「同阶段同名」折算（见 data/tasks.ts 的 addedNodeKeysOf）。

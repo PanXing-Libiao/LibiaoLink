@@ -22,7 +22,7 @@ import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
-import { canEditTaskNodes, canEditTaskTemplate, canEditTaskTemplates, hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
+import { canChangeTaskTemplateVisibility, canEditTaskNodes, canEditTaskTemplate, canEditTaskTemplates, hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
 import { firstAllowedHref } from "./accessRoutes";
 import {
   createDictItem,
@@ -801,6 +801,7 @@ export default function App() {
   const canManageNodes = canEditTaskNodes(permissions);
   const canManageTemplates = canEditTaskTemplates(permissions);
   const canManageTemplate = (createdBy: string | null): boolean => canEditTaskTemplate(permissions, createdBy);
+  const canChangeTemplateVisibility = (createdBy: string | null): boolean => canChangeTaskTemplateVisibility(permissions, createdBy);
   /**
    * 干系人写入口（Push 221 · A27）：新建 / 编辑 / 删除 = stakeholder.manage。与 project.create / project.update
    * 同一口径：画像未到时乐观放行（服务端逐请求仍是最终裁决），已知缺位才收起写入口 —— 读列表 = stakeholder.view
@@ -987,6 +988,7 @@ export default function App() {
           canManageNodes={canManageNodes}
           canManageTemplates={canManageTemplates}
           canManageTemplate={canManageTemplate}
+          canChangeTemplateVisibility={canChangeTemplateVisibility}
         />
         {bottomBars}
       </>

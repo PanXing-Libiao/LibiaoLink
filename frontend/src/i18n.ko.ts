@@ -1273,7 +1273,7 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "tpl.visibility.publicHint": "작업 템플릿 조회 권한이 있는 모든 사용자가 볼 수 있습니다",
   "tpl.visibility.aria": "템플릿 공개 범위",
   "tpl.visibility.editTitle": "템플릿 공개 범위 변경 · 저장 후 적용",
-  "tpl.visibility.systemHint": "시스템 기본 템플릿의 공개 범위는 관리자가 조정합니다",
+  "tpl.visibility.systemHint": "이 템플릿의 공개 범위는 작성자만 변경할 수 있습니다",
   "tpl.nodes.title": "작업 노드",
   "tpl.nodes.count": "{n} 노드",
   "tpl.nodes.countFiltered": "{shown} / {total} 노드",

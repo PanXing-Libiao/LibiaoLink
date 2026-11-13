@@ -61,8 +61,8 @@ export const TaskNodeListResponseSchema = z
 
 /**
  * 模板可见范围：private = 仅填写人可见；public = 有任务模板浏览权的账号均可见。
- * 创建时选择；创建后由填写人或系统管理员在模板编辑中调整，保存时走同一份 PATCH 契约。
- * 系统预置模板（createdBy 为空）仅管理员可把可见范围改为 private，此时同一 PATCH 将填写人接管为当前管理员。
+ * 创建时选择；创建后仅填写人本人可在模板编辑中调整，保存时走同一份 PATCH 契约。
+ * 系统预置模板（createdBy 为空）没有填写人，任何人（包括管理员）都不能调整其可见范围。
  */
 export const TaskTemplateVisibilitySchema = z
   .enum(["private", "public"])
@@ -85,7 +85,7 @@ export const TaskTemplateSchema = z
     stageKey: StageKeySchema,
     visibility: TaskTemplateVisibilitySchema.openapi({ description: "可见范围：private 仅填写人可见；public 有模板浏览权的人可见" }),
     nodes: z.array(TaskTemplateNodeSchema).openapi({ description: "节点顺序 = 数组顺序；同一模板内按 nodeId 去重" }),
-    createdBy: UuidSchema.nullable().openapi({ description: "填写人 user id；存量种子 / 系统导入为空；管理员将无填写人的系统模板改为 private 时接管为当前管理员" }),
+    createdBy: UuidSchema.nullable().openapi({ description: "填写人 user id；存量种子 / 系统导入为空；系统预置模板没有填写人，任何人都不能调整其可见范围" }),
     createdByName: z.string().nullable().openapi({ description: "填写人姓名（users.display_name）；为空时界面显示系统配置填写人贾海洋" }),
     version: VersionSchema,
     createdAt: DateTimeSchema,
@@ -118,7 +118,7 @@ export const TaskTemplateUpdateBodySchema = z
   .object({
     name: z.string().min(1).max(100).optional(),
     visibility: TaskTemplateVisibilitySchema.optional().openapi({
-      description: "可见范围（可选）：private 仅填写人可见，public 有模板浏览权的人可见；系统预置模板由管理员改为 private 时接管填写人；不传 = 保持原值",
+      description: "可见范围（可选）：private 仅填写人可见，public 有模板浏览权的人可见；只有填写人本人能实际切换，非填写人回传同值不视为切换；不传 = 保持原值",
     }),
     nodeIds: z
       .array(UuidSchema)

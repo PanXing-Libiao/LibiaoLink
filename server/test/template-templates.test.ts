@@ -3,9 +3,9 @@
  * 1) 列表：GET /api/v1/task-templates —— stage 缺省 = 全部阶段（null 透传仓库），指定阶段只回该阶段；nodes 按 seq 组装、随行 title / titleEn；
  * 2) 详情：GET /api/v1/task-templates/{id} —— 不存在 / 已软删 404；
  * 3) 新建：POST —— 名称 trim（全空白 400）；nodeIds 允许空；重复 id / 未知节点 / 跨阶段节点 400 VALIDATION_FAILED 且不落库不留痕；
- * 4) 编辑：PATCH —— 改名 / nodeIds 全量替换（seq 重排为 10/20/30）；乐观锁 version 过期 409 VERSION_CONFLICT；不存在 404；
+ * 4) 编辑：PATCH —— 改名 / 可见范围 / nodeIds 全量替换（seq 重排为 10/20/30）；可见范围仅填写人本人可调整，管理员回传同值不阻止内容编辑；乐观锁 version 过期 409 VERSION_CONFLICT；不存在 404；
  * 5) 删除：DELETE —— **软删**（deletedAt 回包 + 审计 action=delete 快照）；version 过期 409；不存在 404；
- * 6) 权限：写（新建 / 编辑 / 删除）= 公共任务模板管理权（系统管理员或有效项目经理）—— 无权 403，且不落库、不留痕；
+ * 6) 权限：写（新建 / 内容编辑 / 删除）= 公共任务模板管理权（系统管理员或有效项目经理）；可见范围只由填写人本人调整 —— 无权 403，且不落库、不留痕；
  * 7) 留痕：写操作各一条审计（objectType = task_template，changes 记名称 + 节点名顺序）；不写 outbox（与节点库 / 字典同口径）。
  * 契约见 shared/src/modules/templates.ts；真机口径见 server/src/modules/template/README.md。
  */
@@ -389,28 +389,42 @@ describe("编辑模板（改名 / 可见范围 / 节点全量替换 + 乐观锁�
     expect(audit.records[1]?.metadata).toMatchObject({ visibility: "public" });
   });
 
-  it("管理员可把系统预置模板改为仅个人使用，并接管为填写人", async () => {
-    const { service, repo, audit } = makeService();
+  it("系统预置模板没有填写人：管理员也不能调整可见范围，但可继续编辑内容", async () => {
+    const { service, repo, audit } = makeService({ admin: true });
     repo.rows = [makeTemplate({ createdBy: null, visibility: "public" })];
 
-    const hidden = await service.updateTemplate(TEMPLATE, { visibility: "private", version: 0 }, ACTOR);
-    expect(hidden).toMatchObject({ visibility: "private", createdBy: ACTOR, version: 1 });
-    expect(repo.rows[0]).toMatchObject({ visibility: "private", createdBy: ACTOR, version: 1 });
-    expect(audit.records[0]?.changes).toEqual([
-      { field: "createdBy", from: null, to: ACTOR },
-      { field: "visibility", from: "public", to: "private" },
-    ]);
-    expect(audit.records[0]?.metadata).toMatchObject({ visibility: "private", createdBy: ACTOR });
-  });
-
-  it("非管理员不能把系统预置模板改为仅个人使用", async () => {
-    const { service, repo, audit } = makeService({ admin: false });
-    repo.rows = [makeTemplate({ createdBy: null, visibility: "public" })];
     await expect(
       service.updateTemplate(TEMPLATE, { visibility: "private", version: 0 }, ACTOR),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(repo.rows[0]).toMatchObject({ visibility: "public", createdBy: null, version: 0 });
     expect(audit.records).toHaveLength(0);
+
+    const renamed = await service.updateTemplate(
+      TEMPLATE,
+      { name: "系统模板改名", visibility: "public", version: 0 },
+      ACTOR,
+    );
+    expect(renamed).toMatchObject({ name: "系统模板改名", visibility: "public", createdBy: null, version: 1 });
+    expect(audit.records[0]?.changes).toEqual([{ field: "name", from: "硬件实施模板一", to: "系统模板改名" }]);
+  });
+
+  it("管理员不能调整他人模板的可见范围，但可继续编辑内容", async () => {
+    const { service, repo, audit } = makeService({ admin: true });
+    repo.rows = [makeTemplate({ createdBy: OTHER, visibility: "public" })];
+
+    await expect(
+      service.updateTemplate(TEMPLATE, { visibility: "private", version: 0 }, ACTOR),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(repo.rows[0]).toMatchObject({ visibility: "public", createdBy: OTHER, version: 0 });
+    expect(audit.records).toHaveLength(0);
+
+    const renamed = await service.updateTemplate(
+      TEMPLATE,
+      { name: "管理员改名", visibility: "public", version: 0 },
+      ACTOR,
+    );
+    expect(renamed).toMatchObject({ name: "管理员改名", visibility: "public", createdBy: OTHER, version: 1 });
+    expect(audit.records[0]?.changes).toEqual([{ field: "name", from: "硬件实施模板一", to: "管理员改名" }]);
   });
 
   it("其他账号编辑个人模板按不存在处理", async () => {

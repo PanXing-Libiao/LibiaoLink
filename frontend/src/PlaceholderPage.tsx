@@ -46,7 +46,7 @@ type TemplateDraft = {
   id: string;
   /** 模板名（可直接改；保存时 trim 后落库） */
   name: string;
-  /** 可见范围：创建时选定，填写人 / 管理员可在保存时切换；private 仅填写人可见，public 有浏览权的人可见 */
+  /** 可见范围：创建时选定，创建后只有填写人可在保存时切换；private 仅填写人可见，public 有浏览权的人可见 */
   visibility: TemplateVisibility;
   /** 这份模板里已选的节点，顺序即模板里的顺序 */
   nodes: TemplateNode[];
@@ -209,6 +209,8 @@ type PlaceholderPageProps = {
   canManageTemplates: boolean;
   /** 单份模板是否可维护：管理员，或仍为有效项目经理的创建人。 */
   canManageTemplate: (createdBy: string | null) => boolean;
+  /** 单份模板是否可调整可见范围：只允许填写人本人。 */
+  canChangeTemplateVisibility: (createdBy: string | null) => boolean;
 };
 
 /** 占位页：顶层页的按钮先各自落地，页面内容后续迭代；任务模板先出阶段板块标签栏 + 左侧任务节点卡片区。 */
@@ -235,7 +237,7 @@ function InsertLine({ className }: { className: string }) {
   );
 }
 
-export default function PlaceholderPage({ me, page, section, canManageNodes, canManageTemplates, canManageTemplate }: PlaceholderPageProps) {
+export default function PlaceholderPage({ me, page, section, canManageNodes, canManageTemplates, canManageTemplate, canChangeTemplateVisibility }: PlaceholderPageProps) {
   const t = useT();
   const locale = useLocale();
   const localize = useLocalizedTranslator();
@@ -1277,7 +1279,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                             {t("tpl.creator", { name: template.createdByName ?? t("tpl.creatorSystem") })}
                           </span>
                           <span aria-hidden="true" className="shrink-0 text-zinc-300">·</span>
-                          {canManageThisTemplate ? (
+                          {canChangeTemplateVisibility(template.createdBy) ? (
                             <div data-template-visibility-control={template.id} className="w-[8.75rem] shrink-0">
                               <SelectMenu
                                 compact
@@ -1296,7 +1298,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                           ) : (
                             <span
                               className="shrink-0"
-                              title={template.createdBy === null ? t("tpl.visibility.systemHint") : undefined}
+                              title={t("tpl.visibility.systemHint")}
                             >
                               {t(template.visibility === "private" ? "tpl.visibility.private" : "tpl.visibility.public")}
                             </span>

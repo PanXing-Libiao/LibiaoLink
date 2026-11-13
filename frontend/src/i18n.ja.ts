@@ -1273,7 +1273,7 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "tpl.visibility.publicHint": "タスクテンプレートの閲覧権限を持つ全員が表示できます",
   "tpl.visibility.aria": "テンプレートの表示範囲",
   "tpl.visibility.editTitle": "テンプレートの表示範囲を変更（保存後に反映）",
-  "tpl.visibility.systemHint": "システム既定テンプレートの公開範囲は管理者が調整します",
+  "tpl.visibility.systemHint": "このテンプレートの公開範囲は作成者のみ変更できます",
   "tpl.nodes.title": "タスクノード",
   "tpl.nodes.count": "{n} ノード",
   "tpl.nodes.countFiltered": "{shown} / {total} ノード",
