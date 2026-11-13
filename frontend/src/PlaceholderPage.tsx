@@ -7,6 +7,7 @@ import { RowDeleteButton } from "./components/RowDeleteButton";
 import { Toast, ToastConfirm } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { TaskNodeCard } from "./components/TaskNodeCard";
+import { SelectMenu } from "./components/SelectMenu";
 import { PROJECT_STAGES } from "./data/projects";
 import { ApiError } from "./api";
 import {
@@ -1277,29 +1278,21 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                           </span>
                           <span aria-hidden="true" className="shrink-0 text-zinc-300">·</span>
                           {canManageThisTemplate && template.createdBy !== null ? (
-                            <label className="relative inline-flex shrink-0 items-center">
-                              <span className="sr-only">{t("tpl.visibility.aria")}</span>
-                              <select
-                                data-template-visibility-control={template.id}
+                            <div data-template-visibility-control={template.id} className="w-[8.75rem] shrink-0">
+                              <SelectMenu
+                                compact
                                 value={template.visibility}
-                                onChange={(event) => {
-                                  setTemplateVisibility(template.id, event.target.value as TemplateVisibility);
+                                options={[
+                                  { value: "private", label: t("tpl.visibility.private") },
+                                  { value: "public", label: t("tpl.visibility.public") },
+                                ]}
+                                onChange={(next) => {
+                                  setTemplateVisibility(template.id, next as TemplateVisibility);
                                 }}
-                                title={t("tpl.visibility.editTitle")}
-                                className="cursor-pointer appearance-none rounded-sm bg-transparent py-0 pl-0 pr-4 text-[11px] leading-5 text-zinc-600 underline decoration-dotted underline-offset-2 outline-none transition hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-400/50"
-                              >
-                                <option value="private">{t("tpl.visibility.private")}</option>
-                                <option value="public">{t("tpl.visibility.public")}</option>
-                              </select>
-                              <svg
-                                viewBox="0 0 16 16"
-                                fill="none"
-                                aria-hidden="true"
-                                className="pointer-events-none absolute right-0 h-3 w-3 text-zinc-500"
-                              >
-                                <path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            </label>
+                                ariaLabel={t("tpl.visibility.editTitle")}
+                                popoverClassName="z-[80]"
+                              />
+                            </div>
                           ) : (
                             <span
                               className="shrink-0"
