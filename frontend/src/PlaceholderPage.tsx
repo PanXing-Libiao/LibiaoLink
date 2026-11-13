@@ -39,8 +39,20 @@ import { isLocalizedLocale, stageText, prefetchLocalizedText, useLocale, useLoca
 import { lockBodyScroll } from "./scrollLock";
 import type { MeResponse } from "./types";
 
-/** 任务模板的阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
-const TEMPLATE_SECTIONS: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
+/** 任务模板的九阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
+const TEMPLATE_STAGE_SECTIONS: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
+
+/** 模板库专属分组：不属于项目阶段，固定排在阶段标签之后、「＋ 新建模板」左侧。 */
+const TEMPLATE_SPECIAL_SECTION = "入库审核";
+const TEMPLATE_SECTIONS: readonly string[] = [...TEMPLATE_STAGE_SECTIONS, TEMPLATE_SPECIAL_SECTION];
+
+/** 板块标签的共用样式（九阶段与入库审核保持同一套选中下划线 / 悬停态）。 */
+function templateTabClass(active: boolean): string {
+  return (
+    "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
+    (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
+  );
+}
 
 /** 左列节点池的兜底空数组（取不到该板块那份时用，避免每次渲染都新建一个）。 */
 const EMPTY_NODE_LIST: readonly TaskNodeItem[] = [];
@@ -1298,7 +1310,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
               左列「任务节点」的吸顶位随之顺延（top = 64 + 59 − 1 = 122px，多叠 1px 防缝）。 */}
           <div data-template-tabs="true" className="sticky top-16 z-20 -mx-6 -mt-3 flex items-center gap-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
             <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-              {TEMPLATE_SECTIONS.map((stage) => {
+              {TEMPLATE_STAGE_SECTIONS.map((stage) => {
                 const active = stage === activeSection;
                 return (
                   <button
@@ -1306,18 +1318,22 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                     type="button"
                     onClick={() => replaceTemplateSection(stage)}
                     aria-current={active ? "page" : undefined}
-                    className={
-                      "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
-                      (active
-                        ? "border-zinc-900 text-zinc-900"
-                        : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
-                    }
+                    className={templateTabClass(active)}
                   >
                     {stageText(locale, stage)}
                   </button>
                 );
               })}
             </div>
+            <button
+              type="button"
+              data-template-extra-section="inbound_review"
+              onClick={() => replaceTemplateSection(TEMPLATE_SPECIAL_SECTION)}
+              aria-current={TEMPLATE_SPECIAL_SECTION === activeSection ? "page" : undefined}
+              className={"shrink-0 " + templateTabClass(TEMPLATE_SPECIAL_SECTION === activeSection)}
+            >
+              {stageText(locale, TEMPLATE_SPECIAL_SECTION)}
+            </button>
             {/*
               新建模板的入口在板块标签栏这一行：点一下 = POST 一份空模板（默认名「未命名模板」），
               新面板插到「任务节点」右侧、原来的模板往右挪。写 = 系统管理员或有效项目经理，无权不渲染（服务端仍是最终裁决）。

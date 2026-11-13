@@ -40,7 +40,7 @@ export class TaskTemplateController {
     private readonly permission: PermissionService,
   ) {}
 
-  /** 模板列表（按阶段过滤；缺省全部阶段，排序 = 九阶段顺序 → created_at → id）。 */
+  /** 模板列表（按模板板块过滤；缺省全部板块，排序 = 板块顺序（九阶段 + 入库审核）→ created_at → id）。 */
   @Get()
   async list(
     @Query(new ZodValidationPipe(TaskTemplateListQuerySchema)) query: TaskTemplateListQuery,

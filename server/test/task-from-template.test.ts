@@ -257,6 +257,18 @@ describe("TaskService.create · sourceNodeId（节点库来源 · A1-16）", () 
     });
   });
 
+  it("入库审核节点不能直接生成项目任务 → 400", async () => {
+    const repo = new FakeTaskRepository();
+    const nodes = new FakeTaskNodeRepository();
+    nodes.nodes.set(NODE_A, { ...makeNode(NODE_A, "入库复核", null), stageKey: "inbound_review" });
+    const { service } = makeService(repo, nodes);
+    await expect(service.create(PROJECT, { title: "入库复核", sourceNodeId: NODE_A }, ACTOR)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
+    expect(repo.inserted).toHaveLength(0);
+  });
+
   it("stageKey 与节点阶段不一致 → 400", async () => {
     const repo = new FakeTaskRepository();
     const nodes = new FakeTaskNodeRepository();
@@ -314,6 +326,17 @@ describe("TaskService.createFromTemplate（模板实例化 · A11 / A1-16）", (
     expect(audit.entries).toHaveLength(3);
     expect(audit.entries[0]?.metadata).toMatchObject({ templateId: TEMPLATE, sourceNodeId: NODE_A, kind: "from_template" });
     expect(repo.touched).toEqual([PROJECT]);
+  });
+
+  it("入库审核模板不能生成项目任务 → 400，且不落库", async () => {
+    const repo = new FakeTaskRepository();
+    const templates = new FakeTemplateService();
+    templates.template = { ...templates.template!, stageKey: "inbound_review" };
+    const { service } = makeService(repo, new FakeTaskNodeRepository(), templates);
+    await expect(
+      service.createFromTemplate(PROJECT, { templateId: TEMPLATE, skipExisting: true }, ACTOR),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
+    expect(repo.inserted).toHaveLength(0);
   });
 
   it("已存在的节点进 skipped（带已存在任务 id），不重复创建", async () => {

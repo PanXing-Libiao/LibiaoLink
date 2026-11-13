@@ -34,6 +34,10 @@ import { useFocusTrap } from "./useFocusTrap";
  * 干系人（Push 324）：「干系人」表随导入落台账。
  * 手动文件就地补传（Push 396）：预览清单每行可选本地文件，确认导入后按提交结果的任务 / 变更目标一并直传；失败可重试。
  * 加载文案（业务口径 2026-10-14「项目在导入那个时间改成预计要多久」）：加载态从「已用 N 秒」改「还需要多长时间：N 秒」，并按墙钟已用时间每秒递减；文案口径「还需要  N 秒」（未完成前保底 1 秒）。
+ * 节点行双名称（PM 反馈 2026-11-13「这条是什么？标准名称，还是 excel 里的名称？希望能同时显示：1、库里的标准名称
+ * 2、导入表格里的名称」）：每一行分行标注「库内标准名称」（按 node.libraryId / AI 建议解析 preview.nodeLibrary）与
+ * 「导入表格名称」（node.name = 源表原文），没有对应库节点时库内那行显示「暂无对应节点」；行内不再重复渲染
+ * 「当前选择：x」（与库内标准名称同一份信息，只留带标签的那一处）。
  * 公共节点申请（业务口径 2026-11-13「给一个申请的渠道，那边能够申请加入公共，然后让管理员审核」）：
  * 保留 Excel 原名的阶段内节点可以顺带申请加入公共节点库（与个人模板互相独立）；申请不改节点库、不阻塞导入，
  * 管理员在任务模板页审核通过后才落公共节点；完成页复述本次提交的申请条数与前几条名称。
@@ -656,6 +660,14 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
           ? preview?.nodeLibrary.find((item) => "existing:" + item.id === choice)
           : undefined;
         const suggested = node.matchKind === "semantic" ? preview?.nodeLibrary.find((item) => item.id === node.libraryId) : undefined;
+        /**
+         * 第 4 条 PM 反馈（2026-11-13「这条是什么？标准名称，还是 excel 里的名称？希望能同时显示：1、库里的标准名称
+         * 2、导入表格里的名称」）：这一行的「库内标准名称」= 用户当前选中的已有节点 → AI 建议节点 → 预览按
+         * node.libraryId 命中的节点；三者都没有 = 本行只会以 Excel 原名导入（显示 import.nodes.libraryNameNone）。
+         * node.name 恒为【导入表格里的名称】（Excel 原文），两者分行并排展示，不再让人猜是哪一份名称。
+         */
+        const libraryNode = selected ?? suggested ??
+          (node.libraryId === null ? undefined : preview?.nodeLibrary.find((item) => item.id === node.libraryId));
         const personalTemplates = (preview?.personalTemplates ?? []).filter((item) => item.stageKey === node.stageKey);
         const request = nodeRequestOf(node);
         /** 这一行是否已经选定复用公共节点库里的某条（此时申请无意义，置灰）。 */
@@ -670,10 +682,28 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
           (active ? "border-zinc-800 bg-zinc-800 text-white" : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-400 hover:bg-zinc-50");
         return (
           <li key={node.groupIndex} className="rounded-lg border border-zinc-100 bg-white px-3 py-3 text-xs" data-import-node={node.groupIndex}>
-            <div className="flex flex-wrap items-center justify-between gap-1">
-              <span className="min-w-0"><span className="block font-medium text-zinc-800">{node.name}</span>
-                {nodeEnglish(node) === null || nodeEnglish(node) === "" ? <span className="text-amber-600">{t("import.nodes.nameEnMissing")}</span> : <span className="text-zinc-400">{nodeEnglish(node)}</span>}
-              </span>
+            <div className="flex flex-wrap items-start justify-between gap-1">
+              <div className="min-w-0 space-y-0.5">
+                <p className="flex flex-wrap items-baseline gap-x-1.5">
+                  <span className="text-[11px] text-zinc-400">{t("import.nodes.libraryNameLabel")}</span>
+                  {libraryNode === undefined ? (
+                    <span className="text-zinc-400" data-import-node-library-name="none">{t("import.nodes.libraryNameNone")}</span>
+                  ) : (
+                    <>
+                      {/* 加粗 = 这一行**当前就会用**库内标准名称（已选节点）；只有 AI 建议 / 尚未选定时用普通字重，
+                          免得把「只是建议」看成「已经定了」。 */}
+                      <span className={choice.startsWith("existing:") ? "font-medium text-zinc-800" : "text-zinc-600"} data-import-node-library-name={libraryNode.id}>{libraryNode.title}</span>
+                      {libraryNode.titleEn === null || libraryNode.titleEn === "" ? null : <span className="text-zinc-400">{libraryNode.titleEn}</span>}
+                    </>
+                  )}
+                </p>
+                <p className="flex flex-wrap items-baseline gap-x-1.5">
+                  <span className="text-[11px] text-zinc-400">{t("import.nodes.excelNameLabel")}</span>
+                  <span className="text-zinc-700" data-import-node-excel-name="">{node.name}</span>
+                  {node.sourceNameEn === null || node.sourceNameEn === "" ? null : <span className="text-zinc-400">{node.sourceNameEn}</span>}
+                </p>
+                {nodeEnglish(node) === null || nodeEnglish(node) === "" ? <p className="text-amber-600">{t("import.nodes.nameEnMissing")}</p> : null}
+              </div>
               <span className="text-zinc-500">{stageText(locale, stageNameOf(node.stageKey))} · {t("import.nodes.count", { n: node.taskCount })}{node.matchKind === "semantic" && node.tasks[0] ? " · " + t("import.nodes.excelRow", { row: node.tasks[0].row }) : ""}</span>
             </div>
             {node.matchKind !== "uncertain" && node.matchKind !== "new" ? null : (
@@ -683,9 +713,6 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
             )}
             {suggested === undefined ? null : (
               <p className="mt-2 text-xs text-blue-700">{t("import.nodes.aiSuggestion", { name: suggested.title })}</p>
-            )}
-            {selected === undefined ? null : (
-              <p className="mt-2 text-xs text-emerald-700">{t("import.nodes.current", { name: selected.title })}</p>
             )}
             {node.matchKind !== "semantic" || suggested === undefined ? null : (
               <div className="mt-3 flex flex-wrap gap-2">

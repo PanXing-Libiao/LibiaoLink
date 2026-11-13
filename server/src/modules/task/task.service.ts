@@ -76,6 +76,11 @@ type TaskUnfinalizeBody = z.infer<typeof TaskUnfinalizeBodySchema>;
 type TaskListItem = z.infer<typeof TaskListItemSchema>;
 type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
 type TaskCreateBody = z.infer<typeof TaskCreateBodySchema>;
+
+/** 任务模板板块里只有九阶段可实例化为项目任务；入库审核等特殊分组只用于模板库。 */
+function isProjectStageKey(value: string): boolean {
+  return (STAGE_KEYS as readonly string[]).includes(value);
+}
 type TaskUpdateBody = z.infer<typeof TaskUpdateBodySchema>;
 type TaskProgressUpdateBody = z.infer<typeof TaskProgressUpdateBodySchema>;
 type TaskProgress = z.infer<typeof TaskProgressSchema>;
@@ -265,6 +270,9 @@ export class TaskService {
       if (node === null) {
         throw new AppError("VALIDATION_FAILED", "sourceNodeId 不存在或节点已从节点库删除");
       }
+      if (!isProjectStageKey(node.stageKey)) {
+        throw new AppError("VALIDATION_FAILED", "该任务节点属于模板专区分组，不能直接生成项目任务");
+      }
       if (stageKey !== null && node.stageKey !== stageKey) {
         throw new AppError("VALIDATION_FAILED", "stageKey 与来源节点所属阶段不一致（节点阶段：" + node.stageKey + "）");
       }
@@ -370,6 +378,9 @@ export class TaskService {
   ): Promise<TaskCreateFromTemplateResponse> {
     const project = await this.loadProjectForWrite(projectId);
     const template = await this.templates.getTemplate(body.templateId, actorId);
+    if (!isProjectStageKey(template.stageKey)) {
+      throw new AppError("VALIDATION_FAILED", "「入库审核」是模板专区分组，不能生成项目任务");
+    }
     const ordered = template.nodes;
     let picked = ordered;
     if (body.nodeIds !== undefined) {

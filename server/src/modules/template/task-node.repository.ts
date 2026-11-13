@@ -31,8 +31,8 @@ export interface TaskNodeUpdatePatch {
   titleEn?: string | null;
 }
 
-/** 九阶段顺序（列表排序用）：与 shared/src/common/dicts.ts 的 STAGE_KEYS 同序；未知 key 排最后。 */
-const STAGE_RANK = sql`coalesce(array_position(array['presale','design','purchase','assembly','install','deploy','trial','production','acceptance']::text[], ${taskNodes.stageKey}), 99)`;
+/** 模板板块顺序（九阶段 + 入库审核，列表排序用）：与 shared/src/common/dicts.ts 的 STAGE_KEYS 同序；未知 key 排最后。 */
+const STAGE_RANK = sql`coalesce(array_position(array['presale','design','purchase','assembly','install','deploy','trial','production','acceptance', 'inbound_review']::text[], ${taskNodes.stageKey}), 99)`;
 
 /**
  * 任务节点仓库（0032 · M3-05 余；0094 增模板私有节点）：只读写 task_nodes。
@@ -44,7 +44,7 @@ const STAGE_RANK = sql`coalesce(array_position(array['presale','design','purchas
 export class TaskNodeRepository {
   constructor(private readonly database: DatabaseService) {}
 
-  /** 公共节点库按阶段过滤（null = 全部阶段）；排序 = 九阶段顺序 → seq → id。 */
+  /** 公共节点库按模板板块过滤（null = 全部板块）；排序 = 板块顺序（九阶段 + 入库审核）→ seq → id。 */
   async list(stageKey: string | null, tx?: DbClient): Promise<TaskNodeRow[]> {
     const db = tx ?? this.database.db;
     const where = stageKey === null

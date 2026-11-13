@@ -823,7 +823,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "get",
     path: "/api/v1/task-nodes",
     tags: ["templates"],
-    summary: "任务节点库（任务模板的节点来源；按阶段过滤）",
+    summary: "任务节点库（任务模板的节点来源；按九阶段或入库审核过滤）",
     request: { query: TaskNodeListQuerySchema },
     responses: { 200: { description: "节点库列表", ...json(TaskNodeListResponseSchema) } },
   });
@@ -832,7 +832,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "post",
     path: "/api/v1/task-nodes",
     tags: ["templates"],
-    summary: "新增公共任务节点（仅系统管理员；同阶段同名 409）",
+    summary: "新增公共任务节点（仅系统管理员；同板块同名 409）",
     request: { headers: idempotencyHeader, body: json(TaskNodeCreateBodySchema) },
     responses: {
       201: { description: "创建成功", ...json(TaskNodeSchema) },
@@ -931,7 +931,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "get",
     path: "/api/v1/task-templates",
     tags: ["templates"],
-    summary: "任务模板列表（按阶段过滤；含节点顺序与名称摘要）",
+    summary: "任务模板列表（按板块过滤；含节点顺序与名称摘要）",
     request: { query: TaskTemplateListQuerySchema },
     responses: { 200: { description: "模板列表", ...json(TaskTemplateListResponseSchema) } },
   });
@@ -952,7 +952,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "post",
     path: "/api/v1/task-templates",
     tags: ["templates"],
-    summary: "新建任务模板（名称 + 阶段 + 节点顺序）",
+    summary: "新建任务模板（名称 + 模板板块 + 节点顺序）",
     request: { headers: idempotencyHeader, body: json(TaskTemplateCreateBodySchema) },
     responses: {
       201: { description: "创建成功", ...json(TaskTemplateSchema) },

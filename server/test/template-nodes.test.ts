@@ -155,6 +155,17 @@ describe("节点库列表（读 = 登录即可）", () => {
     expect(result.items.map((item) => item.title)).toEqual(["货架组装", "方案评审"]);
   });
 
+  it("入库审核是模板独立板块：可按 inbound_review 读取，不混入验收", async () => {
+    const { service, repo } = makeService();
+    repo.rows = [
+      makeRow(),
+      makeRow({ id: MISSING, stageKey: "inbound_review", title: "入库复核" }),
+    ];
+    const result = await service.listNodes({ stage: "inbound_review" });
+    expect(repo.listStages).toEqual(["inbound_review"]);
+    expect(result.items.map((item) => item.title)).toEqual(["入库复核"]);
+  });
+
   it("指定阶段 = 只回该阶段节点；契约字段齐（ISO 时间 + version 只读 0）", async () => {
     const { service, repo } = makeService();
     repo.rows = [makeRow(), makeRow({ id: MISSING, stageKey: "design", title: "方案评审" })];
@@ -200,6 +211,13 @@ describe("新增节点（写 = 节点库管理权）", () => {
     const { service } = makeService();
     const created = await service.createNode({ stageKey: "install", title: "线缆铺设", titleEn: "  Cabling  " }, ACTOR);
     expect(created.titleEn).toBe("Cabling");
+  });
+
+  it("可在入库审核板块新增公共节点；审计按板块展示，不影响九阶段节点", async () => {
+    const { service, audit } = makeService();
+    const created = await service.createNode({ stageKey: "inbound_review", title: "入库资料复核" }, ACTOR);
+    expect(created).toMatchObject({ stageKey: "inbound_review", seq: 10, title: "入库资料复核" });
+    expect(audit.records[0]?.summary).toBe("新增任务节点：入库审核 · 入库资料复核");
   });
 
   it("显式 seq 原样落库（插队场景）", async () => {

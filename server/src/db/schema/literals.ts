@@ -39,6 +39,9 @@ export const STAGE_KEYS = [
   "acceptance",
 ] as const;
 
+/** 任务模板板块 key：九个项目阶段 + 入库审核（模板库特殊分组，不属于项目阶段）。 */
+export const TEMPLATE_SECTION_KEYS = [...STAGE_KEYS, "inbound_review"] as const;
+
 /** 项目内角色（project_members.role_in_project，v0.3 §3.3）：与全局角色（roles）相互独立，名册内既可见性也认角色。 */
 export const PROJECT_MEMBER_ROLES = [
   "project_manager",

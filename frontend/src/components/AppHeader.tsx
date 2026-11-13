@@ -116,9 +116,16 @@ function useViewportSize(): ViewportSize {
 type AppHeaderProps = {
   me: MeResponse;
   project?: Project | null;
+  /**
+   * 「任务模板」导航项的非数字红点（PM 反馈 2026-11-13「任务模板 这里加红点提醒吧」）：
+   * true = 当前账号有「入库审核」待处理事项。判定与取数在 App.tsx
+   * （有节点库维护权 = 全局待审 > 0；否则 = 本人 pending > 0），这里只透传给 TopNav；
+   * 取不到 / 未登录一律 false，红点只是入口提示，不打断页面。缺省 false。
+   */
+  templatesPending?: boolean;
 };
 
-export function AppHeader({ me, project }: AppHeaderProps) {
+export function AppHeader({ me, project, templatesPending = false }: AppHeaderProps) {
   const locale = useLocale();
   const t = useT();
   const user = me.user;
@@ -313,7 +320,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
         {/* 顶部导航栏（业务口径 2026-09-30「我要做顶部导航栏 分别是首页 项目空间 任务模版 我的任务」）：
             四个纯文字导航项常驻（同日续口径「去除这个液态效果 只保留文字」）；原来的大页名（项目空间 / 任务模板 / 我的任务）
             由导航的当前项接管，不再重复显示。 */}
-        <TopNav />
+        <TopNav templatesPending={templatesPending} />
         {project ? (
           <div className="mx-1 hidden min-w-0 border-l border-zinc-200 pl-4 lg:block">
             <p className="truncate text-xs text-zinc-500">

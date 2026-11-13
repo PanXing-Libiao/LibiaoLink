@@ -4359,6 +4359,7 @@ const STAGE_EN: Record<string, string> = {
   "试运行": "Trial Run",
   "投产阶段": "Production",
   "验收": "Acceptance",
+  "入库审核": "Inbound Review",
   "项目总览": "Project Overview",
   "临时任务": "Temp Task",
 };
@@ -4373,6 +4374,7 @@ const STAGE_JA: Record<string, string> = {
   "试运行": "試運転",
   "投产阶段": "生産段階",
   "验收": "検収",
+  "入库审核": "入庫審査",
   "项目总览": "プロジェクト概要",
   "临时任务": "一時タスク",
 };
@@ -4387,6 +4389,7 @@ const STAGE_KO: Record<string, string> = {
   "试运行": "시험 운영",
   "投产阶段": "생산 단계",
   "验收": "검수",
+  "入库审核": "입고 심사",
   "项目总览": "프로젝트 개요",
   "临时任务": "임시 작업",
 };
