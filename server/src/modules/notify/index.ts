@@ -4,12 +4,18 @@ export {
   composeGroupMarkdown,
   GROUP_DEGRADE_PREFIX,
   GROUP_MARKDOWN_MAX_BYTES,
+  GROUP_STAKEHOLDER_COMMAND_HINT,
+  GROUP_STAKEHOLDER_MAX_ROWS,
+  GROUP_STAKEHOLDER_UNBOUND_HINT,
   GROUP_TRUNCATION_SUFFIX,
   maskChatid,
   NotifyGroupService,
   parseGroupMessage,
+  parseGroupStakeholderCommand,
+  renderGroupStakeholdersMarkdown,
   truncateGroupMarkdown,
 } from "./notify.group.service.js";
+export type { GroupStakeholderViewer } from "./notify.group.service.js";
 export { NotifyGroupRepository } from "./notify.group.repository.js";
 export { DailyReportPosterDeliveryService } from "./daily-report-poster-delivery.service.js";
 export {
@@ -33,6 +39,7 @@ export type {
   DailyReportPosterIssue,
   DailyReportPosterPhoto,
 } from "./daily-report.poster.types.js";
+export type { GroupStakeholderRow } from "./notify.group.repository.js";
 export {
   composeProjectGroupUnavailableAlert,
   projectGroupBindingDeliverability,

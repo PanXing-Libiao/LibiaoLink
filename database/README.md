@@ -2,6 +2,7 @@
 
 > **2026-11-13 · 生产阶段显示名改为投产阶段**：`0090_production_stage_display_rename.sql` 只改现行 `blueprints.draft_payload` 中 `production` 阶段的精确旧名、系统默认任务模板“生产阶段模板”，以及 `STAGE_COMPLETE_GROUP` 的系统生成历史通知 / 发送归档；节点名“生产运行记录”、模板节点“产能爬坡”、历史 `blueprint_versions.payload`、审计原文、导入源预览与其它业务正文均不改。历史发布蓝图由服务读面把精确旧阶段名映射为“投产阶段”；迁移幂等，重复执行命中 0 行。
 
+> **2026-11-12 · 任务定档历史清洗**：`0089_unfinalize_legacy_tasks_without_deliverables.sql` 只清洗未删除、`finalized_at` 非空且 `deliverable_types` 为空的历史任务：先把原定档时间 / 操作人 / 版本写入 `audit_logs`，再清空定档位并 `version + 1`。配置了成果类型的已定档任务、文件定档状态和业务数据不受影响；本迁移无 DDL，重复执行命中 0 行，回滚依据见文件头注。
 
 > **2026-11-10 · CAD**　迁移 0088_cad_dwg_companion_sets.sql 允许 DWG 归档保存已选的固定版本配套文件。启用该入口前使用项目迁移器应用；原有 STEP 限制继续生效。
 

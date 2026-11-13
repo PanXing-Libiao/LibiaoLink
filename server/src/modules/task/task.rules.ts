@@ -34,6 +34,15 @@ export function shanghaiToday(now: Date): string {
 }
 
 /**
+ * 取消定档时间闸（2026-11-12 业务口径）：预计完成日期当天及之前可取消；业务今天（Asia/Shanghai）
+ * 已晚于 plannedEnd 时，任务负责人只能定档、不能取消；项目经理等项目编辑者不受此闸限制。
+ * 调用方必须先用共享能力投影判定 source=task_owner。plannedEnd 为空 = 无期限，始终可取消。
+ */
+export function isUnfinalizeLockedByPlannedEnd(plannedEnd: string | null, today: string): boolean {
+  return plannedEnd !== null && plannedEnd < today;
+}
+
+/**
  * 展示五态派生（A1-06 / A12 / A14；2026-09-24 起含显式覆盖）：
  * 先看覆盖 —— early_done 仅在已完成时生效、overdue 仅在未完成时生效（生效边界与原型 statusOverride 一致）；
  * 无覆盖（或边界不满足）时走派生：完成按实际完成日期与预计完成日期比较分「已完成 / 提前完成」；

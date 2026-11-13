@@ -1484,11 +1484,9 @@ export class FileService {
           { code: "no_version", message: "定档至少需要 1 个版本", path: "version" },
         ]);
       }
-      if (locked.taskId !== null) {
-        const task = await this.repository.findTaskBrief(locked.taskId, tx);
-        if (task !== null && !canManageTaskFinalization(actorId, task.ownerIds, isProjectEditor(access))) {
-          throw new AppError("FORBIDDEN", "仅任务负责人或项目编辑者可定档文件");
-        }
+      const task = locked.taskId === null ? null : await this.repository.findTaskBrief(locked.taskId, tx);
+      if (task !== null && !canManageTaskFinalization(actorId, task.ownerIds, isProjectEditor(access))) {
+        throw new AppError("FORBIDDEN", "仅任务负责人或项目编辑者可定档文件");
       }
       const updated = await this.repository.updateFileState(
         fileId,
@@ -1520,9 +1518,11 @@ export class FileService {
           at: at.toISOString(),
         },
       });
-      // 任务定档（Push 249）：文件定档 → 其挂接任务一并定档（同事务、幂等；任务定档后不支持任何修改）。
-      if (locked.taskId !== null) {
-        const finalizedTaskId = await this.repository.markTaskFinalized(locked.taskId, at, actorId, tx);
+      // 任务定档（Push 249；2026-11-12 收紧）：文件定档仍可独立锁版，但只有挂接任务“已完成 + 输出成果齐全”时才联动任务定档；
+      // 任务未完成或缺成果文件时仅文件定档，任务仍保持可编辑，避免从文件入口绕过任务定档门禁。
+      if (locked.taskId !== null && task !== null && task.finalizedAt === null) {
+        const readiness = await this.repository.isTaskFinalizationReady(locked.taskId, tx);
+        const finalizedTaskId = readiness ? await this.repository.markTaskFinalized(locked.taskId, at, actorId, tx) : null;
         if (finalizedTaskId !== null) {
           // 定档兜底（防绕过补漏）：撤销该任务在途的 version 上传会话（change = A4-13 唯一保留的修改通道，不撤）；
           // 漏网会话由 completeUpload 的任务定档复核兜住。

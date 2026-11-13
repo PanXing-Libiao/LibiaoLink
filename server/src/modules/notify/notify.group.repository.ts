@@ -8,14 +8,15 @@
  */
 import { Injectable } from "@nestjs/common";
 import { STAGE_KEYS, STAGE_NAMES } from "@libiaolink/contracts";
-import { and, asc, count, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { changeRequests } from "../../db/schema/change.js";
 import { users } from "../../db/schema/identity.js";
 import { files, fileLinks, fileVersions } from "../../db/schema/files.js";
-import { notifyDeliveries, wecomGroupCandidates, wecomGroups } from "../../db/schema/notify.js";
+import { notifyDeliveries, wecomAibotDmActivations, wecomGroupCandidates, wecomGroups } from "../../db/schema/notify.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
+import { projectStakeholders, stakeholders } from "../../db/schema/stakeholders.js";
 import { dailyReports, issues } from "../../db/schema/reports.js";
 import { tasks } from "../../db/schema/tasks.js";
 import type {
@@ -28,6 +29,20 @@ import type { StageCompletePosterData } from "./stage-complete.poster.types.js";
 
 export type WecomGroupRow = typeof wecomGroups.$inferSelect;
 export type WecomGroupCandidateRow = typeof wecomGroupCandidates.$inferSelect;
+
+/** 群内干系人查询行：字段口径与系统「干系人」页同源，createdByName 来自 users.display_name。 */
+export interface GroupStakeholderRow {
+  id: string;
+  name: string;
+  companyType: string;
+  company: string | null;
+  title: string | null;
+  phone: string | null;
+  wechat: string | null;
+  email: string | null;
+  role: string | null;
+  createdByName: string | null;
+}
 
 /** R06 动态海报数据（项目 + 成员 + 任务统计一次读齐；姓名只用于 Poster 展示，不回写业务表）。 */
 export interface R06PosterData {
@@ -118,6 +133,58 @@ export class NotifyGroupRepository {
       .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
       .limit(1);
     return rows[0]?.name ?? null;
+  }
+
+  /**
+   * 群内查询者 → 本地用户：只认当前机器人下已绑定（bound_at 非空）的激活行。
+   * 未绑定 / 旧机器人 / 空 bot_id 一律 null（按未登录处理，敏感字段不出群）。
+   */
+  async findBoundLocalUserId(
+    botId: string,
+    wecomUserid: string,
+    client: DbClient = this.database.db,
+  ): Promise<string | null> {
+    if (botId === "" || wecomUserid === "") return null;
+    const rows = await client
+      .select({ userId: wecomAibotDmActivations.userId })
+      .from(wecomAibotDmActivations)
+      .where(
+        and(
+          eq(wecomAibotDmActivations.botId, botId),
+          eq(wecomAibotDmActivations.wecomUserid, wecomUserid),
+          isNotNull(wecomAibotDmActivations.boundAt),
+        ),
+      )
+      .limit(1);
+    return rows[0]?.userId ?? null;
+  }
+
+  /**
+   * 项目干系人（群内查询）：字段口径照系统「干系人」页，默认最近更新在前。
+   * 边界同文件头注：直接读 project_stakeholders + stakeholders + users，不 import stakeholder 领域模块。
+   */
+  async listProjectStakeholders(
+    projectId: string,
+    client: DbClient = this.database.db,
+  ): Promise<GroupStakeholderRow[]> {
+    return await client
+      .select({
+        id: stakeholders.id,
+        name: stakeholders.name,
+        companyType: stakeholders.companyType,
+        company: stakeholders.company,
+        title: stakeholders.title,
+        phone: stakeholders.phone,
+        wechat: stakeholders.wechat,
+        email: stakeholders.email,
+        role: stakeholders.role,
+        createdByName: users.displayName,
+      })
+      .from(projectStakeholders)
+      .innerJoin(stakeholders, eq(stakeholders.id, projectStakeholders.stakeholderId))
+      .leftJoin(users, eq(users.id, stakeholders.createdBy))
+      .where(and(eq(projectStakeholders.projectId, projectId), isNull(stakeholders.deletedAt)))
+      .orderBy(desc(stakeholders.updatedAt), asc(stakeholders.name));
   }
 
   /**

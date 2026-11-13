@@ -5,6 +5,7 @@ import {
   applyStatusWrite,
   deriveDisplayStatus,
   deriveOnTime,
+  isUnfinalizeLockedByPlannedEnd,
   shanghaiToday,
   type TaskDerivationInput,
 } from "../src/modules/task/task.rules.js";
@@ -156,6 +157,18 @@ describe("shanghaiToday（ADR-028 日界）", () => {
   it("UTC 16:00 后进入上海次日", () => {
     expect(shanghaiToday(new Date("2026-09-20T15:59:59Z"))).toBe("2026-09-20");
     expect(shanghaiToday(new Date("2026-09-20T16:00:00Z"))).toBe("2026-09-21");
+  });
+});
+
+describe("isUnfinalizeLockedByPlannedEnd（定档取消时间闸）", () => {
+  it("预计完成日期当天及之前可取消，空日期不锁", () => {
+    expect(isUnfinalizeLockedByPlannedEnd(TODAY, TODAY)).toBe(false);
+    expect(isUnfinalizeLockedByPlannedEnd("2026-09-21", TODAY)).toBe(false);
+    expect(isUnfinalizeLockedByPlannedEnd(null, TODAY)).toBe(false);
+  });
+
+  it("预计完成日期已过（业务今天晚于 plannedEnd）只允许定档，不允许取消", () => {
+    expect(isUnfinalizeLockedByPlannedEnd("2026-09-19", TODAY)).toBe(true);
   });
 });
 
