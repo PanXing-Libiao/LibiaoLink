@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { check, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./identity.js";
-import { STAGE_KEYS, sqlValueList } from "./literals.js";
+import { TEMPLATE_SECTION_KEYS, sqlValueList } from "./literals.js";
 
 /**
  * task_templates（0033 · M3-05 余第二段；0092 增 visibility）：任务模板 —— 名称 + 所属阶段 + 可见范围 + 乐观锁 version；删除为软删（deleted_at / deleted_by）。
@@ -24,7 +24,7 @@ export const taskTemplates = pgTable(
   (table) => [
     index("ix_task_templates_active_stage").on(table.stageKey, table.createdAt, table.id).where(sql`deleted_at is null`),
     index("ix_task_templates_created_by").on(table.createdBy).where(sql`deleted_at is null`),
-    check("ck_task_templates_stage_key", sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`),
+    check("ck_task_templates_stage_key", sql`${table.stageKey} in ${sql.raw(sqlValueList(TEMPLATE_SECTION_KEYS))}`),
     check("ck_task_templates_visibility", sql`${table.visibility} in ('private', 'public')`),
     check("ck_task_templates_name", sql`char_length(btrim(${table.name})) between 1 and 100`),
     check("ck_task_templates_version", sql`${table.version} >= 0`),
@@ -59,7 +59,7 @@ export const taskNodes = pgTable(
       .where(sql`${table.ownerTemplateId} is not null`),
     index("ix_task_nodes_stage_seq").on(table.stageKey, table.seq, table.id),
     index("ix_task_nodes_owner_seq").on(table.ownerTemplateId, table.seq, table.id),
-    check("ck_task_nodes_stage_key", sql`${table.stageKey} in ('presale', 'design', 'purchase', 'assembly', 'install', 'deploy', 'trial', 'production', 'acceptance')`),
+    check("ck_task_nodes_stage_key", sql`${table.stageKey} in ${sql.raw(sqlValueList(TEMPLATE_SECTION_KEYS))}`),
     check("ck_task_nodes_seq", sql`${table.seq} > 0`),
     check("ck_task_nodes_title", sql`char_length(btrim(${table.title})) between 1 and 200`),
     check("ck_task_nodes_version", sql`${table.version} >= 0`),

@@ -12567,7 +12567,7 @@
             "$ref": "#/components/schemas/Uuid"
           },
           "stageKey": {
-            "$ref": "#/components/schemas/StageKey"
+            "$ref": "#/components/schemas/TemplateSectionKey"
           },
           "seq": {
             "type": "integer",
@@ -12606,20 +12606,20 @@
           "createdAt",
           "updatedAt"
         ],
-        "description": "任务节点库条目（任务模板的节点来源）"
+        "description": "任务节点库条目（任务模板的节点来源；stageKey 可为九阶段或入库审核）"
       },
       "TaskNodeCreateBody": {
         "type": "object",
         "properties": {
           "stageKey": {
-            "$ref": "#/components/schemas/StageKey"
+            "$ref": "#/components/schemas/TemplateSectionKey"
           },
           "title": {
             "type": "string",
             "minLength": 1,
             "maxLength": 200,
             "example": "货架组装",
-            "description": "节点名称（中文；同阶段内唯一）"
+            "description": "节点名称（中文；同板块内唯一）"
           },
           "titleEn": {
             "type": [
@@ -12632,7 +12632,7 @@
           "seq": {
             "type": "integer",
             "exclusiveMinimum": 0,
-            "description": "库内排序；缺省 = 追加到该阶段末尾（末位 seq + 10）"
+            "description": "库内排序；缺省 = 追加到该板块末尾（末位 seq + 10）"
           }
         },
         "required": [
@@ -12810,7 +12810,7 @@
             "description": "模板名称（列头可直接改名）"
           },
           "stageKey": {
-            "$ref": "#/components/schemas/StageKey"
+            "$ref": "#/components/schemas/TemplateSectionKey"
           },
           "visibility": {
             "$ref": "#/components/schemas/TaskTemplateVisibility"
@@ -12865,7 +12865,7 @@
           "createdAt",
           "updatedAt"
         ],
-        "description": "任务模板（名称 + 阶段 + 可见范围 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）"
+        "description": "任务模板（名称 + 模板板块 + 可见范围 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）"
       },
       "TaskTemplateCreateBody": {
         "type": "object",
@@ -12876,7 +12876,7 @@
             "maxLength": 100
           },
           "stageKey": {
-            "$ref": "#/components/schemas/StageKey"
+            "$ref": "#/components/schemas/TemplateSectionKey"
           },
           "visibility": {
             "allOf": [
@@ -12902,7 +12902,7 @@
           "name",
           "stageKey"
         ],
-        "description": "新建任务模板；visibility 缺省 public（兼容旧客户端）"
+        "description": "新建任务模板（stageKey 为模板板块：九阶段或 inbound_review）；visibility 缺省 public（兼容旧客户端）"
       },
       "TaskTemplateDeleteBody": {
         "type": "object",
@@ -13188,6 +13188,22 @@
           "version"
         ],
         "description": "编辑任务（乐观锁 version 必传；阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**未归入阶段**的临时任务可改，阶段任务 / 节点 / 模板生成的任务仍锁定（带字段请求 400）；deliverableTypes（2026-10-08 起）常规编辑开放，原「生成后锁定 / 仅管理员例外调整」下架"
+      },
+      "TemplateSectionKey": {
+        "type": "string",
+        "enum": [
+          "presale",
+          "design",
+          "purchase",
+          "assembly",
+          "install",
+          "deploy",
+          "trial",
+          "production",
+          "acceptance",
+          "inbound_review"
+        ],
+        "description": "任务模板板块 key：九阶段 + inbound_review（入库审核，不属于项目阶段）"
       },
       "TranslateBatchBody": {
         "type": "object",
@@ -17763,21 +17779,21 @@
         "tags": [
           "templates"
         ],
-        "summary": "任务节点库（任务模板的节点来源；按阶段过滤）",
+        "summary": "任务节点库（任务模板的节点来源；按九阶段或入库审核过滤）",
         "parameters": [
           {
             "schema": {
               "allOf": [
                 {
-                  "$ref": "#/components/schemas/StageKey"
+                  "$ref": "#/components/schemas/TemplateSectionKey"
                 },
                 {
-                  "description": "按阶段过滤；缺省 = 全部阶段"
+                  "description": "按模板板块过滤（九阶段或 inbound_review）；缺省 = 全部板块"
                 }
               ]
             },
             "required": false,
-            "description": "按阶段过滤；缺省 = 全部阶段",
+            "description": "按模板板块过滤（九阶段或 inbound_review）；缺省 = 全部板块",
             "name": "stage",
             "in": "query"
           }
@@ -17799,7 +17815,7 @@
         "tags": [
           "templates"
         ],
-        "summary": "新增公共任务节点（仅系统管理员；同阶段同名 409）",
+        "summary": "新增公共任务节点（仅系统管理员；同板块同名 409）",
         "parameters": [
           {
             "schema": {
@@ -17998,21 +18014,21 @@
         "tags": [
           "templates"
         ],
-        "summary": "任务模板列表（按阶段过滤；含节点顺序与名称摘要）",
+        "summary": "任务模板列表（按板块过滤；含节点顺序与名称摘要）",
         "parameters": [
           {
             "schema": {
               "allOf": [
                 {
-                  "$ref": "#/components/schemas/StageKey"
+                  "$ref": "#/components/schemas/TemplateSectionKey"
                 },
                 {
-                  "description": "按阶段过滤；缺省 = 全部阶段"
+                  "description": "按模板板块过滤（九阶段或 inbound_review）；缺省 = 全部板块"
                 }
               ]
             },
             "required": false,
-            "description": "按阶段过滤；缺省 = 全部阶段",
+            "description": "按模板板块过滤（九阶段或 inbound_review）；缺省 = 全部板块",
             "name": "stage",
             "in": "query"
           }
@@ -18034,7 +18050,7 @@
         "tags": [
           "templates"
         ],
-        "summary": "新建任务模板（名称 + 阶段 + 节点顺序）",
+        "summary": "新建任务模板（名称 + 模板板块 + 节点顺序）",
         "parameters": [
           {
             "schema": {

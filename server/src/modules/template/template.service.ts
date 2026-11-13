@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { STAGE_NAMES } from "@libiaolink/contracts";
+import { STAGE_KEYS, TEMPLATE_SECTION_NAMES } from "@libiaolink/contracts";
 import type {
   TaskNode,
   TaskNodeCreateBody,
@@ -27,8 +27,9 @@ import type { TaskNodeRow, TaskNodeUpdatePatch } from "./task-node.repository.js
 import { TaskTemplateRepository } from "./template.repository.js";
 import type { TaskTemplateNodeRef, TaskTemplateRow, TaskTemplateUpdatePatch } from "./template.repository.js";
 
-/** 阶段 key → 展示名（与 project 模块 flow.service 同口径）。 */
-const STAGE_NAME_BY_KEY = STAGE_NAMES as Record<string, string>;
+/** 任务模板板块 key → 展示名（九阶段 + 入库审核特殊分组）。 */
+const SECTION_NAME_BY_KEY = TEMPLATE_SECTION_NAMES as Record<string, string>;
+const PROJECT_STAGE_KEYS = new Set<string>(STAGE_KEYS);
 
 /** 节点快照（审计字段级留痕口径）。 */
 function nodeSnapshot(row: TaskNodeRow): Record<string, unknown> {
@@ -70,7 +71,7 @@ export class TemplateService {
       if (duplicate !== null) {
         throw new AppError(
           "NODE_ALREADY_EXISTS",
-          "该阶段已有同名节点：" + STAGE_NAME_BY_KEY[body.stageKey] + " · " + title,
+          "该板块已有同名节点：" + SECTION_NAME_BY_KEY[body.stageKey] + " · " + title,
         );
       }
       const seq = body.seq ?? (await this.nodes.maxSeq(body.stageKey, tx)) + 10;
@@ -80,7 +81,7 @@ export class TemplateService {
         action: "create",
         objectType: "task_node",
         objectId: row.id,
-        summary: "新增任务节点：" + STAGE_NAME_BY_KEY[body.stageKey] + " · " + row.title,
+        summary: "新增任务节点：" + SECTION_NAME_BY_KEY[body.stageKey] + " · " + row.title,
         changes: diffRecords({}, nodeSnapshot(row)),
         metadata: { stageKey: row.stageKey, seq: row.seq },
       });
@@ -166,7 +167,7 @@ export class TemplateService {
         if (duplicate !== null && duplicate.id !== id) {
           throw new AppError(
             "NODE_ALREADY_EXISTS",
-            "该阶段已有同名节点：" + STAGE_NAME_BY_KEY[before.stageKey] + " · " + title,
+            "该板块已有同名节点：" + SECTION_NAME_BY_KEY[before.stageKey] + " · " + title,
           );
         }
         patch.title = title;
@@ -183,7 +184,7 @@ export class TemplateService {
         action: "update",
         objectType: "task_node",
         objectId: id,
-        summary: "编辑任务节点：" + STAGE_NAME_BY_KEY[before.stageKey] + " · " + row.title,
+        summary: "编辑任务节点：" + SECTION_NAME_BY_KEY[before.stageKey] + " · " + row.title,
         changes: diffRecords(nodeSnapshot(before), nodeSnapshot(row)),
         metadata: { stageKey: row.stageKey, seq: row.seq },
       });
@@ -208,7 +209,7 @@ export class TemplateService {
         action: "delete",
         objectType: "task_node",
         objectId: id,
-        summary: "删除任务节点：" + STAGE_NAME_BY_KEY[before.stageKey] + " · " + before.title,
+        summary: "删除任务节点：" + SECTION_NAME_BY_KEY[before.stageKey] + " · " + before.title,
         changes: diffRecords(nodeSnapshot(before), {}),
         metadata: { stageKey: before.stageKey, seq: before.seq, removedFromTemplates },
       });
@@ -363,7 +364,8 @@ export class TemplateService {
   /** 导入页只列出本人已有的个人模板。 */
   async listPersonalImportTemplates(actorId: string): Promise<Array<{ id: string; name: string; stageKey: string; version: number }>> {
     if (!await this.permission.canManageTaskTemplates(actorId)) return [];
-    return (await this.templates.list(null)).filter((row) => row.visibility === "private" && row.createdBy === actorId)
+    return (await this.templates.list(null))
+      .filter((row) => PROJECT_STAGE_KEYS.has(row.stageKey) && row.visibility === "private" && row.createdBy === actorId)
       .map(({ id, name, stageKey, version }) => ({ id, name, stageKey, version }));
   }
 
@@ -460,7 +462,7 @@ export class TemplateService {
     if (foreign.length > 0) {
       throw new AppError(
         "VALIDATION_FAILED",
-        "模板内节点必须属于同一阶段（" + stageName(stageKey) + "）：" + foreign.join("、"),
+        "模板内节点必须属于同一板块（" + stageName(stageKey) + "）：" + foreign.join("、"),
       );
     }
   }
@@ -547,5 +549,5 @@ function normalizeTemplateName(name: string): string {
 
 /** 阶段 key → 展示名（未知 key 原样返回，仅用于提示文案）。 */
 function stageName(stageKey: string): string {
-  return STAGE_NAME_BY_KEY[stageKey] ?? stageKey;
+  return SECTION_NAME_BY_KEY[stageKey] ?? stageKey;
 }

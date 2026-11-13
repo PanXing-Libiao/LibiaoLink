@@ -271,6 +271,14 @@ describe("模板列表 / 详情（读 = 登录即可）", () => {
     expect(result.total).toBe(2);
   });
 
+  it("入库审核按独立板块过滤：不与验收混用", async () => {
+    const { service, repo } = makeService();
+    repo.rows = [makeTemplate(), makeTemplate({ id: OTHER, stageKey: "inbound_review", name: "入库审核模板" })];
+    const filtered = await service.listTemplates({ stage: "inbound_review" }, ACTOR);
+    expect(repo.listStages).toEqual(["inbound_review"]);
+    expect(filtered.items.map((item) => item.name)).toEqual(["入库审核模板"]);
+  });
+
   it("按阶段过滤；详情不存在 / 已软删（仓库返 null）→ 404 NOT_FOUND", async () => {
     const { service, repo } = makeService();
     repo.rows = [makeTemplate(), makeTemplate({ id: OTHER, stageKey: "design", name: "设计开发模板" })];
@@ -350,6 +358,16 @@ describe("新建模板（写 = taskTemplate.manage）", () => {
     expect(created).toMatchObject({ visibility: "private", createdBy: ACTOR });
     expect(repo.rows.at(-1)).toMatchObject({ visibility: "private", createdBy: ACTOR });
     expect(audit.records[0]?.metadata).toEqual({ stageKey: "install", visibility: "private", createdBy: ACTOR, nodeCount: 0 });
+  });
+
+  it("可在入库审核板块新建模板；审计使用入库审核名称", async () => {
+    const { service, audit } = makeService();
+    const created = await service.createTemplate(
+      { name: "入库审核模板", stageKey: "inbound_review", visibility: "public", nodeIds: [] },
+      ACTOR,
+    );
+    expect(created).toMatchObject({ name: "入库审核模板", stageKey: "inbound_review" });
+    expect(audit.records[0]?.summary).toBe("新增任务模板：入库审核 · 入库审核模板");
   });
 
   it("nodeIds 允许空数组（新建后逐步拖入）", async () => {
@@ -672,6 +690,17 @@ describe("导入到个人模板", () => {
     expect(nodes.inserts[0]).toMatchObject({ ownerTemplateId: TEMPLATE, title: selection.title });
     expect(repo.refs.filter((ref) => ref.templateId === TEMPLATE)).toHaveLength(2);
     expect(audit.records.map((item) => item.objectType)).toEqual(["task_node", "task_template"]);
+  });
+
+  it("个人导入模板不列入库审核模板（不是项目阶段，不能参与项目任务导入）", async () => {
+    const { service, repo } = makeService();
+    repo.rows = [
+      makeTemplate({ id: TEMPLATE, visibility: "private", createdBy: ACTOR }),
+      makeTemplate({ id: OTHER, name: "入库审核模板", stageKey: "inbound_review", visibility: "private", createdBy: ACTOR }),
+    ];
+    expect(await service.listPersonalImportTemplates(ACTOR)).toEqual([
+      { id: TEMPLATE, name: "硬件实施模板一", stageKey: "install", version: 0 },
+    ]);
   });
 
   it("无模板编辑权限时不提供个人模板选项", async () => {

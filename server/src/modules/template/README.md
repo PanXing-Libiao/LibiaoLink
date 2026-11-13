@@ -32,11 +32,18 @@
 - **留痕**：每次写一条审计（`objectType = task_template`；`summary` 带阶段中文名与模板名；`changes` 记名称 + 节点名顺序 + 可见范围 + 填写人，删除写删除前快照；`metadata` 同步带 `visibility` / `createdBy`）；节点删除时审计 `metadata.removedFromTemplates` 记连带从几份模板里移除；**不写 outbox**。
 - **边界**：不碰 `tasks` / `project_nodes`；**实例化 `POST /api/v1/projects/{id}/tasks/from-template` 仍未实现**（前端「添加任务」卡片逐条 `POST /projects/{id}/tasks`，判重 = 同阶段同名）。
 
+## 本切片交付（2026-11-13 · 「入库审核」模板独立板块）
+
+- **业务口径**：任务模板页在九阶段标签右侧、「＋ 新建模板」左侧增加「入库审核」。它不是项目阶段，不进入 `STAGE_KEYS` / 项目阶段字典 / 任务 / 看板 / 甘特图 / 日报，也不得混入验收。
+- **契约**：`shared/src/modules/templates.ts` 新增 `TEMPLATE_SECTION_KEYS = STAGE_KEYS + inbound_review`、`TemplateSectionKey`、`TemplateSectionKeySchema`；`TaskNode` / `TaskTemplate` 的 `stageKey` 与列表过滤参数改为模板板块 key。`inbound_review` 只允许出现在任务模板 / 节点接口。
+- **数据**：迁移 `0095_template_inbound_review_section.sql` 扩展 `task_templates.stage_key` 与 `task_nodes.stage_key` 的 CHECK；仍沿用 `owner_template_id` 隔离模板私有节点，不新增表 / 列。
+- **边界**：入库审核模板不能生成项目任务；`TaskService.create(sourceNodeId=…)` 与 `createFromTemplate()` 对 `inbound_review` 返回 400 `VALIDATION_FAILED`。Excel 导入的个人模板候选也排除该分组。
+- **前端**：`#/templates?section=inbound-review`；九阶段 + 入库审核共用同一套标签、节点库、模板卡片、可见范围与私有节点交互；中 / 英 / 日 / 韩显示名同步。
 ## 验证
 
 - 第一段：`test/template-nodes.test.ts` —— 18 例全绿（列表 / 新增（归一 + seq + 同名 + 越权）/ 编辑（改名 + 英文名清空 + 同名放行与拦截 + 乐观锁 + 404 + 403）/ 删除（快照 + 404 + 403 + 被模板引用时照删））。
 - 第二段：`test/template-templates.test.ts` —— **30 例全绿**（含模板私有节点新增 / 空白标题 / 同模板判重 / 跨模板引用拒绝 / 保存清理）（列表（按阶段 / 全部 + 读序 + 个人 / 公共可见范围）/ 详情（404 + 个人模板隔离）/ 新建（trim + 可见范围 + 空 `nodeIds` + 全空白名 400 + 重复 id / 未知节点 / 跨阶段 400 + 403 + 填写人）/ 编辑（改名 + 可见范围双向切换 + 系统模板管理员不能调整范围 + 他人模板管理员不能调整范围但可编辑内容 + 非管理员拒绝 + `nodeIds` 全量替换 + 清空 + 409 + 404 + 个人模板隔离）/ 删除（软删回包 + 读面消失 + 审计快照 + 409 + 404 + 403））。
-- 本次复核：`npm run typecheck` / `npm run build` / `npm test`（**1830 passed · 61 skipped / 129 文件**）/ `npm run check:boundaries`（**357 文件 / 1637 依赖 / 0 违规**）全过；`shared` 的 `generate` / `typecheck` / `build` / `check` 全过。
+- 本次复核：`npm run typecheck` / `npm run build` / `npm test`（**1844 passed · 61 skipped / 129 文件**）/ `npm run check:boundaries`（**357 文件 / 1637 依赖 / 0 违规**）全过；`shared` 的 `generate` / `typecheck` / `build` / `check` 全过。
 - 真机回放：第一段 `frontend/scripts/m3-05-task-nodes-e2e.mjs` 48 项全过，证据 `docs/m3-05-回放证据(节点库增删改·前端).md`；第二段 `frontend/scripts/m3-05-task-templates-e2e.mjs` **60 项全过**（含硬刷新后仍在 / 未保存改动必须消失 / 面板顺序 = 接口顺序），证据 `docs/m3-05-回放证据(模板落库·前端).md`。
 
 ## 待办（后续）
