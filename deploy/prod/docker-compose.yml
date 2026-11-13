@@ -191,6 +191,7 @@ services:
       - internal_sync_token
       - onlyoffice_jwt_secret
       - translate_api_key
+      - model_config_encryption_key
     depends_on:
       postgres:
         condition: service_healthy
@@ -341,6 +342,8 @@ secrets:
     file: ./secrets/onlyoffice_jwt_secret
   translate_api_key:
     file: ./secrets/translate_api_key
+  model_config_encryption_key:
+    file: ./secrets/model_config_encryption_key
   wecom_app_secret:
     file: ./secrets/wecom_app_secret
   wecom_bot_secret:

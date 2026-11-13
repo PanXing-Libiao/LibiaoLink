@@ -1,3 +1,7 @@
+> **模型管理（本机实现）**：新增管理员模型服务增删改、自动获取模型列表与当前模型选择契约；API Key 仅在写请求中输入，读取接口只返回是否已保存。
+
+> **2026-11-12 Excel 项目导入节点匹配（本机实现，未部署）**：`ImportTaskNode` 增加分组、阶段、匹配状态、节点 id 和源任务行；预览新增 `nodeLibrary`；提交新增可选 `nodeDecisions` / `conflictChoices`，待人工确认或存在同节点冲突时服务端要求提供选择。OpenAPI 登记既有 preview / commit 路由并由工具生成客户端类型。
+
 > **2026-11-12 项目归档行为修订（服务端 wmj 线）**：项目归档门禁改为「项目内未删除任务全部 done 即可」，不再要求验收阶段推进、文件定档或必交成果齐全。有未完成任务返回 409 `ARCHIVE_NOT_READY`，`confirm=true` 不可越过；`confirm` 仅保留为旧客户端兼容字段，新归档 `acknowledgedMissing` 恒为空数组。422 `ARCHIVE_GATE_NOT_PASSED` 与 `file_not_final` / `doc_missing` 枚举仅用于读取历史归档记录。
 
 > **2026-11-09 物料变更补发字段扩展**：`MaterialReissueBodySchema` 增加可选 `emailTitle`（1–500 字）与 `customerName`（≤200 字，可空）覆盖字段；`MaterialReissueSnapshotSchema` 固化实际 `emailTitle`（旧记录可缺省）和 `customerName: string | null`。服务端 / DOCX 使用实际快照值，客户名称不回写项目主数据。生成物已重出，`npm run check` 零漂移。

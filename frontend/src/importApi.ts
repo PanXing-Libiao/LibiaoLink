@@ -4,7 +4,7 @@
  * - POST /api/v1/project-imports/preview：multipart/form-data（字段 file）→ 解析 + 口径校验 → 预览报告（不写库）
  * - POST /api/v1/project-imports/commit：JSON（previewId + 落位确认）→ 建项目并写入全量数据
  * 转换口径（业务已回执，研究记录见 D:\LibiaoLink_help\_conv）：完成日期未填不算完成、进度五档（进行中封顶 75%）、
- * 日期笔误照原值导入 + 提醒、任务节点按文件原名、变更阶段映射（实施→install、发货→assembly）、
+ * 日期笔误照原值导入 + 提醒、任务节点按精确及语义匹配复用或人工确认、变更阶段映射（实施→install、发货→assembly）、
  * 微盘图片出「需手动导入」清单、账号 = 拼音登录名 + 中文名加 -test 显示名 + 初始密码 123456；
  * 干系人（Push 324）：「干系人」表随导入落台账（公司分类自由写法映射四值 / 「填写者」匹配库内账号 / 提交时间）；
  * 干系人信息随导入表内的「干系人」表一并导入。
@@ -47,12 +47,18 @@ export type ImportManualImage = {
   reason: string;
 };
 
-/** 任务节点匹配：matched = 已在节点库；未匹配按文件原名导入，勾选后可补进节点库。 */
+/** 任务节点匹配：精确 / 语义命中复用，未知项人工确认，已确认新节点可补库。 */
 export type ImportTaskNode = {
   name: string;
   /** 节点英文名（节点库 title_en 口径 / 未匹配时取源表英文列）：节点库中英文名成对，导入新节点时一并落库；源表没英文 = null。 */
   nameEn: string | null;
+  sourceNameEn: string | null;
   matched: boolean;
+  groupIndex: number;
+  stageKey: string | null;
+  matchKind: "exact" | "semantic" | "new" | "uncertain" | "temporary";
+  libraryId: string | null;
+  tasks: Array<{ index: number; row: number }>;
   inStageScope: boolean;
   taskCount: number;
 };
@@ -84,6 +90,7 @@ export type ProjectImportPreview = {
   accounts: ImportAccount[];
   imagesManual: ImportManualImage[];
   nodes: ImportTaskNode[];
+  nodeLibrary: Array<{ id: string; stageKey: string; title: string; titleEn: string | null; version: number }>;
   issues: ImportIssue[];
 };
 
@@ -96,6 +103,8 @@ export type ProjectImportCommitInput = {
   projectType: string;
   /** 是否把文件里未匹配的新任务节点补进「任务节点」库（阶段范围外的任务按临时任务处理）。 */
   addMissingNodes: boolean;
+  nodeDecisions?: Array<{ groupIndex: number; action: "existing" | "new" | "standalone"; nodeId: string | null }>;
+  conflictChoices?: Array<{ key: string; taskIndex: number }>;
 };
 
 /** 手动文件落位目标（提交结果回传；前端据此在导入后把选中的文件直传到对应任务 / 变更）。 */

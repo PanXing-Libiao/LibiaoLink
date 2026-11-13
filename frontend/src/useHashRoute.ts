@@ -127,6 +127,7 @@ export type Route =
   | { kind: "audit"; query: AuditQueryState }
   | { kind: "access" }
   | { kind: "settings" }
+  | { kind: "model-settings" }
   | { kind: "files"; query: FilesQueryState };
 
 /** 任务模板页地址：当前板块（标签栏选中的阶段）也走 URL —— 与列表页筛选态同一口径，地址即状态。 */
@@ -162,6 +163,7 @@ export const ACCESS_BASE_HASH = "#/access";
  * 没有页内子态，故不带 query。
  */
 export const SETTINGS_BASE_HASH = "#/settings";
+export const MODEL_SETTINGS_BASE_HASH = "#/model-settings";
 
 const PROJECT_PATH = /^\/project\/([^/]+)$/;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -670,6 +672,7 @@ export function parseHash(hash: string): Route {
   if (path === "/access") {
     return { kind: "access" };
   }
+  if (path === "/model-settings") return { kind: "model-settings" };
   if (path === "/settings") {
     // 企微绑定（Push 250 · 头像菜单首项入口 · 业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」）：
     // 账号级设置的家 —— 当前落点 = 企业微信绑定（D5 / D6 绑定码链路）；页面 = frontend/src/SettingsPage.tsx。

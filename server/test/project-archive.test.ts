@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ProjectArchiveBodySchema, ProjectUpdateBodySchema } from "@libiaolink/contracts";
 import { AppError } from "../src/common/errors/app-error.js";
+import { convertLegacyWorkbook } from "../src/modules/project-import/legacy.js";
 import { DatabaseService } from "../src/db/database.service.js";
 import type { AuditService } from "../src/modules/admin/index.js";
 import { ArchiveRepository, type ArchiveViewRow } from "../src/modules/project/archive.repository.js";
@@ -175,6 +176,24 @@ function makeService() {
 }
 
 describe("项目归档（任务全部完成口径）", () => {
+
+  it("Excel 完成态缺实际完成日期时按未完成阻止归档", async () => {
+    const parsed = convertLegacyWorkbook({
+      sheets: [{
+        name: "任务", path: "task",
+        rows: [["任务描述", "阶段性里程", "任务状态", "实际完成日期"], ["导入任务", "投产阶段", "已完成", ""]],
+      }],
+      anchors: [], hasMedia: () => false, readMedia: () => null, close: () => {},
+    }, "[TEST] UK-导入.xlsx");
+    const importedTask = parsed.tasks[0]!;
+    const { service, repo } = makeService();
+    repo.unfinished = importedTask.baseStatus === "done" ? [] : [{
+      id: "imported-task", title: importedTask.title, stageKey: importedTask.stageKey, status: importedTask.baseStatus,
+    }];
+    await expectAppErrorAsync(() => service.archiveProject(PROJECT_ID, { version: 3, confirm: true }, ACTOR), "ARCHIVE_NOT_READY");
+    expect(repo.inserted).toBeNull();
+  });
+
   it("契约：confirm 缺省 false；PATCH 更新体不接受 status=archived", () => {
     expect(ProjectArchiveBodySchema.parse({ version: 3 })).toEqual({ version: 3, confirm: false });
     expect(ProjectArchiveBodySchema.parse({ version: 3, confirm: true }).confirm).toBe(true);

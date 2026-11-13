@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { IdentityModule } from "../identity/index.js";
+import { ModelConfigModule } from "../model-config/index.js";
 import { TranslateController } from "./translate.controller.js";
 import { TranslateRepository } from "./translate.repository.js";
 import { TranslateService } from "./translate.service.js";
@@ -10,7 +11,7 @@ import { TranslateService } from "./translate.service.js";
  * 保存链路挂点见 task / project 控制器）。
  */
 @Module({
-  imports: [IdentityModule],
+  imports: [IdentityModule, ModelConfigModule],
   controllers: [TranslateController],
   providers: [TranslateRepository, TranslateService],
   exports: [TranslateService],

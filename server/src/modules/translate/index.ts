@@ -2,3 +2,4 @@
 export { TranslateModule } from "./translate.module.js";
 export { TranslateService, TRANSLATE_ENGINE } from "./translate.service.js";
 export type { ContentTranslationHitRow, ContentTranslationRow, ContentTranslationUpsert } from "./translate.repository.js";
+export { protectGlossary, finalizeTranslation } from "./translate.text.js";
