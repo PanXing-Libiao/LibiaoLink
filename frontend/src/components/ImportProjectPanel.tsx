@@ -2,8 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { ApiError } from "../api";
 import { DICT_ACCENT_PALETTE, accentOfItem, dictLabel, type Dicts } from "../dicts";
 import type { DictTools } from "../dictTools";
-import { fieldText, projectTypeText, stageText, useLocale, useT } from "../i18n";
-import { stageNameOf } from "../taskApi";
+import { fieldText, projectTypeText, useLocale, useT } from "../i18n";
 import {
   attachManualChangeFile,
   commitProjectImport,
@@ -704,15 +703,11 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                 </p>
                 {nodeEnglish(node) === null || nodeEnglish(node) === "" ? <p className="text-amber-600">{t("import.nodes.nameEnMissing")}</p> : null}
               </div>
-              <span className="text-zinc-500">{stageText(locale, stageNameOf(node.stageKey))} · {t("import.nodes.count", { n: node.taskCount })}{node.matchKind === "semantic" && node.tasks[0] ? " · " + t("import.nodes.excelRow", { row: node.tasks[0].row }) : ""}</span>
             </div>
             {node.matchKind !== "uncertain" && node.matchKind !== "new" ? null : (
               <p className="mt-2 text-[11px] text-amber-700">
                 {node.matchKind === "new" ? t("import.nodes.badgeNew") : t("import.nodes.badgeUncertain")}
               </p>
-            )}
-            {suggested === undefined ? null : (
-              <p className="mt-2 text-xs text-blue-700">{t("import.nodes.aiSuggestion", { name: suggested.title })}</p>
             )}
             {node.matchKind !== "semantic" || suggested === undefined ? null : (
               <div className="mt-3 flex flex-wrap gap-2">
@@ -780,9 +775,11 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                     />
                     {t("import.nodes.requestTitle")}
                   </label>
-                  <p className="mt-1 text-[11px] leading-5 text-zinc-500">
-                    {usingExisting ? t("import.nodes.requestSkipExisting") : t("import.nodes.requestHint")}
-                  </p>
+                  {/* 业务口径 2026-11-13 22:23（PM「这些删了」）：默认不解释「提交后由管理员审核…」，
+                      只在沿用已有节点、开关置灰时留一句说明为什么不能申请。 */}
+                  {usingExisting ? (
+                    <p className="mt-1 text-[11px] leading-5 text-zinc-500">{t("import.nodes.requestSkipExisting")}</p>
+                  ) : null}
                   {!request.on || usingExisting ? null : (
                     <div className="mt-2 grid gap-2 sm:grid-cols-2">
                       <input
@@ -1197,9 +1194,11 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                               ? t("import.nodes.aiMatchesTitle", { n: aiMatchedNodes.length })
                               : t("import.nodes.pendingTitle", { n: pendingNodes.length })}
                           </h4>
-                          <p className={"mt-1 text-xs " + (currentNodeCategory === "ai" ? "text-blue-800" : "text-amber-800")}>
-                            {currentNodeCategory === "ai" ? t("import.nodes.aiMatchesHint") : t("import.nodes.pendingHint")}
-                          </p>
+                          {/* 业务口径 2026-11-13 22:23（PM「这些删了」）：未匹配 / AI 无法确认这一栏不再铺一段说明，
+                              行内按钮「选择已有节点 / 保留 Excel 名称」已经表达了动作。 */}
+                          {currentNodeCategory === "ai" ? (
+                            <p className="mt-1 text-xs text-blue-800">{t("import.nodes.aiMatchesHint")}</p>
+                          ) : null}
                           {renderNodeRows(nodesByCategory[currentNodeCategory])}
                         </>
                       )}

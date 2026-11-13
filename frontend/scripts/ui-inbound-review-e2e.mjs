@@ -208,6 +208,9 @@ const standaloneClicked = await ev("(function(){var b=document.querySelector('[d
 await sleep(500);
 const term2 = await ev("(function(){var t=document.body.innerText;return {newTerm:t.indexOf('个人节点库')>=0, oldTerm:t.indexOf('个人模板')>=0};})()");
 check("D6 选「保留 Excel 名称」后出现「个人节点库」（与「公共节点库」成对），且无「个人模板」", standaloneClicked === true && term2.newTerm === true && term2.oldTerm === false, JSON.stringify(term2));
+// PM 2026-11-13 22:23「这些删了」：右侧 meta 行 / AI 建议行 / 申请说明 / 未匹配面板说明
+const trimmed = await ev("(function(){var t=document.body.innerText;var rows=document.querySelectorAll('[data-import-node]');var rowText='';for(var i=0;i<rows.length;i++){rowText+=rows[i].innerText;}return {meta:(rowText.indexOf('条任务')>=0||rowText.indexOf('Excel 第')>=0), ai:rowText.indexOf('AI 建议')>=0||t.indexOf('AI 建议沿用以上')>=0, request:t.indexOf('提交后由管理员审核')>=0, pending:t.indexOf('AI 判断没有可沿用的同义节点')>=0};})()");
+check("D7 四处冗长文案已删（行内 meta 行 / AI 建议行 / 申请说明 / 未匹配面板说明）", trimmed.meta === false && trimmed.ai === false && trimmed.request === false && trimmed.pending === false, JSON.stringify(trimmed));
 
 // ---------- 清理 ----------
 await db.query("delete from task_node_requests where title = $1 or title in ('货架复检处理', '线体通电测试')", [PENDING_TITLE]);
