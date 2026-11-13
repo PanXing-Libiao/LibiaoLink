@@ -26,6 +26,7 @@ const TEMPLATE = "44444444-4444-4444-8444-444444444444";
 function makeNode(id: string, title: string, titleEn: string | null): TaskNodeRow {
   return {
     id,
+    ownerTemplateId: null,
     stageKey: "install",
     seq: 10,
     title,

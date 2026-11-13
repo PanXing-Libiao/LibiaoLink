@@ -125,7 +125,7 @@ export async function run(client) {
       const templateId = created.rows[0].id;
       for (let index = 0; index < template.nodes.length; index += 1) {
         const nodeTitle = template.nodes[index];
-        const node = await client.query("select id from task_nodes where stage_key = $1 and title = $2", [stage.stageKey, nodeTitle]);
+        const node = await client.query("select id from task_nodes where owner_template_id is null and stage_key = $1 and title = $2", [stage.stageKey, nodeTitle]);
         if (node.rows.length === 0) {
           summary.skippedNodes += 1;
           continue;

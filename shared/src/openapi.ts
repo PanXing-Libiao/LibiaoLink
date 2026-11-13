@@ -60,6 +60,8 @@ import {
   TaskTemplateDeleteResponseSchema,
   TaskTemplateListQuerySchema,
   TaskTemplateListResponseSchema,
+  TaskTemplateNodeCreateBodySchema,
+  TaskTemplateNodeSchema,
   TaskTemplateSchema,
   TaskTemplateUpdateBodySchema,
 } from "./modules/templates.ts";
@@ -836,6 +838,21 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     responses: {
       200: { description: "更新后的模板", ...json(TaskTemplateSchema) },
       400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/task-templates/{id}/nodes",
+    tags: ["templates"],
+    summary: "在模板内新增私有节点（只属于当前模板，不进入公共节点库）",
+    request: { params: idParams, headers: idempotencyHeader, body: json(TaskTemplateNodeCreateBodySchema) },
+    responses: {
+      201: { description: "创建成功", ...json(TaskTemplateNodeSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
       404: commonErrors[404],
       409: commonErrors[409],
     },

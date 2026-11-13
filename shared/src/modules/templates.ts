@@ -76,7 +76,18 @@ export const TaskTemplateNodeSchema = z
     title: z.string(),
     titleEn: z.string().nullable(),
   })
-  .openapi("TaskTemplateNode", { description: "模板内节点（引用任务节点库 + 模板内顺序 + 名称摘要）" });
+  .openapi("TaskTemplateNode", { description: "模板内节点（公共节点或该模板私有节点 + 模板内顺序 + 名称摘要）" });
+
+/**
+ * 在模板内新增私有节点：只属于当前模板，不写公共节点库。
+ * 标题 / 英文名与公共节点同口径（标题 trim 后必填，英文名可空）；同模板内同名 409 NODE_ALREADY_EXISTS。
+ */
+export const TaskTemplateNodeCreateBodySchema = z
+  .object({
+    title: z.string().min(1).max(200).openapi({ example: "货架复检", description: "节点名称（当前模板内唯一）" }),
+    titleEn: z.string().max(200).nullable().optional().openapi({ description: "英文名（可空）" }),
+  })
+  .openapi("TaskTemplateNodeCreateBody", { description: "在指定模板内新增私有节点（不进入公共节点库）" });
 
 export const TaskTemplateSchema = z
   .object({
@@ -146,6 +157,7 @@ export type TaskNodeUpdateBody = z.infer<typeof TaskNodeUpdateBodySchema>;
 /** 模板侧别名（第二段落库：名称 + 阶段 + 可见范围 + 节点顺序；可见范围与节点顺序均可随编辑更新，乐观锁必传）。 */
 export type TaskTemplateVisibility = z.infer<typeof TaskTemplateVisibilitySchema>;
 export type TaskTemplateNode = z.infer<typeof TaskTemplateNodeSchema>;
+export type TaskTemplateNodeCreateBody = z.infer<typeof TaskTemplateNodeCreateBodySchema>;
 export type TaskTemplate = z.infer<typeof TaskTemplateSchema>;
 export type TaskTemplateListQuery = z.infer<typeof TaskTemplateListQuerySchema>;
 export type TaskTemplateListResponse = z.infer<typeof TaskTemplateListResponseSchema>;
