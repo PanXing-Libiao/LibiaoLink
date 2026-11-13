@@ -53,7 +53,7 @@
 - **契约**：`shared/src/modules/templates.ts` 新增 `TEMPLATE_SECTION_KEYS = STAGE_KEYS + inbound_review`、`TemplateSectionKey`、`TemplateSectionKeySchema`；`TaskNode` / `TaskTemplate` 的 `stageKey` 与列表过滤参数改为模板板块 key。`inbound_review` 只允许出现在任务模板 / 节点接口。
 - **数据**：迁移 `0095_template_inbound_review_section.sql` 扩展 `task_templates.stage_key` 与 `task_nodes.stage_key` 的 CHECK；仍沿用 `owner_template_id` 隔离模板私有节点，不新增表 / 列。
 - **边界**：入库审核模板不能生成项目任务；`TaskService.create(sourceNodeId=…)` 与 `createFromTemplate()` 对 `inbound_review` 返回 400 `VALIDATION_FAILED`。Excel 导入的个人模板候选也排除该分组。
-- **前端**：`#/templates?section=inbound-review`；九阶段 + 入库审核共用同一套标签、节点库、模板卡片、可见范围与私有节点交互；中 / 英 / 日 / 韩显示名同步。
+- **前端**：`#/templates?section=inbound-review`；九阶段共用同一套标签、节点库、模板卡片、可见范围与私有节点交互；入库审核只保留审核工作台，不渲染节点库 / 模板卡片与新建模板入口；中 / 英 / 日 / 韩显示名同步。
 
 ## 验证
 

@@ -21,9 +21,9 @@ import { createHash, randomBytes } from "node:crypto";
  *   4. 本机装了 Chrome（路径可用 CHROME_PATH 覆盖）
  * 环境变量：DATABASE_URL / REPLAY_USER / FRONTEND_BASE / API_BASE / CHROME_PATH / CDP_PORT / IMPORT_FIXTURE
  *
- * 它验什么（18 项）：
- *   A. 顶栏「任务模板」红点：有待审申请时出现、待审清零后消失；板块标签栏 11 枚且第 10 枚 = 入库审核；
- *   B. 「入库审核」板块 = 审核工作台（待审核 / 我的申请 两个标签、申请行在、板块原有的节点库 / 模板仍在），
+ * 它验什么（24 项）：
+ *   A. 顶栏「任务模板」红点：有待审申请时出现、待审清零后消失；同一待审态下「入库审核」板块标签同步亮红点，点进板块后标签红点消失；板块标签栏 11 枚且第 10 枚 = 入库审核；
+ *   B. 「入库审核」板块 = 仅审核工作台（待审核 / 我的申请 两个标签、申请行在；节点库 / 模板面板与新建模板入口不再渲染），
  *      本地那套「待审申请」入口按钮与浮层已彻底删除；
  *   C. 端到端：在工作台里通过申请 → 公共节点库落库；
  *   D. 导入预览面板：节点行同时给「库内标准名称」与「导入表格名称」，标题下两句重复提示不再渲染，
@@ -146,12 +146,16 @@ await goto("#/templates?section=install");
 await waitFor("document.querySelector('[data-template-tabs]') !== null");
 const dotShown = await waitFor("document.querySelector('[data-nav-templates-dot]') !== null", 12000);
 check("A1 有待审申请时，顶栏「任务模板」出现红点", dotShown === true);
+const tabDotShown = await waitFor("document.querySelector('[data-template-inbound-review-dot]') !== null", 12000);
+check("A2 任务模板有待处理红点时，「入库审核」板块标签同步显示红点", tabDotShown === true);
 const tabInfo = await ev("(function(){var bs=document.querySelectorAll('[data-template-tabs] button');var out=[];for(var i=0;i<bs.length;i++){out.push(bs[i].textContent.trim());}return {n:bs.length,last:out[out.length-1],tenth:out[9]};})()");
-check("A2 板块标签栏 = 九阶段 + 入库审核 + ＋ 新建模板（11 枚，第 10 枚 = 入库审核）", tabInfo.n === 11 && tabInfo.tenth === "入库审核", JSON.stringify(tabInfo));
+check("A3 板块标签栏 = 九阶段 + 入库审核 + ＋ 新建模板（11 枚，第 10 枚 = 入库审核）", tabInfo.n === 11 && tabInfo.tenth === "入库审核", JSON.stringify(tabInfo));
 
 // ---------- B. 入库审核 = 审核工作台 ----------
-await goto("#/templates?section=inbound-review");
+const inboundTabClicked = await ev("(function(){var b=document.querySelector('[data-template-extra-section=\"inbound_review\"]');if(b===null){return false;}b.click();return true;})()");
 const workbench = await waitFor("document.querySelector('[data-node-requests-workbench]') !== null");
+const dotsReadOnClick = await waitFor("document.querySelector('[data-nav-templates-dot]') === null && document.querySelector('[data-template-inbound-review-dot]') === null", 12000);
+check("B0 点击「入库审核」后进入审核板块，顶栏与标签红点同时消失", inboundTabClicked === true && workbench === true && dotsReadOnClick === true);
 check("B1 「入库审核」板块内渲染审核工作台", workbench === true);
 const legacy = await ev("JSON.stringify({entry:document.querySelector('[data-node-requests-entry]')!==null,dialog:document.querySelector('[data-node-requests-dialog]')!==null})");
 check("B2 本地旧入口按钮与申请浮层已删除", legacy === JSON.stringify({ entry: false, dialog: false }), legacy);
@@ -159,8 +163,18 @@ const tabs = await ev("JSON.stringify({pending:document.querySelector('[data-nod
 check("B3 工作台有「待审核 / 我的申请」两个标签（审核人 = 系统管理员）", tabs === JSON.stringify({ pending: true, mine: true }), tabs);
 const rowCount = await ev("document.querySelectorAll('[data-node-request-item]').length");
 check("B4 待审核列表出现申请行", rowCount > 0, String(rowCount));
-const boardKept = await ev("document.querySelector('[data-template-tabs]') !== null && document.body.innerText.indexOf('入库审核') >= 0");
-check("B5 板块原有的节点库 / 模板区域保留（远端实现未被删）", boardKept === true);
+const boardState = await ev("JSON.stringify({board:document.querySelector(\"[data-template-board]\")!==null,newTemplate:document.querySelector(\"[data-template-new]\")!==null,workbench:document.querySelector(\"[data-node-requests-workbench]\")!==null})");
+check("B5 入库审核板块只保留审核工作台，节点库 / 模板面板与新建模板入口均不渲染", boardState === JSON.stringify({ board: false, newTemplate: false, workbench: true }), boardState);
+await goto("#/templates?section=install");
+const readDotsStayGone = await waitFor("document.querySelector('[data-nav-templates-dot]') === null && document.querySelector('[data-template-inbound-review-dot]') === null", 12000);
+check("B6 已读后原有待审仍存在，离开入库审核也不会重新亮红点", readDotsStayGone === true);
+const simulatedUnread = await ev("(function(){var k='libiaolink.task-node-notifications-seen.v1';var a=JSON.parse(localStorage.getItem(k)||'[]');if(a.length===0){return false;}a.pop();localStorage.setItem(k,JSON.stringify(a));return true;})()");
+await goto("#/templates?section=install");
+const newDotShown = await waitFor("document.querySelector('[data-nav-templates-dot]') !== null && document.querySelector('[data-template-inbound-review-dot]') !== null", 12000);
+const inboundTabClickedAgain = await ev("(function(){var b=document.querySelector('[data-template-extra-section=\"inbound_review\"]');if(b===null){return false;}b.click();return true;})()");
+const dotsReadAgain = await waitFor("document.querySelector('[data-nav-templates-dot]') === null && document.querySelector('[data-template-inbound-review-dot]') === null", 12000);
+check("B7 新的未读通知会重新亮红点，再点入库审核再次熄灭", simulatedUnread === true && newDotShown === true && inboundTabClickedAgain === true && dotsReadAgain === true);
+await waitFor("document.querySelector('[data-node-requests-workbench]') !== null");
 
 // ---------- C. 端到端：逐条通过，直到没有待审 ----------
 const first = pendingBefore.items[0];
@@ -183,7 +197,7 @@ check("C3 通过后公共节点库落库（" + first.stageKey + " · " + first.t
 // ---------- A3. 审完红点消失 ----------
 await goto("#/templates");
 const dotGone = await waitFor("document.querySelector('[data-nav-templates-dot]') === null", 12000);
-check("A3 待审清零后红点消失", dotGone === true);
+check("A4 待审清零后红点消失", dotGone === true);
 
 // ---------- D. 导入预览面板 ----------
 await goto("#/projects");

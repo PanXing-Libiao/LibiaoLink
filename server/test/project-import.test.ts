@@ -1505,7 +1505,7 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(h.members.upserts.map((item) => item.userId)).toEqual(["user-jia", ACTOR_ID]);
   });
 
-  it("导入：源表项目经理不符合资格时跳过，符合资格的导入人兜底", async () => {
+  it("导入：源表项目经理不受资格限制，按 Excel 账号保留", async () => {
     const h = createHarness();
     h.previews.users = [{ id: "user-jia", username: "jiahaiyang", displayName: "贾海洋" }];
     h.managerEligibility.eligible = new Set([ACTOR_ID]);
@@ -1513,23 +1513,33 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, mediaZip("image1.png", "image2.png"));
 
     const result = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
-    expect(h.projects.inserted[0]?.managerIds).toEqual([ACTOR_ID]);
-    expect(result.issues.map((issue) => issue.code)).toContain("MANAGER_INELIGIBLE");
+    expect(h.projects.inserted[0]?.managerIds).toEqual(["user-jia"]);
+    expect(result.issues.map((issue) => issue.code)).not.toContain("MANAGER_INELIGIBLE");
     expect(h.previews.tasks[0]?.ownerIds).toEqual(["user-jia"]);
   });
 
-  it("导入：源表经理与导入人均不符合资格时拒绝导入", async () => {
+  it("导入：源表经理与导入人均不在资格名单时仍按源表导入", async () => {
     const h = createHarness();
     h.previews.users = [{ id: "user-jia", username: "jiahaiyang", displayName: "贾海洋" }];
     h.managerEligibility.eligible = new Set();
     const preview = await runPreview(h);
     h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, mediaZip("image1.png", "image2.png"));
 
-    await expectCode(
-      () => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh"),
-      "VALIDATION_FAILED",
-    );
-    expect(h.projects.inserted).toEqual([]);
+    const result = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+    expect(h.projects.inserted[0]?.managerIds).toEqual(["user-jia"]);
+    expect(result.issues.map((issue) => issue.code)).not.toContain("MANAGER_INELIGIBLE");
+    expect(h.members.upserts[0]).toMatchObject({ userId: "user-jia", role: "project_manager" });
+  });
+
+  it("导入：源表经理账号缺失时仍回落导入人，不校验导入人资格", async () => {
+    const h = createHarness();
+    h.managerEligibility.eligible = new Set();
+    const preview = await runPreview(h);
+    h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, mediaZip("image1.png", "image2.png"));
+
+    const result = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+    expect(h.projects.inserted[0]?.managerIds).toEqual([ACTOR_ID]);
+    expect(result.issues.map((issue) => issue.code)).toContain("MANAGER_FALLBACK");
   });
 
   it("导入：仅自己的项目编辑，导入人不符合资格时只加普通成员", async () => {

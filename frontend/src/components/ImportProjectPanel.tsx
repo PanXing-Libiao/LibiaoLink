@@ -109,14 +109,17 @@ function formatBytes(size: number): string {
 }
 
 /**
- * 预计时长（业务口径 2026-10-14「项目在导入那个时间改成预计要多久」）：解析按文件大小估；
- * 写入按文件大小 + 图片数估（真机口径参考：61.4 MB / 151 张内嵌图导入表约 35 秒）。
+ * 预计时长（业务口径 2026-10-14「项目在导入那个时间改成预计要多久」）。
+ * 2026-11-14 重新校准（导入预览已含 AI 节点比对）：
+ * 测试机 65.9 MB / 153 张内嵌图导入表，预览 4 次实测 9.4 / 19.7 / 25.3 / 25.6 秒
+ * （AI 正常返回到模型网关 20 秒超时），均值约 20 秒；写入 2 次实测 28.7 / 30.6 秒。
+ * 解析：文件体积 0.1 秒/MB + AI 校验固定余量 14 秒；写入：0.08 秒/MB + 0.14 秒/图 + 4 秒。
  */
 function estimateParseSeconds(size: number): number {
-  return Math.max(2, Math.round((size / (1024 * 1024)) * 0.12 + 3));
+  return Math.max(14, Math.round((size / (1024 * 1024)) * 0.1 + 14));
 }
 function estimateCommitSeconds(size: number, imageCount: number): number {
-  return Math.max(5, Math.round((size / (1024 * 1024)) * 0.1 + imageCount * 0.15 + 5));
+  return Math.max(6, Math.round((size / (1024 * 1024)) * 0.08 + imageCount * 0.14 + 4));
 }
 
 /**

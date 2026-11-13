@@ -282,7 +282,7 @@ export default function App() {
   }, [signedIn]);
   /**
    * 「任务模板」导航红点（PM 反馈 2026-11-13「任务模板 这里加红点提醒吧」）：登录后 / 切页（地址变化）/
-   * 每 60 秒各刷新一次 —— 有节点库维护权（taskNodeManage）看全局待审，其他账号只看本人 pending。
+   * 每 60 秒各刷新一次 —— 有节点库维护权（taskNodeManage）看全局待审，其他账号看本人 pending / rejected 的未读通知。
    * 权限画像未就绪先不请求（视角拿不准时宁可不亮，也别先按本人视角闪一下）；失败静默不亮。
    * 审核动作成功后的刷新由任务模板页（PlaceholderPage）负责，见 ../taskNodePending。
    */
