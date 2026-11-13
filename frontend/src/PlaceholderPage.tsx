@@ -434,7 +434,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   };
 
   /**
-   * 新建模板 = `POST /api/v1/task-templates`（默认名「未命名模板」、空节点，回来再拖节点进去）：
+   * 新建模板 = `POST /api/v1/task-templates`（默认名「未命名模板」、空节点，回来可拖入节点或在模板内直接添加）：
    * 成功 = 新面板插到最前（原来的往右挪）并把焦点 / 全选落到它的名字上；失败 = 底部提示条。
    */
   const startNewTemplate = (visibility: TemplateVisibility): void => {
@@ -572,7 +572,9 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
    * 节点表单状态（面板内联，不弹窗）：新增与编辑**共用一套表单**（Push 181 后半 —— 业务口径「任务节点编辑也要」）。
    * `mode === "edit"` 时带着被编辑的那一行（含乐观锁 version），保存走 PATCH；`"create"` 走 POST。
    */
-  const [nodeForm, setNodeForm] = useState<{ mode: "create" } | { mode: "edit"; node: TaskNodeItem } | null>(null);
+  const [nodeForm, setNodeForm] = useState<
+    { mode: "create"; templateId: string | null } | { mode: "edit"; node: TaskNodeItem } | null
+  >(null);
   const [formTitle, setFormTitle] = useState("");
   const [formTitleEn, setFormTitleEn] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -636,16 +638,16 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const templateErrorMessage = (error: unknown, fallback: string): string =>
     error instanceof ApiError ? templateWriteMessage(error) : fallback;
 
-  /** 打开「新增节点」表单（清空旧输入；已开着就收起）。 */
-  const openCreateForm = (): void => {
+  /** 打开「新增节点」表单（清空旧输入；同一入口再点一次就收起）。`templateId` = 保存后一并加入哪份模板，null = 只进节点库。 */
+  const openCreateForm = (templateId: string | null = null): void => {
     setFormError(null);
-    if (nodeForm?.mode === "create") {
+    if (nodeForm?.mode === "create" && nodeForm.templateId === templateId) {
       setNodeForm(null);
       return;
     }
     setFormTitle("");
     setFormTitleEn("");
-    setNodeForm({ mode: "create" });
+    setNodeForm({ mode: "create", templateId });
   };
 
   /** 打开「编辑节点」表单（预填当前中 / 英文名；再点一次同一个节点 = 收起）。 */
@@ -682,7 +684,16 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
     void (async () => {
       try {
         if (form.mode === "create") {
-          await createStageNode(activeSection, title, formTitleEn.trim());
+          const created = await createStageNode(activeSection, title, formTitleEn.trim());
+          if (form.templateId !== null) {
+            updateTemplates((previous) =>
+              previous.map((entry) =>
+                entry.id === form.templateId && !entry.nodes.some((node) => node.id === created.id)
+                  ? { ...entry, nodes: [...entry.nodes, created] }
+                  : entry,
+              ),
+            );
+          }
         } else {
           await updateStageNode(form.node.id, { title, titleEn: formTitleEn.trim(), version: form.node.version });
         }
@@ -705,7 +716,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
    * 编辑 = **就地插在被编辑的那张卡片下面** —— 业务口径「任务模板里面点编辑，应该就近就可以修改，不是像当前一样在最上方才行」：
    * 长列表里点靠后的卡片，表单就在这张卡片底下出现，不用再滚回列头找（打开后焦点直接落在中文名输入框）。
    */
-  const renderNodeForm = (form: { mode: "create" | "edit" }): ReactNode => (
+  const renderNodeForm = (form: { mode: "create" | "edit" }, templateName?: string): ReactNode => (
     <form
       onSubmit={(event) => {
         event.preventDefault();
@@ -716,8 +727,15 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
       }
     >
       <p className="mb-2 text-xs font-medium text-zinc-700">
-        {form.mode === "create" ? t("tpl.node.create") : t("tpl.node.edit")} · {stageText(locale, activeSection)}
+        {(form.mode === "create"
+          ? templateName === undefined
+            ? t("tpl.node.create")
+            : t("tpl.node.createInTemplate", { name: templateName })
+          : t("tpl.node.edit")) + " · " + stageText(locale, activeSection)}
       </p>
+      {form.mode === "create" && templateName !== undefined ? (
+        <p className="mb-2 text-xs leading-5 text-zinc-500">{t("tpl.node.createInTemplateHint")}</p>
+      ) : null}
       <input
         type="text"
         value={formTitle}
@@ -1072,8 +1090,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                     {canManageNodes ? (
                       <button
                         type="button"
-                        onClick={openCreateForm}
-                        aria-expanded={nodeForm?.mode === "create"}
+                        onClick={() => { openCreateForm(); }}
+                        aria-expanded={nodeForm?.mode === "create" && nodeForm.templateId === null}
                         title={t("tpl.nodes.addTitle", { stage: stageText(locale, activeSection) })}
                         className="shrink-0 rounded-md border border-white/70 bg-white/60 px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-white hover:text-zinc-900"
                       >
@@ -1228,11 +1246,23 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                               (isLocalizedLocale(locale) ? "min-w-[12rem]" : "min-w-0")
                             }
                           />
-                          {/* 「计数 / 保存 / 删除」收成一组：放得下就一行右对齐；英文面板放不下时整组换到第二行（名字优先占满第一行）。 */}
+                          {/* 「计数 / 添加节点 / 保存 / 删除」收成一组：放得下就一行右对齐；英文面板放不下时整组换到第二行（名字优先占满第一行）。 */}
                           <span className="ml-auto flex min-w-0 items-center gap-2">
                             <span aria-label={t("tpl.nodes.selectedAria")} className="shrink-0 text-xs text-zinc-500">
                               {t("tpl.nodes.n", { n: nodeCount })}
                             </span>
+                            {canManageThisTemplate && canManageNodes ? (
+                              <button
+                                type="button"
+                                data-template-add-node={template.id}
+                                onClick={() => { openCreateForm(template.id); }}
+                                aria-expanded={nodeForm?.mode === "create" && nodeForm.templateId === template.id}
+                                title={t("tpl.nodes.addToTemplateTitle", { name: localize(template.name) })}
+                                className="shrink-0 whitespace-nowrap rounded-md border border-white/70 bg-white/60 px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-white hover:text-zinc-900"
+                              >
+                                {t("tpl.nodes.add")}
+                              </button>
+                            ) : null}
                             {canManageThisTemplate ? (
                               <button
                                 type="button"
@@ -1351,6 +1381,9 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                           ) : null}
                         </div>
                       </div>
+                      {nodeForm?.mode === "create" && nodeForm.templateId === template.id ? (
+                        renderNodeForm(nodeForm, localize(template.name))
+                      ) : null}
                       <div
                         className={
                           "flex flex-1 flex-col rounded-xl border transition " +
@@ -1363,7 +1396,11 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                       >
                         {nodeCount === 0 ? (
                           <p className="flex min-h-[160px] flex-1 items-center justify-center px-4 text-center text-xs text-zinc-400">
-                            {canManageThisTemplate ? t("tpl.dropHere") : t("tpl.dropHereReadonly")}
+                            {canManageThisTemplate
+                              ? canManageNodes
+                                ? t("tpl.dropHereOrAdd")
+                                : t("tpl.dropHere")
+                              : t("tpl.dropHereReadonly")}
                           </p>
                         ) : (
                           <div className="space-y-3 p-3">
