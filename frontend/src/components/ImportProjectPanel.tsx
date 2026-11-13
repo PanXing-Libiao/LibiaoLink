@@ -20,6 +20,7 @@ import { uploadFile } from "../fileApi";
 import { DictSelect } from "./DictSelect";
 import { RegionSelect } from "./RegionSelect";
 import { ScrollArea } from "./ScrollArea";
+import { SelectMenu } from "./SelectMenu";
 import { useFocusTrap } from "./useFocusTrap";
 
 /**
@@ -28,7 +29,7 @@ import { useFocusTrap } from "./useFocusTrap";
  * 选文件 → ① 解析（不写库）→ ② 校验预览（项目落位 / 条数统计 / 提醒清单 / 需手动导入文件 / 账号 / 未匹配节点）
  * → ③ 确认导入 → ④ 完成（提醒复述）。面板挂在项目空间内（fixed 全屏遮罩），不动路由、不刷新页面。
  * 口径（业务已回执）：解析不写库；完成日期未填不算完成；进度五档（进行中封顶 75%）；日期笔误照原值 + 提醒；
- * 节点按同阶段精确 / 语义匹配，未命中可确认补库；微盘图片出清单人工上传。
+ * 名称一致自动复用；AI 建议逐条选择，保留原名可加入个人模板；微盘图片出清单人工上传。
  * 写入中可取消（Push 321）：「取消写入」/ 刷新 / 关页 = 断开请求 → 服务端单事务回滚（零残留），票据保留可再次确认。
  * 干系人（Push 324）：「干系人」表随导入落台账。
  * 手动文件就地补传（Push 396）：预览清单每行可选本地文件，确认导入后按提交结果的任务 / 变更目标一并直传；失败可重试。
@@ -287,9 +288,8 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   const [region, setRegion] = useState("");
   /** 项目类型：解析按源表关键字给默认（如 AIRROB → 飞箱）；空串 = 未指定（可留空，导入后也能改）。 */
   const [projectType, setProjectType] = useState("");
-  /** 用户确认的新节点是否补进公共节点库。 */
-  const [addMissingNodes, setAddMissingNodes] = useState(true);
   const [nodeChoices, setNodeChoices] = useState<Record<number, string>>({});
+  const [personalTemplateChoices, setPersonalTemplateChoices] = useState<Record<number, string>>({});
   const [selectedNodeCategory, setSelectedNodeCategory] = useState<NodeCategory | null>(null);
   const nodeTabId = useId();
   const [nodePickerIndex, setNodePickerIndex] = useState<number | null>(null);
@@ -324,8 +324,8 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     if (mainChanged) {
       setRegion("");
       setProjectType("");
-      setAddMissingNodes(true);
       setNodeChoices({});
+      setPersonalTemplateChoices({});
       setSelectedNodeCategory(null);
       setNodePickerIndex(null);
       setNodeQuery("");
@@ -362,7 +362,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   // Esc 关闭（写入中 / 地区小窗打开时不关）。
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || regionPopoverOpen || busy) {
+      if (event.key !== "Escape" || regionPopoverOpen || busy || document.querySelector('[data-select-popover="true"]') !== null) {
         return;
       }
       if (nodePickerIndex !== null) {
@@ -458,14 +458,19 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     setPhase({ kind: "committing", preview });
     commitProjectImport(
       {
-        previewId: preview.previewId, region, projectType, addMissingNodes,
+        previewId: preview.previewId, region, projectType, addMissingNodes: false,
         nodeDecisions: preview.nodes.filter((node) => node.inStageScope).map((node) => {
           const choice = nodeChoice(node);
           return {
             groupIndex: node.groupIndex,
-            action: choice.startsWith("existing:") ? "existing" as const : choice === "new" ? "new" as const : "standalone" as const,
+            action: choice.startsWith("existing:") ? "existing" as const : "standalone" as const,
             nodeId: choice.startsWith("existing:") ? choice.slice("existing:".length) : null,
           };
+        }),
+        personalTemplateSelections: preview.nodes.flatMap((node) => {
+          const template = preview.personalTemplates.find((item) => item.id === personalTemplateChoices[node.groupIndex]);
+          return template === undefined || nodeChoice(node) !== "standalone" ? [] :
+            [{ groupIndex: node.groupIndex, templateId: template.id, version: template.version }];
         }),
         conflictChoices: conflicts.map(([key]) => ({ key, taskIndex: conflictChoices[key]! })),
       },
@@ -516,11 +521,10 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
       : null;
   const visibleIssues = preview === null ? [] : preview.issues.filter((issue) => !(issue.code === "REGION_UNRESOLVED" && region !== ""));
   const blockingCount = visibleIssues.filter((issue) => issue.level === "error").length;
-  const nodeChoice = (node: ImportTaskNode): string => nodeChoices[node.groupIndex] ?? (
-    node.matchKind === "exact" || node.matchKind === "semantic" ? "existing:" + node.libraryId :
-    node.matchKind === "new" ? "new" :
-    node.matchKind === "temporary" ? "standalone" : ""
-  );
+  const nodeChoice = (node: ImportTaskNode): string =>
+    node.matchKind === "exact" ? "existing:" + node.libraryId :
+    node.matchKind === "new" || node.matchKind === "temporary" ? "standalone" :
+    nodeChoices[node.groupIndex] ?? "";
   const nodeEnglish = (node: ImportTaskNode): string | null => {
     const choice = nodeChoice(node);
     const selected = choice.startsWith("existing:") ? preview?.nodeLibrary.find((item) => "existing:" + item.id === choice) : undefined;
@@ -530,13 +534,11 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     return selected.title.replace(/\s+/g, "").toLowerCase() === node.name.replace(/\s+/g, "").toLowerCase() ? node.sourceNameEn : null;
   };
   const scopedNodes = preview?.nodes.filter((node) => node.inStageScope) ?? [];
-  const reviewNodes = scopedNodes.filter((node) => nodeChoice(node) === "");
-  const newNodes = scopedNodes.filter((node) => nodeChoice(node) === "new");
-  const resolvedNodes = scopedNodes.filter((node) => nodeChoice(node) !== "" && nodeChoice(node) !== "new");
-  const exactMatches = resolvedNodes.filter((node) => node.matchKind === "exact" && nodeChoice(node) === "existing:" + node.libraryId);
-  const aiMatchedNodes = resolvedNodes.filter((node) => node.matchKind === "semantic" && nodeChoice(node) === "existing:" + node.libraryId);
-  const otherResolvedNodes = resolvedNodes.filter((node) => node.matchKind !== "semantic" || nodeChoice(node) !== "existing:" + node.libraryId);
-  const manualNodes = otherResolvedNodes.filter((node) => node.matchKind !== "exact" || nodeChoice(node) !== "existing:" + node.libraryId);
+  const reviewNodes = scopedNodes.filter((node) => node.matchKind === "uncertain" && nodeChoice(node) === "");
+  const newNodes = scopedNodes.filter((node) => node.matchKind === "new");
+  const exactMatches = scopedNodes.filter((node) => node.matchKind === "exact");
+  const aiMatchedNodes = scopedNodes.filter((node) => node.matchKind === "semantic");
+  const manualNodes = scopedNodes.filter((node) => node.matchKind === "uncertain" && nodeChoice(node) !== "");
 
   const nodesByCategory: Record<NodeCategory, ImportTaskNode[]> = {
     ai: aiMatchedNodes, review: reviewNodes, new: newNodes, manual: manualNodes,
@@ -555,7 +557,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   const conflictBuckets = new Map<string, { name: string; tasks: Array<{ index: number; row: number; name: string }> }>();
   for (const node of scopedNodes) {
     const choice = nodeChoice(node);
-    const key = choice.startsWith("existing:") ? choice : choice === "new" && addMissingNodes ? "new:" + node.groupIndex : null;
+    const key = choice.startsWith("existing:") ? choice : null;
     if (key === null) continue;
     const existingName = preview?.nodeLibrary.find((item) => "existing:" + item.id === key)?.title;
     const bucket = conflictBuckets.get(key) ?? { name: existingName ?? node.name, tasks: [] };
@@ -564,6 +566,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   }
   const conflicts = [...conflictBuckets.entries()].filter(([, bucket]) => bucket.tasks.length > 1);
   const canCommit = phase.kind === "preview" && blockingCount === 0 && region !== "" && reviewNodes.length === 0 &&
+    aiMatchedNodes.every((node) => nodeChoice(node) !== "") &&
     conflicts.every(([key, bucket]) => bucket.tasks.some((task) => task.index === conflictChoices[key]));
   const selectedManualCount = preview === null ? 0 : preview.imagesManual.filter((image) => manualSelections[image.id] !== undefined).length;
   const doneManualPending =
@@ -593,13 +596,11 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
 
   const secondaryButtonClass = "rounded-lg border border-zinc-300 px-3.5 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100";
   const applyNodeChoice = (node: ImportTaskNode, choice: string): void => {
-    const destination: NodeCategory | null = choice === "new" ? "new" : choice === "standalone" ? "manual" :
-      node.matchKind === "exact" && choice === "existing:" + node.libraryId ? null :
-      node.matchKind === "semantic" && choice === "existing:" + node.libraryId ? "ai" : "manual";
-    if (destination !== currentNodeCategory && nodesByCategory[currentNodeCategory].length === 1) {
-      setSelectedNodeCategory(destination);
+    if (currentNodeCategory === "review" && reviewNodes.length === 1) {
+      setSelectedNodeCategory("manual");
     }
     setNodeChoices((current) => ({ ...current, [node.groupIndex]: choice }));
+    if (choice !== "standalone") setPersonalTemplateChoices((current) => ({ ...current, [node.groupIndex]: "" }));
     setConflictChoices({});
     setNodePickerIndex(null);
     setNodeQuery("");
@@ -611,6 +612,8 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
         const selected = choice.startsWith("existing:")
           ? preview?.nodeLibrary.find((item) => "existing:" + item.id === choice)
           : undefined;
+        const suggested = node.matchKind === "semantic" ? preview?.nodeLibrary.find((item) => item.id === node.libraryId) : undefined;
+        const personalTemplates = (preview?.personalTemplates ?? []).filter((item) => item.stageKey === node.stageKey);
         const pickerOpen = nodePickerIndex === node.groupIndex;
         const query = nodeQuery.trim().toLocaleLowerCase();
         const stageNodes = pickerOpen ? (preview?.nodeLibrary ?? []).filter((item) => item.stageKey === node.stageKey) : [];
@@ -625,28 +628,58 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
               <span className="min-w-0"><span className="block font-medium text-zinc-800">{node.name}</span>
                 {nodeEnglish(node) === null || nodeEnglish(node) === "" ? <span className="text-amber-600">{t("import.nodes.nameEnMissing")}</span> : <span className="text-zinc-400">{nodeEnglish(node)}</span>}
               </span>
-              <span className="text-zinc-500">{stageText(locale, stageNameOf(node.stageKey))} · {t("import.nodes.count", { n: node.taskCount })}</span>
+              <span className="text-zinc-500">{stageText(locale, stageNameOf(node.stageKey))} · {t("import.nodes.count", { n: node.taskCount })}{node.matchKind === "semantic" && node.tasks[0] ? " · " + t("import.nodes.excelRow", { row: node.tasks[0].row }) : ""}</span>
             </div>
+            {suggested === undefined ? null : (
+              <p className="mt-2 text-xs text-blue-700">{t("import.nodes.aiSuggestion", { name: suggested.title })}</p>
+            )}
             {selected === undefined ? null : (
               <p className="mt-2 text-xs text-emerald-700">{t("import.nodes.current", { name: selected.title })}</p>
             )}
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" aria-expanded={pickerOpen} className={actionClass(selected !== undefined)}
-                onClick={() => { setNodePickerIndex(pickerOpen ? null : node.groupIndex); setNodeQuery(""); }}
-                data-import-choose-existing={node.groupIndex}>
-                {t("import.nodes.existing")}
-              </button>
-              <button type="button" aria-pressed={choice === "new"} disabled={node.matchKind === "exact"}
-                className={actionClass(choice === "new") + " disabled:cursor-not-allowed disabled:opacity-40"}
-                onClick={() => applyNodeChoice(node, "new")} data-import-choose-new={node.groupIndex}>
-                {t("import.nodes.asNew")}
-              </button>
-              <button type="button" aria-pressed={choice === "standalone"} className={actionClass(choice === "standalone")}
-                onClick={() => applyNodeChoice(node, "standalone")} data-import-choose-standalone={node.groupIndex}>
-                {t("import.nodes.standalone")}
-              </button>
-            </div>
-            {!pickerOpen ? null : (
+            {node.matchKind !== "semantic" || suggested === undefined ? null : (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" aria-pressed={selected?.id === suggested.id} className={actionClass(selected?.id === suggested.id)}
+                  onClick={() => applyNodeChoice(node, "existing:" + suggested.id)} data-import-choose-suggestion={node.groupIndex}>
+                  {t("import.nodes.useSuggestion")}
+                </button>
+                <button type="button" aria-pressed={choice === "standalone"} className={actionClass(choice === "standalone")}
+                  onClick={() => applyNodeChoice(node, "standalone")} data-import-choose-standalone={node.groupIndex}>
+                  {t("import.nodes.keepExcelName")}
+                </button>
+              </div>
+            )}
+            {node.matchKind !== "uncertain" ? null : (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" aria-expanded={pickerOpen} className={actionClass(selected !== undefined)}
+                  onClick={() => { setNodePickerIndex(pickerOpen ? null : node.groupIndex); setNodeQuery(""); }}
+                  data-import-choose-existing={node.groupIndex}>
+                  {t("import.nodes.existing")}
+                </button>
+                <button type="button" aria-pressed={choice === "standalone"} className={actionClass(choice === "standalone")}
+                  onClick={() => applyNodeChoice(node, "standalone")} data-import-choose-standalone={node.groupIndex}>
+                  {t("import.nodes.standalone")}
+                </button>
+              </div>
+            )}
+            {choice !== "standalone" || !node.inStageScope ? null : (
+              <div className="mt-3 border-t border-zinc-100 pt-3">
+                <p className="text-xs font-medium text-zinc-700">{t("import.nodes.personalTemplate")}</p>
+                {personalTemplates.length === 0 ? (
+                  <p className="mt-1 text-xs text-zinc-500">{t("import.nodes.noPersonalTemplate")}</p>
+                ) : (
+                  <div className="mt-1.5 max-w-md" data-import-personal-template={node.groupIndex}>
+                    <SelectMenu
+                      ariaLabel={t("import.nodes.personalTemplate") + " · " + node.name}
+                      value={personalTemplateChoices[node.groupIndex] ?? ""}
+                      options={[{ value: "", label: t("import.nodes.noTemplate") }, ...personalTemplates.map((template) => ({ value: template.id, label: template.name }))]}
+                      onChange={(value) => setPersonalTemplateChoices((current) => ({ ...current, [node.groupIndex]: value }))}
+                      popoverClassName="z-[80]"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+            {node.matchKind !== "uncertain" || !pickerOpen ? null : (
               <div className="mt-3 rounded-xl border border-zinc-200 bg-zinc-50/70 p-3" data-import-node-picker="">
                 <div className="flex items-center justify-between gap-3">
                   <span className="border-b-2 border-zinc-900 pb-1.5 text-xs font-semibold text-zinc-900">
@@ -935,7 +968,6 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                       caption={phase.preview.counts.imagesManual === 0 ? undefined : t("import.stats.images.manual", { n: phase.preview.counts.imagesManual })}
                     />
                     <StatTile label={t("import.stats.accountsNew")} value={phase.preview.counts.accountsNew} />
-                    <StatTile label={t("import.stats.nodesNew")} value={addMissingNodes ? newNodes.length : 0} />
                   </dl>
                 </section>
 
@@ -971,6 +1003,11 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                     <p className="mt-3 text-xs font-medium text-zinc-700" data-import-auto-matched="">
                       {t("import.nodes.autoMatched", { n: exactMatches.length })}
                     </p>
+                    {newNodes.length === 0 ? null : (
+                      <p className="mt-2 text-xs text-amber-700" data-import-unmatched-notice="">
+                        {t("import.nodes.adminNotice")}
+                      </p>
+                    )}
                     {!hasCategorizedNodes ? null : (<>
                     <div
                       role="tablist"
@@ -1036,18 +1073,6 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                               currentNodeCategory === "review" ? t("import.nodes.reviewHint") :
                               currentNodeCategory === "new" ? t("import.nodes.hint") : t("import.nodes.manualHint")}
                           </p>
-                          {currentNodeCategory !== "new" ? null : (
-                            <label className="mt-3 flex items-start gap-2 text-sm text-zinc-700">
-                              <input
-                                type="checkbox"
-                                checked={addMissingNodes}
-                                onChange={(event) => { setAddMissingNodes(event.target.checked); setConflictChoices({}); }}
-                                className="mt-0.5 h-4 w-4"
-                                data-import-add-nodes=""
-                              />
-                              <span>{t("import.nodes.toggle")}</span>
-                            </label>
-                          )}
                           {renderNodeRows(nodesByCategory[currentNodeCategory])}
                         </>
                       )}
@@ -1064,24 +1089,21 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                       {conflicts.map(([key, bucket]) => (
                         <li key={key} className="rounded-lg border border-amber-200 bg-white p-3 text-xs">
                           <p className="font-medium text-zinc-800">{bucket.name}</p>
-                          <select
-                            aria-label={t("import.nodes.conflictAria", { name: bucket.name })}
-                            className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5"
-                            value={conflictChoices[key] === undefined ? "" : String(conflictChoices[key])}
-                            onChange={(event) => {
-                              const value = event.target.value;
-                              setConflictChoices((current) => {
+                          <div className="mt-2">
+                            <SelectMenu
+                              ariaLabel={t("import.nodes.conflictAria", { name: bucket.name })}
+                              value={conflictChoices[key] === undefined ? "" : String(conflictChoices[key])}
+                              options={[{ value: "", label: t("import.nodes.conflictPick") }, ...bucket.tasks.map((task) => ({
+                                value: String(task.index), label: t("import.nodes.conflictRow", { row: task.row, name: task.name }),
+                              }))]}
+                              onChange={(value) => setConflictChoices((current) => {
                                 const next = { ...current };
                                 if (value === "") delete next[key]; else next[key] = Number(value);
                                 return next;
-                              });
-                            }}
-                          >
-                            <option value="">{t("import.nodes.conflictPick")}</option>
-                            {bucket.tasks.map((task) => (
-                              <option key={task.index} value={task.index}>{t("import.nodes.conflictRow", { row: task.row, name: task.name })}</option>
-                            ))}
-                          </select>
+                              })}
+                              popoverClassName="z-[80]"
+                            />
+                          </div>
                         </li>
                       ))}
                     </ul>
@@ -1151,7 +1173,6 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                     stakeholders: phase.result.counts.stakeholders,
                     images: phase.result.counts.images,
                     accounts: phase.result.counts.accountsCreated,
-                    nodes: phase.result.counts.nodesAdded,
                   })}
                 </p>
                 {phase.upload.total === 0 ? null : (

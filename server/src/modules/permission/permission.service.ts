@@ -323,6 +323,19 @@ export class PermissionService {
     throw new AppError("FORBIDDEN", message ?? "当前账号仅可登录，不能查看任务节点与模板");
   }
 
+  /**
+   * 蓝图地图总览读取权：只要有任意项目数据范围（含当前选中为空），或存在有效项目关系，
+   * 即可读取全部未删项目的概况；项目详情仍走 resolveProjectAccess，不会因本放行而可见。
+   */
+  async canBrowseProjectOverview(actorId: string): Promise<boolean> {
+    const groupAccess = await this.groupAccessOf(actorId);
+    if (!groupAccess.enforced || groupAccess.admin) return true;
+    if (hasProjectDataScope(groupAccess)) return true;
+    const relatedProjectIds = await this.repository.listRelatedProjectIds(actorId);
+    if (relatedProjectIds.length === 0) return false;
+    return (await this.repository.listActiveProjectIds(relatedProjectIds)).length > 0;
+  }
+
   /** 全局写入口兜底（无项目上下文）：部门规则开启时仅全部项目编辑 / 管理员可写。 */
   async assertWritable(actorId: string, message?: string): Promise<void> {
     const groupAccess = await this.groupAccessOf(actorId);

@@ -343,7 +343,8 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
       setNodes((previous) => keepLiveOrder(previous, nextNodes));
       setTemplates((previous) => keepLiveOrder(previous, nextTemplates));
       // An armed selection stays a snapshot; the write API still validates its nodes/template.
-      if (armed !== null && armed.nodes.some((node) => !nextNodes.some((next) => next.id === node.id))) setNodesError(t("sac.err.nodeDeleted"));
+      const available = armed?.templateId === undefined ? nextNodes : nextTemplates.find((item) => item.id === armed.templateId)?.nodes ?? [];
+      if (armed !== null && armed.nodes.some((node) => !available.some((next) => next.id === node.id))) setNodesError(t("sac.err.nodeDeleted"));
     };
   }, stage, !nodesLoading && !templatesLoading, { readOnly: true });
 
@@ -474,7 +475,8 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
 
   /** 位置选好了（Push 113）：交给上层按这个位置插进项目；没给批量入口时逐条加。templateId = 当前标签是哪块模板（缺省 = 节点池）。 */
   const commitAdd = (picked: readonly TemplatePresetNode[], next: StagePlacement, templateId?: string) => {
-    if (picked.some((node) => !nodes.some((current) => current.id === node.id)) || (templateId !== undefined && !templates.some((item) => item.id === templateId))) {
+    const available = templateId === undefined ? nodes : templates.find((item) => item.id === templateId)?.nodes ?? [];
+    if (picked.some((node) => !available.some((current) => current.id === node.id)) || (templateId !== undefined && !templates.some((item) => item.id === templateId))) {
       setNodesError(t("sac.err.changed"));
       return;
     }

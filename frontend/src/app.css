@@ -1033,6 +1033,47 @@ body {
   font-size: 0.6875rem;
 }
 
+/* 项目明细入口：有项目 view / edit 权限的行才可点；无权限只展示概况，项目名后标星号并在行末显示锁形提示。 */
+.hub-map-projects__row[data-openable="true"] {
+  margin: 0 -0.25rem;
+  padding: 0.16rem 0.25rem;
+  border-radius: 0.45rem;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.hub-map-projects__row[data-openable="true"]:hover {
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
+.hub-map-projects__row[data-openable="true"]:focus-visible {
+  outline: 2px solid #1a73e8;
+  outline-offset: 1px;
+}
+
+.hub-map-projects__row[data-openable="false"] {
+  color: #71717a;
+}
+
+.hub-map-projects__chevron {
+  flex: none;
+  color: #1a73e8;
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
+.hub-map-projects__lock {
+  flex: none;
+  width: 0.65rem;
+  height: 0.65rem;
+  fill: none;
+  stroke: #a1a1aa;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.1;
+}
+
 /* 钉住态的两个小按钮（「展开全部」/「收起」/「×」）：幽灵态、小号，鼠标压深成主题蓝 */
 .hub-map-projects__tools {
   display: flex;

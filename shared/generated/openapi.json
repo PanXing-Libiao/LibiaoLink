@@ -6054,7 +6054,8 @@
           },
           "nodesNew": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "公共节点补库兼容字段，恒为 0"
           }
         },
         "required": [
@@ -6156,7 +6157,8 @@
           },
           "nodesAdded": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "公共节点补库兼容字段，恒为 0"
           }
         },
         "required": [
@@ -6194,7 +6196,7 @@
               "null"
             ],
             "maxLength": 200,
-            "description": "源表英文名或 AI 补全的英文，人工改选新节点时使用"
+            "description": "源表英文名或 AI 补全的英文，未匹配任务直接导入时使用"
           },
           "matched": {
             "type": "boolean",
@@ -6219,7 +6221,8 @@
               "new",
               "uncertain",
               "temporary"
-            ]
+            ],
+            "description": "new 表示未匹配，按原名导入并可选加入个人模板"
           },
           "libraryId": {
             "allOf": [
@@ -9620,7 +9623,8 @@
                     "existing",
                     "new",
                     "standalone"
-                  ]
+                  ],
+                  "description": "new 为旧客户端兼容值，按 standalone 处理"
                 },
                 "nodeId": {
                   "allOf": [
@@ -9642,7 +9646,32 @@
                 "nodeId"
               ]
             },
-            "maxItems": 2000
+            "maxItems": 200000
+          },
+          "personalTemplateSelections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "groupIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "templateId": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "groupIndex",
+                "templateId",
+                "version"
+              ]
+            },
+            "maxItems": 200000
           },
           "conflictChoices": {
             "type": "array",
@@ -9668,15 +9697,15 @@
           },
           "addMissingNodes": {
             "type": "boolean",
-            "default": true,
-            "description": "是否把未匹配的任务节点补进节点库（只有落在阶段范围内的会补；阶段外按临时任务）"
+            "default": false,
+            "description": "已停用，仅兼容旧客户端；不再通过此字段新增公共节点"
           }
         },
         "required": [
           "previewId",
           "region"
         ],
-        "description": "确认导入（落位确认 + 节点补库开关）"
+        "description": "确认导入（落位、节点处理及冲突选择）"
       },
       "ProjectImportPreview": {
         "type": "object",
@@ -9729,7 +9758,7 @@
             "items": {
               "$ref": "#/components/schemas/ImportTaskNode"
             },
-            "maxItems": 2000
+            "maxItems": 200000
           },
           "nodeLibrary": {
             "type": "array",
@@ -9771,6 +9800,38 @@
             },
             "maxItems": 10000
           },
+          "personalTemplates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "stageKey": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "stageKey",
+                "version"
+              ]
+            },
+            "maxItems": 10000
+          },
           "issues": {
             "type": "array",
             "items": {
@@ -9789,6 +9850,7 @@
           "imagesManual",
           "nodes",
           "nodeLibrary",
+          "personalTemplates",
           "issues"
         ],
         "description": "导入表导入预览报告（解析不写库；确认后才写入）"
@@ -9912,6 +9974,75 @@
           "total"
         ],
         "description": "项目经理候选名单（GET /projects/manager-candidates）"
+      },
+      "ProjectMapOverviewItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string",
+            "description": "项目落地地区（字典 region）"
+          },
+          "projectType": {
+            "type": "string",
+            "description": "项目类型（字典 project_type）"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          },
+          "accessLevel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "当前账号对该项目的最终访问级别；null = 仅可在蓝图地图看到概况，进入详情仍返回 404"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "region",
+          "projectType",
+          "status",
+          "accessLevel"
+        ],
+        "description": "蓝图地图项目概况（最小展示字段 + 当前账号是否可进入详情）"
+      },
+      "ProjectMapOverviewResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectMapOverviewItem"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "description": "蓝图地图全部未删除项目概况（不受项目详情可见集裁剪）"
       },
       "ProjectMember": {
         "type": "object",
@@ -12845,7 +12976,31 @@
           "title",
           "titleEn"
         ],
-        "description": "模板内节点（引用任务节点库 + 模板内顺序 + 名称摘要）"
+        "description": "模板内节点（公共节点或该模板私有节点 + 模板内顺序 + 名称摘要）"
+      },
+      "TaskTemplateNodeCreateBody": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "货架复检",
+            "description": "节点名称（当前模板内唯一）"
+          },
+          "titleEn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "英文名（可空）"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "description": "在指定模板内新增私有节点（不进入公共节点库）"
       },
       "TaskTemplateUpdateBody": {
         "type": "object",
@@ -15518,6 +15673,36 @@
         }
       }
     },
+    "/api/v1/projects/map-overview": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "蓝图地图项目概况（有项目浏览权即可读取全部未删除项目的最少字段；accessLevel=null 不可进入详情）",
+        "responses": {
+          "200": {
+            "description": "全部未删除项目概况 + 当前账号可否进入详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectMapOverviewResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{id}": {
       "get": {
         "tags": [
@@ -18034,6 +18219,95 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TaskTemplateDeleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/task-templates/{id}/nodes": {
+      "post": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "在模板内新增私有节点（只属于当前模板，不进入公共节点库）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskTemplateNodeCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "创建成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskTemplateNode"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }

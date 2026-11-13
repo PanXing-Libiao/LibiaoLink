@@ -9,8 +9,8 @@ import type { HubDashView } from "./data/dashboardProgress";
 import { buildMapDistribution, type HubMapDistribution } from "./data/mapProjects";
 import { fetchDashboardChangeWords, fetchDashboardIssues, fetchDashboardProgress } from "./dashboardApi";
 import { loadDicts } from "./dicts";
-import { fetchProjectList } from "./projectApi";
-import { EMPTY_LIST_QUERY, replaceHubView, type HubView } from "./useHashRoute";
+import { fetchProjectMapOverview } from "./projectApi";
+import { replaceHubView, type HubView } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
 /**
@@ -354,12 +354,12 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
     let cancelled = false;
     void (async () => {
       try {
-        const [list, dicts] = await Promise.all([fetchProjectList(EMPTY_LIST_QUERY), loadDicts()]);
+        const [overview, dicts] = await Promise.all([fetchProjectMapOverview(), loadDicts()]);
         if (cancelled) {
           return;
         }
-        setDistribution(buildMapDistribution(list.items, dicts));
-        setNote(list.items.length < list.total ? { kind: "capped", n: list.items.length, total: list.total } : "none");
+        setDistribution(buildMapDistribution(overview.items, dicts));
+        setNote(overview.items.length < overview.total ? { kind: "capped", n: overview.items.length, total: overview.total } : "none");
       } catch {
         if (cancelled) {
           return;
@@ -375,7 +375,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   }, []);
 
   useLiveRefresh(["projects", "dicts", "tasks", "permissions", "users"], async () => {
-    const [list, dicts] = await Promise.all([fetchProjectList(EMPTY_LIST_QUERY), loadDicts()]);
+    const [overview, dicts] = await Promise.all([fetchProjectMapOverview(), loadDicts()]);
     /** 统计只在已就绪后才跟着刷新（没转过场就不预拉）。 */
     const nextDash = dashStateRef.current === "ready" ? ((await pullDashboard()) ?? dash) : dash;
     /** 问题读面只在已经拉过（ready）后跟着静默刷新（没切过「问题」视图就不预拉）。 */
@@ -383,8 +383,8 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
     /** 词频图读面只在已经拉过（ready）后跟着静默刷新（没切过「词频图」视图就不预拉）。 */
     const nextWords = wordsStateRef.current === "ready" ? ((await pullWords()) ?? words) : words;
     return () => {
-      setDistribution(buildMapDistribution(list.items, dicts));
-      setNote(list.items.length < list.total ? { kind: "capped", n: list.items.length, total: list.total } : "none");
+      setDistribution(buildMapDistribution(overview.items, dicts));
+      setNote(overview.items.length < overview.total ? { kind: "capped", n: overview.items.length, total: overview.total } : "none");
       if (nextDash !== dash) {
         setDash(nextDash);
       }

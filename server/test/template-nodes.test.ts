@@ -27,6 +27,7 @@ const AT = new Date("2026-09-24T03:00:00Z");
 function makeRow(overrides: Partial<TaskNodeRow> = {}): TaskNodeRow {
   return {
     id: NODE,
+    ownerTemplateId: null,
     stageKey: "install",
     seq: 10,
     title: "货架组装",
@@ -45,21 +46,27 @@ class FakeTaskNodeRepository {
 
   async list(stageKey: string | null): Promise<TaskNodeRow[]> {
     this.listStages.push(stageKey);
-    return this.rows.filter((row) => stageKey === null || row.stageKey === stageKey).map((row) => ({ ...row }));
+    return this.rows
+      .filter((row) => row.ownerTemplateId === null && (stageKey === null || row.stageKey === stageKey))
+      .map((row) => ({ ...row }));
   }
 
   async findById(id: string): Promise<TaskNodeRow | null> {
-    const row = this.rows.find((item) => item.id === id);
+    const row = this.rows.find((item) => item.id === id && item.ownerTemplateId === null);
     return row === undefined ? null : { ...row };
   }
 
-  async findByTitle(stageKey: string, title: string): Promise<TaskNodeRow | null> {
-    const row = this.rows.find((item) => item.stageKey === stageKey && item.title === title);
+  async findByTitle(stageKey: string, title: string, ownerTemplateId: string | null = null): Promise<TaskNodeRow | null> {
+    const row = this.rows.find(
+      (item) => item.stageKey === stageKey && item.title === title && item.ownerTemplateId === ownerTemplateId,
+    );
     return row === undefined ? null : { ...row };
   }
 
   async maxSeq(stageKey: string): Promise<number> {
-    const values = this.rows.filter((row) => row.stageKey === stageKey).map((row) => row.seq);
+    const values = this.rows
+      .filter((row) => row.ownerTemplateId === null && row.stageKey === stageKey)
+      .map((row) => row.seq);
     return values.length === 0 ? 0 : Math.max(...values);
   }
 

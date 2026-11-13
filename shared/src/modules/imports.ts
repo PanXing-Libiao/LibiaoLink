@@ -7,7 +7,7 @@ import { DateTimeSchema, UuidSchema } from "../common/conventions.ts";
  *   解析导入表 + 口径校验，不写库；返回预览票据（previewId + 有效期）。
  * - POST /api/v1/project-imports/commit：JSON（previewId + 落位确认）→ 单事务建项目并写入全量数据。
  * 已固化口径：完成日期未填 = 不算完成（进度按进行中封顶 75%）；进度五档（0 / 0.25 / 0.5 / 0.75 / 1）；
- * 日期笔误照原值导入 + 提醒；任务节点精确 / 语义匹配复用，待确认项人工处理（阶段外 = 临时任务）；
+ * 日期笔误照原值导入 + 提醒；任务节点精确匹配自动复用、语义结果逐条选择，可选加入个人模板（阶段外 = 临时任务）；
  * 变更阶段映射：实施 → install、发货 → assembly；账号 = 拼音登录名 + 中文名（测试账号加 -test）显示名；
  * 微盘 / 本地路径文件出「需手动导入」清单（表内嵌图随导入挂日报）；干系人（Push 324）：「干系人」表随导入落台账
  * *（stakeholders + project_stakeholders）—— 导入表含该表直接解析；
@@ -77,7 +77,7 @@ export const ImportManualImageSchema = z
   .openapi("ImportManualImage", { description: "需手动导入的图片 / 文件清单（面板可就地选文件，确认导入后一并上传）" });
 export type ImportManualImage = z.infer<typeof ImportManualImageSchema>;
 
-/** 导入节点的精确匹配、语义匹配、新节点或待人工确认结果。 */
+/** 导入节点的精确匹配、语义匹配、未匹配或待人工确认结果。 */
 export const ImportTaskNodeSchema = z
   .object({
     name: z.string().min(1).max(200).openapi({ description: "节点名（源表原文 / 节点库标题）" }),
@@ -86,11 +86,11 @@ export const ImportTaskNodeSchema = z
       .max(200)
       .nullable()
       .openapi({ description: "节点英文名（优先节点库，其次源表或 AI 补全）；无法生成时为 null" }),
-    sourceNameEn: z.string().max(200).nullable().openapi({ description: "源表英文名或 AI 补全的英文，人工改选新节点时使用" }),
+    sourceNameEn: z.string().max(200).nullable().openapi({ description: "源表英文名或 AI 补全的英文，未匹配任务直接导入时使用" }),
     matched: z.boolean().openapi({ description: "是否匹配已有节点（精确或语义匹配）" }),
     groupIndex: z.number().int().min(0),
     stageKey: z.string().max(32).nullable(),
-    matchKind: z.enum(["exact", "semantic", "new", "uncertain", "temporary"]),
+    matchKind: z.enum(["exact", "semantic", "new", "uncertain", "temporary"]).openapi({ description: "new 表示未匹配，按原名导入并可选加入个人模板" }),
     libraryId: UuidSchema.nullable(),
     tasks: z.array(z.object({ index: z.number().int().min(0), row: z.number().int().min(1) })).max(200000),
     inStageScope: z.boolean().openapi({ description: "是否落在阶段范围内（false = 临时任务，不补节点库）" }),
@@ -129,7 +129,7 @@ export const ImportPreviewCountsSchema = z
     images: z.number().int().min(0).openapi({ description: "表内嵌图总数（提交时一并入文件库并挂日报）" }),
     imagesManual: z.number().int().min(0),
     accountsNew: z.number().int().min(0),
-    nodesNew: z.number().int().min(0),
+    nodesNew: z.number().int().min(0).openapi({ description: "公共节点补库兼容字段，恒为 0" }),
   })
   .openapi("ImportPreviewCounts", { description: "将写入条数（预览）" });
 export type ImportPreviewCounts = z.infer<typeof ImportPreviewCountsSchema>;
@@ -143,7 +143,7 @@ export const ImportResultCountsSchema = z
     stakeholders: z.number().int().min(0).openapi({ description: "干系人条数（导入表「干系人」表；落 stakeholders + project_stakeholders）" }),
     images: z.number().int().min(0),
     accountsCreated: z.number().int().min(0).openapi({ description: "本次落位账号数（信息性：账号由 SSO 登录创建，这里指识别到的账号数）" }),
-    nodesAdded: z.number().int().min(0),
+    nodesAdded: z.number().int().min(0).openapi({ description: "公共节点补库兼容字段，恒为 0" }),
   })
   .openapi("ImportResultCounts", { description: "实际写入条数（完成页复述）" });
 export type ImportResultCounts = z.infer<typeof ImportResultCountsSchema>;
@@ -169,14 +169,15 @@ export const ProjectImportPreviewSchema = z
     counts: ImportPreviewCountsSchema,
     accounts: z.array(ImportAccountSchema).max(300),
     imagesManual: z.array(ImportManualImageSchema).max(2000),
-    nodes: z.array(ImportTaskNodeSchema).max(2000),
+    nodes: z.array(ImportTaskNodeSchema).max(200000),
     nodeLibrary: z.array(ImportNodeLibraryItemSchema).max(10000),
+    personalTemplates: z.array(z.object({ id: UuidSchema, name: z.string().min(1).max(100), stageKey: z.string().min(1).max(32), version: z.number().int().min(0) })).max(10000),
     issues: z.array(ImportIssueSchema).max(5000),
   })
   .openapi("ProjectImportPreview", { description: "导入表导入预览报告（解析不写库；确认后才写入）" });
 export type ProjectImportPreview = z.infer<typeof ProjectImportPreviewSchema>;
 
-/** 确认导入入参：落位、节点处理、冲突选择及补库开关。 */
+/** 确认导入入参：落位、节点处理及冲突选择。 */
 export const ProjectImportCommitBodySchema = z
   .object({
     previewId: UuidSchema,
@@ -188,19 +189,24 @@ export const ProjectImportCommitBodySchema = z
       .openapi({ description: "项目类型（projectType 字典的码）；空串 = 未指定（解析按源表关键字给默认，如 AIRROB → 飞箱）" }),
     nodeDecisions: z.array(z.object({
       groupIndex: z.number().int().min(0),
-      action: z.enum(["existing", "new", "standalone"]),
+      action: z.enum(["existing", "new", "standalone"]).openapi({ description: "new 为旧客户端兼容值，按 standalone 处理" }),
       nodeId: UuidSchema.nullable(),
-    })).max(2000).optional(),
+    })).max(200000).optional(),
+    personalTemplateSelections: z.array(z.object({
+      groupIndex: z.number().int().min(0),
+      templateId: UuidSchema,
+      version: z.number().int().min(0),
+    })).max(200000).optional(),
     conflictChoices: z.array(z.object({
       key: z.string().min(1).max(80),
       taskIndex: z.number().int().min(0),
     })).max(2000).optional(),
     addMissingNodes: z
       .boolean()
-      .default(true)
-      .openapi({ description: "是否把未匹配的任务节点补进节点库（只有落在阶段范围内的会补；阶段外按临时任务）" }),
+      .default(false)
+      .openapi({ description: "已停用，仅兼容旧客户端；不再通过此字段新增公共节点" }),
   })
-  .openapi("ProjectImportCommitBody", { description: "确认导入（落位确认 + 节点补库开关）" });
+  .openapi("ProjectImportCommitBody", { description: "确认导入（落位、节点处理及冲突选择）" });
 export type ProjectImportCommitBody = z.infer<typeof ProjectImportCommitBodySchema>;
 export type ProjectImportCommitBodyInput = z.input<typeof ProjectImportCommitBodySchema>;
 

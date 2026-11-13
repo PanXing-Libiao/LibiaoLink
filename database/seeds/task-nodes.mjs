@@ -116,7 +116,7 @@ export async function run(client) {
   for (const stage of STAGE_NODE_SEED) {
     for (let index = 0; index < stage.nodes.length; index += 1) {
       const node = stage.nodes[index];
-      const found = await client.query("select id from task_nodes where stage_key = $1 and title = $2", [stage.stageKey, node.title]);
+      const found = await client.query("select id from task_nodes where owner_template_id is null and stage_key = $1 and title = $2", [stage.stageKey, node.title]);
       if (found.rows.length > 0) {
         summary.unchanged += 1;
         continue;

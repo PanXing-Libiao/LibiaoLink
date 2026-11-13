@@ -14,6 +14,7 @@ import type {
   TaskTemplateListQuery,
   TaskTemplateListResponse,
   TaskTemplateNode,
+  TaskTemplateNodeCreateBody,
   TaskTemplateUpdateBody,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
@@ -65,7 +66,7 @@ export class TemplateService {
     const title = body.title.trim();
     const titleEn = body.titleEn === undefined || body.titleEn === null || body.titleEn.trim() === "" ? null : body.titleEn.trim();
     const created = await this.database.db.transaction(async (tx) => {
-      const duplicate = await this.nodes.findByTitle(body.stageKey, title, tx);
+      const duplicate = await this.nodes.findByTitle(body.stageKey, title, null, tx);
       if (duplicate !== null) {
         throw new AppError(
           "NODE_ALREADY_EXISTS",
@@ -73,7 +74,7 @@ export class TemplateService {
         );
       }
       const seq = body.seq ?? (await this.nodes.maxSeq(body.stageKey, tx)) + 10;
-      const row = await this.nodes.insert({ stageKey: body.stageKey, seq, title, titleEn }, tx);
+      const row = await this.nodes.insert({ ownerTemplateId: null, stageKey: body.stageKey, seq, title, titleEn }, tx);
       await this.audit.record(tx, {
         actorId,
         action: "create",
@@ -86,6 +87,64 @@ export class TemplateService {
       return row;
     });
     return toContract(created);
+  }
+
+  /**
+   * POST /api/v1/task-templates/{id}/nodes：在指定模板内新增私有节点。
+   * 节点不进入公共节点库，也不会出现在其它模板；先保存到 task_nodes（owner_template_id = 模板 id），
+   * 模板「保存」时再通过 nodeIds 建立引用并重排。权限跟随模板编辑权（创建人或系统管理员）。
+   */
+  async createTemplateNode(
+    templateId: string,
+    body: TaskTemplateNodeCreateBody,
+    actorId: string,
+  ): Promise<TaskTemplateNode> {
+    await this.assertTemplateEditor(actorId, "在任务模板内新增节点");
+    const title = body.title.trim();
+    if (title === "") {
+      throw new AppError("VALIDATION_FAILED", "节点名称不能为空");
+    }
+    const titleEn = body.titleEn === undefined || body.titleEn === null || body.titleEn.trim() === ""
+      ? null
+      : body.titleEn.trim();
+    const created = await this.database.db.transaction(async (tx) => {
+      const template = await this.templates.findById(templateId, tx);
+      if (template === null) {
+        throw new AppError("NOT_FOUND", "任务模板不存在：" + templateId);
+      }
+      this.assertTemplateVisible(template, actorId);
+      await this.permission.assertCanManageTaskTemplate(
+        actorId,
+        template.createdBy,
+        "在任务模板内新增节点需要创建人或系统管理员权限",
+      );
+      const duplicate = await this.nodes.findByTitle(template.stageKey, title, templateId, tx);
+      if (duplicate !== null) {
+        throw new AppError("NODE_ALREADY_EXISTS", "该模板已有同名节点：" + title);
+      }
+      const seq = (await this.nodes.maxOwnerSeq(templateId, tx)) + 10;
+      const row = await this.nodes.insert(
+        { ownerTemplateId: templateId, stageKey: template.stageKey, seq, title, titleEn },
+        tx,
+      );
+      await this.audit.record(tx, {
+        actorId,
+        action: "create",
+        objectType: "task_node",
+        objectId: row.id,
+        summary: "在任务模板内新增节点：" + template.name + " · " + row.title,
+        changes: diffRecords({}, nodeSnapshot(row)),
+        metadata: {
+          stageKey: row.stageKey,
+          seq: row.seq,
+          ownerTemplateId: templateId,
+          templateId,
+          scope: "template",
+        },
+      });
+      return row;
+    });
+    return { nodeId: created.id, seq: created.seq, title: created.title, titleEn: created.titleEn };
   }
 
   /**
@@ -103,7 +162,7 @@ export class TemplateService {
       const patch: TaskNodeUpdatePatch = {};
       if (body.title !== undefined) {
         const title = body.title.trim();
-        const duplicate = await this.nodes.findByTitle(before.stageKey, title, tx);
+        const duplicate = await this.nodes.findByTitle(before.stageKey, title, null, tx);
         if (duplicate !== null && duplicate.id !== id) {
           throw new AppError(
             "NODE_ALREADY_EXISTS",
@@ -187,7 +246,7 @@ export class TemplateService {
     await this.assertTemplateEditor(actorId, "新建任务模板");
     const name = normalizeTemplateName(body.name);
     const created = await this.database.db.transaction(async (tx) => {
-      await this.assertNodesSameStage(body.stageKey, body.nodeIds, tx);
+      await this.assertNodesSameStage(body.stageKey, body.nodeIds, null, tx);
       const row = await this.templates.insert(
         { name, stageKey: body.stageKey, visibility: body.visibility, createdBy: actorId },
         tx,
@@ -239,7 +298,7 @@ export class TemplateService {
         patch.visibility = body.visibility;
       }
       if (body.nodeIds !== undefined) {
-        await this.assertNodesSameStage(before.stageKey, body.nodeIds, tx);
+        await this.assertNodesSameStage(before.stageKey, body.nodeIds, id, tx);
       }
       const row = await this.templates.updateWithVersion(id, body.version, patch, at, tx);
       if (row === null) {
@@ -247,6 +306,7 @@ export class TemplateService {
       }
       if (body.nodeIds !== undefined) {
         await this.templates.replaceNodes(id, body.nodeIds, tx);
+        await this.nodes.deleteUnreferencedOwned(id, body.nodeIds, tx);
       }
       const refs = await this.templates.nodeRefsOf([id], tx);
       await this.audit.record(tx, {
@@ -300,11 +360,75 @@ export class TemplateService {
     return { id, deletedAt: at.toISOString() };
   }
 
+  /** 导入页只列出本人已有的个人模板。 */
+  async listPersonalImportTemplates(actorId: string): Promise<Array<{ id: string; name: string; stageKey: string; version: number }>> {
+    if (!await this.permission.canManageTaskTemplates(actorId)) return [];
+    return (await this.templates.list(null)).filter((row) => row.visibility === "private" && row.createdBy === actorId)
+      .map(({ id, name, stageKey, version }) => ({ id, name, stageKey, version }));
+  }
+
+  /** 将导入任务加入所选个人模板，与项目导入处于同一事务。 */
+  async appendImportedPrivateNodes(
+    selections: Array<{ templateId: string; version: number; stageKey: string; title: string; titleEn: string | null }>,
+    actorId: string,
+    tx: DbClient,
+  ): Promise<void> {
+    if (selections.length === 0) return;
+    await this.assertTemplateEditor(actorId, "编辑任务模板");
+    const groups = new Map<string, typeof selections>();
+    for (const item of selections) {
+      const items = groups.get(item.templateId) ?? [];
+      items.push(item);
+      groups.set(item.templateId, items);
+    }
+    for (const [id, items] of groups) {
+      const before = await this.templates.findById(id, tx);
+      if (before === null || before.visibility !== "private" || before.createdBy !== actorId) {
+        throw new AppError("VALIDATION_FAILED", "只能添加到本人的个人模板");
+      }
+      if (items.some((item) => item.stageKey !== before.stageKey || item.version !== before.version)) {
+        throw new AppError("VERSION_CONFLICT", "个人模板已变化，请重新解析导入文件");
+      }
+      const refs = await this.templates.nodeRefsOf([id], tx);
+      const row = await this.templates.updateWithVersion(id, before.version, {}, new Date(), tx);
+      if (row === null) throw new AppError("VERSION_CONFLICT", "个人模板已变化，请重新解析导入文件");
+      const ids = refs.map((ref) => ref.nodeId);
+      let seq = await this.nodes.maxOwnerSeq(id, tx);
+      for (const item of items) {
+        let node = await this.nodes.findByTitle(item.stageKey, item.title, id, tx);
+        if (node === null) {
+          seq += 10;
+          node = await this.nodes.insert({ ownerTemplateId: id, stageKey: item.stageKey, title: item.title, titleEn: item.titleEn, seq }, tx);
+          await this.audit.record(tx, {
+            actorId, action: "create", objectType: "task_node", objectId: node.id,
+            summary: "导入任务加入模板节点：" + before.name + " · " + node.title,
+            changes: diffRecords({}, nodeSnapshot(node)),
+            metadata: { stageKey: node.stageKey, seq: node.seq, ownerTemplateId: id, templateId: id, scope: "template" },
+          });
+        }
+        if (!ids.includes(node.id)) ids.push(node.id);
+      }
+      await this.templates.replaceNodes(id, ids, tx);
+      const afterRefs = await this.templates.nodeRefsOf([id], tx);
+      await this.audit.record(tx, {
+        actorId, action: "update", objectType: "task_template", objectId: id,
+        summary: "导入任务加入个人模板：" + stageName(before.stageKey) + " · " + before.name,
+        changes: diffRecords(templateSnapshot(before, refs), templateSnapshot(row, afterRefs)),
+        metadata: { stageKey: before.stageKey, visibility: before.visibility, nodeCount: afterRefs.length },
+      });
+    }
+  }
+
   /**
    * 模板内节点校验：重复 id / 节点不存在 / 节点跨阶段一律 400 VALIDATION_FAILED（在写入前、同事务内判）。
    * 「同阶段」是模板的硬口径：模板页左列只给同阶段节点，「项目总览 → 添加任务」也按模板阶段建任务。
    */
-  private async assertNodesSameStage(stageKey: string, nodeIds: string[], tx: DbClient): Promise<void> {
+  private async assertNodesSameStage(
+    stageKey: string,
+    nodeIds: string[],
+    templateId: string | null,
+    tx: DbClient,
+  ): Promise<void> {
     const seen = new Set<string>();
     const duplicates: string[] = [];
     for (const id of nodeIds) {
@@ -321,6 +445,16 @@ export class TemplateService {
     const missing = nodeIds.filter((id) => !byId.has(id));
     if (missing.length > 0) {
       throw new AppError("VALIDATION_FAILED", "任务节点不存在：" + missing.join("、"));
+    }
+    const privateFromOtherTemplate = nodeIds.filter((id) => {
+      const owner = byId.get(id)?.ownerTemplateId ?? null;
+      return owner !== null && owner !== templateId;
+    });
+    if (privateFromOtherTemplate.length > 0) {
+      throw new AppError(
+        "VALIDATION_FAILED",
+        "模板内节点不属于该模板：" + privateFromOtherTemplate.join("、"),
+      );
     }
     const foreign = nodeIds.filter((id) => byId.get(id)?.stageKey !== stageKey);
     if (foreign.length > 0) {

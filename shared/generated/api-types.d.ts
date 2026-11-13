@@ -776,6 +776,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/map-overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 蓝图地图项目概况（有项目浏览权即可读取全部未删除项目的最少字段；accessLevel=null 不可进入详情） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 全部未删除项目概况 + 当前账号可否进入详情 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectMapOverviewResponse"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}": {
         parameters: {
             query?: never;
@@ -3056,6 +3101,88 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/api/v1/task-templates/{id}/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 在模板内新增私有节点（只属于当前模板，不进入公共节点库） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskTemplateNodeCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 创建成功 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskTemplateNode"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/users": {
@@ -12343,6 +12470,7 @@ export interface components {
             images: number;
             imagesManual: number;
             accountsNew: number;
+            /** @description 公共节点补库兼容字段，恒为 0 */
             nodesNew: number;
         };
         /** @description 项目落位（面板左栏「项目落位」块） */
@@ -12370,6 +12498,7 @@ export interface components {
             images: number;
             /** @description 本次落位账号数（信息性：账号由 SSO 登录创建，这里指识别到的账号数） */
             accountsCreated: number;
+            /** @description 公共节点补库兼容字段，恒为 0 */
             nodesAdded: number;
         };
         /** @description 来源任务节点分组及匹配结果 */
@@ -12378,13 +12507,16 @@ export interface components {
             name: string;
             /** @description 节点英文名（优先节点库，其次源表或 AI 补全）；无法生成时为 null */
             nameEn: string | null;
-            /** @description 源表英文名或 AI 补全的英文，人工改选新节点时使用 */
+            /** @description 源表英文名或 AI 补全的英文，未匹配任务直接导入时使用 */
             sourceNameEn: string | null;
             /** @description 是否匹配已有节点（精确或语义匹配） */
             matched: boolean;
             groupIndex: number;
             stageKey: string | null;
-            /** @enum {string} */
+            /**
+             * @description new 表示未匹配，按原名导入并可选加入个人模板
+             * @enum {string}
+             */
             matchKind: "exact" | "semantic" | "new" | "uncertain" | "temporary";
             libraryId: components["schemas"]["Uuid"] & (string | null);
             tasks: {
@@ -13287,7 +13419,7 @@ export interface components {
             /** @description 群名 / 备注（维护用；可空） */
             name?: string | null;
         };
-        /** @description 确认导入（落位确认 + 节点补库开关） */
+        /** @description 确认导入（落位、节点处理及冲突选择） */
         ProjectImportCommitBody: {
             previewId: components["schemas"]["Uuid"];
             /** @description 项目地区（region 字典的码 / 标准国家名；必填） */
@@ -13299,17 +13431,25 @@ export interface components {
             projectType: string;
             nodeDecisions?: {
                 groupIndex: number;
-                /** @enum {string} */
+                /**
+                 * @description new 为旧客户端兼容值，按 standalone 处理
+                 * @enum {string}
+                 */
                 action: "existing" | "new" | "standalone";
                 nodeId: components["schemas"]["Uuid"] & (string | null);
+            }[];
+            personalTemplateSelections?: {
+                groupIndex: number;
+                templateId: components["schemas"]["Uuid"];
+                version: number;
             }[];
             conflictChoices?: {
                 key: string;
                 taskIndex: number;
             }[];
             /**
-             * @description 是否把未匹配的任务节点补进节点库（只有落在阶段范围内的会补；阶段外按临时任务）
-             * @default true
+             * @description 已停用，仅兼容旧客户端；不再通过此字段新增公共节点
+             * @default false
              */
             addMissingNodes: boolean;
         };
@@ -13328,6 +13468,12 @@ export interface components {
                 stageKey: string;
                 title: string;
                 titleEn: string | null;
+                version: number;
+            }[];
+            personalTemplates: {
+                id: components["schemas"]["Uuid"];
+                name: string;
+                stageKey: string;
                 version: number;
             }[];
             issues: components["schemas"]["ImportIssue"][];
@@ -13362,6 +13508,23 @@ export interface components {
         /** @description 项目经理候选名单（GET /projects/manager-candidates） */
         ProjectManagerCandidateList: {
             items: components["schemas"]["ProjectManagerCandidate"][];
+            total: number;
+        };
+        /** @description 蓝图地图项目概况（最小展示字段 + 当前账号是否可进入详情） */
+        ProjectMapOverviewItem: {
+            id: components["schemas"]["Uuid"];
+            code: string;
+            name: string;
+            /** @description 项目落地地区（字典 region） */
+            region: string;
+            /** @description 项目类型（字典 project_type） */
+            projectType: string;
+            status: components["schemas"]["ProjectStatus"];
+            accessLevel: components["schemas"]["GroupAccessAccessLevel"] & (string | null);
+        };
+        /** @description 蓝图地图全部未删除项目概况（不受项目详情可见集裁剪） */
+        ProjectMapOverviewResponse: {
+            items: components["schemas"]["ProjectMapOverviewItem"][];
             total: number;
         };
         /** @description 项目成员（名册行） */
@@ -14069,12 +14232,22 @@ export interface components {
             items: components["schemas"]["TaskTemplate"][];
             total: number;
         };
-        /** @description 模板内节点（引用任务节点库 + 模板内顺序 + 名称摘要） */
+        /** @description 模板内节点（公共节点或该模板私有节点 + 模板内顺序 + 名称摘要） */
         TaskTemplateNode: {
             nodeId: components["schemas"]["Uuid"];
             seq: number;
             title: string;
             titleEn: string | null;
+        };
+        /** @description 在指定模板内新增私有节点（不进入公共节点库） */
+        TaskTemplateNodeCreateBody: {
+            /**
+             * @description 节点名称（当前模板内唯一）
+             * @example 货架复检
+             */
+            title: string;
+            /** @description 英文名（可空） */
+            titleEn?: string | null;
         };
         /** @description 编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁 version 必传） */
         TaskTemplateUpdateBody: {

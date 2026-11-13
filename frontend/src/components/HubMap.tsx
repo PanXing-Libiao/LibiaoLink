@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { WORLD_MAP_COUNTRIES, WORLD_MAP_DASHLINE_PATHS, WORLD_MAP_MICRO_STATES, WORLD_MAP_NANHAI_ISLANDS, WORLD_MAP_VIEW, type WorldMapCountry, type WorldMapMicroState } from "../data/worldMap";
 import { type HubMapDistribution, type HubMapPillar } from "../data/mapProjects";
 import { isLocalizedLocale, projectStatusTextOf, textOf, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
-import { buildListHash, EMPTY_LIST_QUERY } from "../useHashRoute";
+import { buildListHash, EMPTY_LIST_QUERY, openProject } from "../useHashRoute";
 
 /**
  * 蓝图页的平面世界地图（Push 188；Push 285 起本页由「入口页 / 首页」改名「蓝图」）。
@@ -358,13 +358,42 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
         <ul className="hub-map-projects__list">
           {activePillar === null
             ? null
-            : (pinnedPillar === null ? activePillar.projects.slice(0, PILLAR_MAX_ROWS) : activePillar.projects).map((project) => (
-                <li key={project.id} data-live-card={project.id} className="hub-map-projects__row">
-                  <span className="hub-map-projects__dot" style={{ background: project.accent }} />
-                  <span className="hub-map-projects__name" title={isLocalizedLocale(locale) ? project.name : undefined}>{localize(project.name)}</span>
-                  <span className="hub-map-projects__status">{projectStatusTextOf(locale, project.status)}</span>
-                </li>
-              ))}
+            : (pinnedPillar === null ? activePillar.projects.slice(0, PILLAR_MAX_ROWS) : activePillar.projects).map((project) => {
+                const canOpen = project.accessLevel !== null;
+                const projectName = localize(project.name);
+                const displayName = canOpen ? projectName : "****";
+                const rowLabel = canOpen ? t("hm.openProject", { name: projectName }) : t("hm.overviewOnlyHint");
+                return (
+                  <li
+                    key={project.id}
+                    data-live-card={project.id}
+                    className="hub-map-projects__row"
+                    data-openable={canOpen ? "true" : "false"}
+                    role={canOpen ? "button" : undefined}
+                    tabIndex={canOpen ? 0 : undefined}
+                    aria-label={rowLabel}
+                    title={rowLabel}
+                    onClick={canOpen ? () => openProject(project.id) : undefined}
+                    onKeyDown={canOpen ? (event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openProject(project.id);
+                      }
+                    } : undefined}
+                  >
+                    <span className="hub-map-projects__dot" style={{ background: project.accent }} />
+                    <span className="hub-map-projects__name" title={canOpen && isLocalizedLocale(locale) ? project.name : undefined}>{displayName}</span>
+                    <span className="hub-map-projects__status">{projectStatusTextOf(locale, project.status)}</span>
+                    {canOpen ? (
+                      <span className="hub-map-projects__chevron" aria-hidden="true">›</span>
+                    ) : (
+                      <svg className="hub-map-projects__lock" viewBox="0 0 12 12" aria-hidden="true">
+                        <path d="M3.5 5V3.8a2.5 2.5 0 1 1 5 0V5M2.8 5h6.4v5.2H2.8z" />
+                      </svg>
+                    )}
+                  </li>
+                );
+              })}
         </ul>
         {shownPillar === null || shownPillar.projects.length <= PILLAR_MAX_ROWS ? null : pinnedPillar === null ? (
           <div className="hub-map-projects__more">{t("hm.more", { n: shownPillar.projects.length - PILLAR_MAX_ROWS })}</div>

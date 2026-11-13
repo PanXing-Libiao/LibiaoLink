@@ -214,7 +214,6 @@ export function Tracker({ progress, steps = TRACKER_STEPS, onChange, vivid = fal
   return (
     <span
       className="flex shrink-0 items-center gap-2"
-      title={disabled ? (disabledHint ?? textOf(locale, "tracker.overallTitle", { name: label })) : textOf(locale, "tracker.overallTitle", { name: label })}
       onClick={(event) => {
         event.stopPropagation();
       }}

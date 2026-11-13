@@ -36,7 +36,7 @@ import type { ProjectGroupBindingView, ProjectGroupCandidateList } from "./proje
 import { ProjectMemberService } from "./project-member.service.js";
 import type { ProjectMemberListResult, ProjectMemberView } from "./project-member.service.js";
 import { ProjectService } from "./project.service.js";
-import type { ProjectFacetsResult, ProjectListResult, ProjectPurgeResult, ProjectView } from "./project.service.js";
+import type { ProjectFacetsResult, ProjectListResult, ProjectMapOverviewResult, ProjectPurgeResult, ProjectView } from "./project.service.js";
 
 type ProjectListQuery = z.infer<typeof ProjectListQuerySchema>;
 type ProjectCreateBody = z.infer<typeof ProjectCreateBodySchema>;
@@ -100,6 +100,18 @@ export class ProjectsController {
     @ProjectScope() scope: ProjectScopeFilter,
   ): Promise<ProjectFacetsResult> {
     return this.projects.getFacets(query, scope);
+  }
+
+  /**
+   * 蓝图地图总览：有项目浏览权的账号读到全部未删项目的最少字段；
+   * 每个项目随行 accessLevel，null = 不可进入详情（详情接口仍按项目可见集 404）。
+   */
+  @Get("map-overview")
+  mapOverview(
+    @ProjectScope() scope: ProjectScopeFilter,
+    @CurrentActorId() actorId: string,
+  ): Promise<ProjectMapOverviewResult> {
+    return this.projects.listProjectMapOverview(scope, actorId);
   }
 
   /** 项目经理候选：有效项目部成员 ∪ 有效系统管理员；新项目 / 新指派只允许从此名单选择。 */
