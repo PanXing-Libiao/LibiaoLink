@@ -179,3 +179,8 @@ export function canEditTaskTemplate(permissions: MyPermissions | null, createdBy
   if (permissions === null || !permissions.taskTemplateManage) return false;
   return permissions.groupAccessAdmin || (createdBy !== null && createdBy === permissions.userId);
 }
+
+/** 单份模板的可见范围：只允许填写人本人调整；管理员不能调整他人或系统预置模板。 */
+export function canChangeTaskTemplateVisibility(permissions: MyPermissions | null, createdBy: string | null): boolean {
+  return permissions !== null && permissions.taskTemplateManage && createdBy !== null && createdBy === permissions.userId;
+}

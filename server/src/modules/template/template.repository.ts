@@ -16,6 +16,7 @@ export interface TaskTemplateRow {
   id: string;
   name: string;
   stageKey: string;
+  visibility: "private" | "public";
   version: number;
   createdBy: string | null;
   createdByName: string | null;
@@ -35,6 +36,7 @@ export interface TaskTemplateNodeRef {
 /** 编辑补丁（只改传入的字段）。 */
 export interface TaskTemplateUpdatePatch {
   name?: string;
+  visibility?: "private" | "public";
 }
 
 /** 九阶段顺序（列表排序用）：与 shared/src/common/dicts.ts 的 STAGE_KEYS 同序；未知 key 排最后。 */
@@ -58,6 +60,7 @@ export class TaskTemplateRepository {
         id: taskTemplates.id,
         name: taskTemplates.name,
         stageKey: taskTemplates.stageKey,
+        visibility: taskTemplates.visibility,
         version: taskTemplates.version,
         createdBy: taskTemplates.createdBy,
         createdByName: users.displayName,
@@ -81,6 +84,7 @@ export class TaskTemplateRepository {
         id: taskTemplates.id,
         name: taskTemplates.name,
         stageKey: taskTemplates.stageKey,
+        visibility: taskTemplates.visibility,
         version: taskTemplates.version,
         createdBy: taskTemplates.createdBy,
         createdByName: users.displayName,
@@ -124,11 +128,14 @@ export class TaskTemplateRepository {
     }));
   }
 
-  async insert(input: { name: string; stageKey: string; createdBy: string }, tx?: DbClient): Promise<TaskTemplateRow> {
+  async insert(
+    input: { name: string; stageKey: string; visibility: "private" | "public"; createdBy: string },
+    tx?: DbClient,
+  ): Promise<TaskTemplateRow> {
     const db = tx ?? this.database.db;
     const rows = await db
       .insert(taskTemplates)
-      .values({ name: input.name, stageKey: input.stageKey, createdBy: input.createdBy })
+      .values({ name: input.name, stageKey: input.stageKey, visibility: input.visibility, createdBy: input.createdBy })
       .returning();
     const row = rows[0] as typeof taskTemplates.$inferSelect;
     return toRow({ ...row, createdByName: null });
@@ -146,7 +153,7 @@ export class TaskTemplateRepository {
     );
   }
 
-  /** 乐观锁更新（改名）：version 不匹配返回 null（由 service 转 409 VERSION_CONFLICT）。 */
+  /** 乐观锁更新（改名 / 可见范围）：version 不匹配返回 null（由 service 转 409 VERSION_CONFLICT）。 */
   async updateWithVersion(
     id: string,
     expectedVersion: number,
@@ -208,6 +215,7 @@ function toRow(row: TaskTemplateRowSource): TaskTemplateRow {
     id: row.id,
     name: row.name,
     stageKey: row.stageKey,
+    visibility: row.visibility as "private" | "public",
     version: row.version,
     createdBy: row.createdBy,
     createdByName: row.createdByName,

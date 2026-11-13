@@ -59,6 +59,15 @@ export const TaskNodeListResponseSchema = z
   .object({ items: z.array(TaskNodeSchema), total: z.number().int().min(0) })
   .openapi("TaskNodeListResponse");
 
+/**
+ * 模板可见范围：private = 仅填写人可见；public = 有任务模板浏览权的账号均可见。
+ * 创建时选择；创建后仅填写人本人可在模板编辑中调整，保存时走同一份 PATCH 契约。
+ * 系统预置模板（createdBy 为空）没有填写人，任何人（包括管理员）都不能调整其可见范围。
+ */
+export const TaskTemplateVisibilitySchema = z
+  .enum(["private", "public"])
+  .openapi("TaskTemplateVisibility", { description: "模板可见范围：private = 仅填写人可见，public = 有浏览权的人可见" });
+
 /** 模板内节点引用：数组顺序即模板内顺序；title / titleEn 随行下发，模板预览可直接渲染。 */
 export const TaskTemplateNodeSchema = z
   .object({
@@ -74,14 +83,15 @@ export const TaskTemplateSchema = z
     id: UuidSchema,
     name: z.string().openapi({ example: "英国订单", description: "模板名称（列头可直接改名）" }),
     stageKey: StageKeySchema,
+    visibility: TaskTemplateVisibilitySchema.openapi({ description: "可见范围：private 仅填写人可见；public 有模板浏览权的人可见" }),
     nodes: z.array(TaskTemplateNodeSchema).openapi({ description: "节点顺序 = 数组顺序；同一模板内按 nodeId 去重" }),
-    createdBy: UuidSchema.nullable().openapi({ description: "填写人 user id；存量种子 / 系统导入为空" }),
-    createdByName: z.string().nullable().openapi({ description: "填写人姓名（users.display_name）；为空时界面显示系统" }),
+    createdBy: UuidSchema.nullable().openapi({ description: "填写人 user id；存量种子 / 系统导入为空；系统预置模板没有填写人，任何人都不能调整其可见范围" }),
+    createdByName: z.string().nullable().openapi({ description: "填写人姓名（users.display_name）；为空时界面显示系统配置填写人贾海洋" }),
     version: VersionSchema,
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
   })
-  .openapi("TaskTemplate", { description: "任务模板（名称 + 阶段 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）" });
+  .openapi("TaskTemplate", { description: "任务模板（名称 + 阶段 + 可见范围 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）" });
 
 export const TaskTemplateListQuerySchema = z.object({
   stage: StageKeySchema.optional().openapi({ description: "按阶段过滤；缺省 = 全部阶段" }),
@@ -95,17 +105,21 @@ export const TaskTemplateCreateBodySchema = z
   .object({
     name: z.string().min(1).max(100),
     stageKey: StageKeySchema,
+    visibility: TaskTemplateVisibilitySchema.default("public").openapi({ description: "可见范围；缺省 public（兼容旧客户端）。private = 仅填写人可见，public = 有模板浏览权的人可见" }),
     nodeIds: z
       .array(UuidSchema)
       .max(TASK_TEMPLATE_NODE_IDS_LIMIT)
       .default([])
       .openapi({ description: "任务节点库内的节点 id（≤ 500 个），顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400" }),
   })
-  .openapi("TaskTemplateCreateBody");
+  .openapi("TaskTemplateCreateBody", { description: "新建任务模板；visibility 缺省 public（兼容旧客户端）" });
 
 export const TaskTemplateUpdateBodySchema = z
   .object({
     name: z.string().min(1).max(100).optional(),
+    visibility: TaskTemplateVisibilitySchema.optional().openapi({
+      description: "可见范围（可选）：private 仅填写人可见，public 有模板浏览权的人可见；只有填写人本人能实际切换，非填写人回传同值不视为切换；不传 = 保持原值",
+    }),
     nodeIds: z
       .array(UuidSchema)
       .max(TASK_TEMPLATE_NODE_IDS_LIMIT)
@@ -113,7 +127,7 @@ export const TaskTemplateUpdateBodySchema = z
       .openapi({ description: "全量替换节点顺序（≤ 500 个，含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400" }),
     version: VersionSchema,
   })
-  .openapi("TaskTemplateUpdateBody", { description: "编辑模板（改名 / 节点全量替换；乐观锁 version 必传）" });
+  .openapi("TaskTemplateUpdateBody", { description: "编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁 version 必传）" });
 
 export const TaskTemplateDeleteBodySchema = z.object({ version: VersionSchema }).openapi("TaskTemplateDeleteBody");
 
@@ -129,7 +143,8 @@ export type TaskNodeDeleteResponse = z.infer<typeof TaskNodeDeleteResponseSchema
 export type TaskNodeListResponse = z.infer<typeof TaskNodeListResponseSchema>;
 export type TaskNodeUpdateBody = z.infer<typeof TaskNodeUpdateBodySchema>;
 
-/** 模板侧别名（第二段落库：名称 + 阶段 + 节点顺序，全量替换 + 乐观锁）。 */
+/** 模板侧别名（第二段落库：名称 + 阶段 + 可见范围 + 节点顺序；可见范围与节点顺序均可随编辑更新，乐观锁必传）。 */
+export type TaskTemplateVisibility = z.infer<typeof TaskTemplateVisibilitySchema>;
 export type TaskTemplateNode = z.infer<typeof TaskTemplateNodeSchema>;
 export type TaskTemplate = z.infer<typeof TaskTemplateSchema>;
 export type TaskTemplateListQuery = z.infer<typeof TaskTemplateListQuerySchema>;

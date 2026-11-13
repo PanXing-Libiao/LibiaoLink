@@ -819,7 +819,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "patch",
     path: "/api/v1/task-templates/{id}",
     tags: ["templates"],
-    summary: "编辑模板（改名 / 节点全量替换；乐观锁）",
+    summary: "编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁）",
     request: { params: idParams, body: json(TaskTemplateUpdateBodySchema) },
     responses: {
       200: { description: "更新后的模板", ...json(TaskTemplateSchema) },

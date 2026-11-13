@@ -31,7 +31,7 @@ export const taskNodes = pgTable(
 );
 
 /**
- * task_templates（0033 · M3-05 余第二段）：任务模板 —— 名称 + 所属阶段 + 乐观锁 version；删除为软删（deleted_at / deleted_by）。
+ * task_templates（0033 · M3-05 余第二段；0092 增 visibility）：任务模板 —— 名称 + 所属阶段 + 可见范围 + 乐观锁 version；删除为软删（deleted_at / deleted_by）。
  * 读面恒带 `deleted_at is null`；名称不设同阶段唯一（「未命名模板」允许重复，是否唯一待业务定稿）。
  */
 export const taskTemplates = pgTable(
@@ -40,6 +40,7 @@ export const taskTemplates = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     name: text("name").notNull(),
     stageKey: text("stage_key").notNull(),
+    visibility: text("visibility").notNull().default("public"),
     version: integer("version").notNull().default(0),
     createdBy: uuid("created_by").references(() => users.id),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -51,6 +52,7 @@ export const taskTemplates = pgTable(
     index("ix_task_templates_active_stage").on(table.stageKey, table.createdAt, table.id).where(sql`deleted_at is null`),
     index("ix_task_templates_created_by").on(table.createdBy).where(sql`deleted_at is null`),
     check("ck_task_templates_stage_key", sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`),
+    check("ck_task_templates_visibility", sql`${table.visibility} in ('private', 'public')`),
     check("ck_task_templates_name", sql`char_length(btrim(${table.name})) between 1 and 100`),
     check("ck_task_templates_version", sql`${table.version} >= 0`),
   ],

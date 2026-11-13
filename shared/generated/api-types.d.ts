@@ -2449,7 +2449,7 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** 编辑模板（改名 / 节点全量替换；乐观锁） */
+        /** 编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁） */
         patch: {
             parameters: {
                 query?: never;
@@ -13253,7 +13253,7 @@ export interface components {
          * @enum {string}
          */
         TaskTableColumnKey: "manager" | "owner" | "status" | "priority" | "onTime" | "deliverable" | "files" | "note" | "start" | "days" | "due" | "headcount" | "doneDate" | "change";
-        /** @description 任务模板（名称 + 阶段 + 节点顺序 + 填写人；A1-16 / A1-17 的落点） */
+        /** @description 任务模板（名称 + 阶段 + 可见范围 + 节点顺序 + 填写人；A1-16 / A1-17 的落点） */
         TaskTemplate: {
             id: components["schemas"]["Uuid"];
             /**
@@ -13262,18 +13262,21 @@ export interface components {
              */
             name: string;
             stageKey: components["schemas"]["StageKey"];
+            visibility: components["schemas"]["TaskTemplateVisibility"];
             /** @description 节点顺序 = 数组顺序；同一模板内按 nodeId 去重 */
             nodes: components["schemas"]["TaskTemplateNode"][];
             createdBy: components["schemas"]["Uuid"] & (string | null);
-            /** @description 填写人姓名（users.display_name）；为空时界面显示系统 */
+            /** @description 填写人姓名（users.display_name）；为空时界面显示系统配置填写人贾海洋 */
             createdByName: string | null;
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
         };
+        /** @description 新建任务模板；visibility 缺省 public（兼容旧客户端） */
         TaskTemplateCreateBody: {
             name: string;
             stageKey: components["schemas"]["StageKey"];
+            visibility?: components["schemas"]["TaskTemplateVisibility"] & unknown;
             /**
              * @description 任务节点库内的节点 id（≤ 500 个），顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400
              * @default []
@@ -13299,13 +13302,19 @@ export interface components {
             title: string;
             titleEn: string | null;
         };
-        /** @description 编辑模板（改名 / 节点全量替换；乐观锁 version 必传） */
+        /** @description 编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁 version 必传） */
         TaskTemplateUpdateBody: {
             name?: string;
+            visibility?: components["schemas"]["TaskTemplateVisibility"] & unknown;
             /** @description 全量替换节点顺序（≤ 500 个，含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400 */
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];
         };
+        /**
+         * @description 可见范围：private 仅填写人可见；public 有模板浏览权的人可见
+         * @enum {string}
+         */
+        TaskTemplateVisibility: "private" | "public";
         /** @description 任务取消定档提交（version = 抽屉当前行版本）；预计完成日期已过且当前账号仅为任务负责人时返回 409 TASK_UNFINALIZE_AFTER_PLAN，项目经理等项目编辑者仍可取消 */
         TaskUnfinalizeBody: {
             version: components["schemas"]["Version"] & unknown;
