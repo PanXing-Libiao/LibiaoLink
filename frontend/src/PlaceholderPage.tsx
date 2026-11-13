@@ -39,13 +39,13 @@ type TemplateNode = TaskNodeItem;
 
 /**
  * 右侧一块模板面板 = 一份模板草稿（Push 182 起 = 模板接口的本地副本）：
- * 服务端下发的 `name` / `nodes` / `version` 是基线，「保存」= PATCH 全量回传（改名 + 节点顺序 + version）。
+ * 服务端下发的 `name` / `visibility` / `nodes` / `version` 是基线，「保存」= PATCH 全量回传（改名 + 可见范围 + 节点顺序 + version）。
  */
 type TemplateDraft = {
   id: string;
   /** 模板名（可直接改；保存时 trim 后落库） */
   name: string;
-  /** 可见范围：创建时选定；private 仅填写人可见，public 有浏览权的人可见 */
+  /** 可见范围：创建时选定，填写人 / 管理员可在保存时切换；private 仅填写人可见，public 有浏览权的人可见 */
   visibility: TemplateVisibility;
   /** 这份模板里已选的节点，顺序即模板里的顺序 */
   nodes: TemplateNode[];
@@ -65,14 +65,18 @@ type TemplateDraft = {
   conflict?: "updated" | "deleted";
 };
 
-/** 服务端基线（「放弃改动」的回退目标）：名字 + 节点（含顺序）+ 当时的乐观锁版本。 */
-type TemplateBaseline = { name: string; nodes: TemplateNode[]; version: number };
+/** 服务端基线（「放弃改动」的回退目标）：名字 + 可见范围 + 节点（含顺序）+ 当时的乐观锁版本。 */
+type TemplateBaseline = { name: string; visibility: TemplateVisibility; nodes: TemplateNode[]; version: number };
 
-/** 模板的「样子」快照：名字 + 节点顺序，序列化后直接比字符串。 */
-const snapshotOf = (template: Pick<TemplateDraft, "name" | "nodes">): string =>
-  JSON.stringify({ name: template.name, nodes: template.nodes.map((node) => node.id) });
+/** 模板的「样子」快照：名字 + 可见范围 + 节点顺序，序列化后直接比字符串。 */
+const snapshotOf = (template: Pick<TemplateDraft, "name" | "visibility" | "nodes">): string =>
+  JSON.stringify({
+    name: template.name,
+    visibility: template.visibility,
+    nodes: template.nodes.map((node) => node.id),
+  });
 
-/** 这份草稿有没有未保存的改动（名字 / 节点顺序与基线不一致）。 */
+/** 这份草稿有没有未保存的改动（名字 / 可见范围 / 节点顺序与基线不一致）。 */
 const isDirty = (template: TemplateDraft): boolean => template.saved !== snapshotOf(template);
 
 /** 服务端模板 → 面板草稿（saved 记服务端当前的样子，之后任何本地改动都会让按钮变回「保存」）。 */
@@ -86,9 +90,9 @@ function toTemplateDraft(template: TemplateItem): TemplateDraft {
     nodes,
     createdBy: template.createdBy,
     createdByName: template.createdByName,
-    saved: snapshotOf({ name, nodes }),
+    saved: snapshotOf({ name, visibility: template.visibility, nodes }),
     version: template.version,
-    baseline: { name, nodes: nodes.slice(), version: template.version },
+    baseline: { name, visibility: template.visibility, nodes: nodes.slice(), version: template.version },
   };
 }
 
@@ -456,8 +460,13 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
     updateTemplates((previous) => previous.map((item) => (item.id === templateId ? { ...item, name } : item)));
   };
 
+  /** 切换可见范围只改本地草稿；点「保存」时与名称 / 节点顺序一起 PATCH。 */
+  const setTemplateVisibility = (templateId: string, visibility: TemplateVisibility): void => {
+    updateTemplates((previous) => previous.map((item) => (item.id === templateId ? { ...item, visibility } : item)));
+  };
+
   /**
-   * 保存这份模板 = `PATCH /api/v1/task-templates/{id}`：**改名 + 节点顺序全量回传**（含增删 / 重排）+ `version` 乐观锁。
+   * 保存这份模板 = `PATCH /api/v1/task-templates/{id}`：**改名 + 可见范围 + 节点顺序全量回传**（含增删 / 重排）+ `version` 乐观锁。
    * 成功 = 用服务端回包替换这块面板（version 前进、名字按库里的 trim 结果、节点名取节点库当前值）；
    * 失败 = 顶部 Toast（本地改动不丢）；version 过期（409）/ 模板已被删除（404）额外重取该板块 ——
    * 重取按面板合并：只有脏草稿保留，这块会标上「有冲突 / 库中已删除」，出路 = 面板上的「放弃改动」。
@@ -474,6 +483,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
       try {
         const saved = await updateTaskTemplate(draft.id, {
           name,
+          visibility: draft.visibility,
           nodeIds: draft.nodes.map((node) => node.id),
           version: draft.version,
         });
@@ -543,6 +553,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
         const restored: TemplateDraft = {
           ...item,
           name: item.baseline.name,
+          visibility: item.baseline.visibility,
           nodes: item.baseline.nodes.slice(),
           saved: snapshotOf(item.baseline),
           version: item.baseline.version,
@@ -1253,20 +1264,51 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                             ) : null}
                           </span>
                         </div>
-                        <p
+                        <div
                           data-template-creator={template.id}
                           data-template-visibility={template.visibility}
-                          className="mt-1 truncate text-[11px] text-zinc-500"
-                          title={t("tpl.creator", {
-                            name: template.createdByName ?? t("tpl.creatorSystem"),
-                            visibility: t(template.visibility === "private" ? "tpl.visibility.private" : "tpl.visibility.public"),
-                          })}
+                          className="mt-1.5 flex min-h-5 flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] leading-5 text-zinc-500"
                         >
-                          {t("tpl.creator", {
-                            name: template.createdByName ?? t("tpl.creatorSystem"),
-                            visibility: t(template.visibility === "private" ? "tpl.visibility.private" : "tpl.visibility.public"),
-                          })}
-                        </p>
+                          <span
+                            className="min-w-0 truncate"
+                            title={t("tpl.creator", { name: template.createdByName ?? t("tpl.creatorSystem") })}
+                          >
+                            {t("tpl.creator", { name: template.createdByName ?? t("tpl.creatorSystem") })}
+                          </span>
+                          <span aria-hidden="true" className="shrink-0 text-zinc-300">·</span>
+                          {canManageThisTemplate && template.createdBy !== null ? (
+                            <label className="relative inline-flex shrink-0 items-center">
+                              <span className="sr-only">{t("tpl.visibility.aria")}</span>
+                              <select
+                                data-template-visibility-control={template.id}
+                                value={template.visibility}
+                                onChange={(event) => {
+                                  setTemplateVisibility(template.id, event.target.value as TemplateVisibility);
+                                }}
+                                title={t("tpl.visibility.editTitle")}
+                                className="cursor-pointer appearance-none rounded-sm bg-transparent py-0 pl-0 pr-4 text-[11px] leading-5 text-zinc-600 underline decoration-dotted underline-offset-2 outline-none transition hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-400/50"
+                              >
+                                <option value="private">{t("tpl.visibility.private")}</option>
+                                <option value="public">{t("tpl.visibility.public")}</option>
+                              </select>
+                              <svg
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                aria-hidden="true"
+                                className="pointer-events-none absolute right-0 h-3 w-3 text-zinc-500"
+                              >
+                                <path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </label>
+                          ) : (
+                            <span
+                              className="shrink-0"
+                              title={template.createdBy === null ? t("tpl.visibility.systemHint") : undefined}
+                            >
+                              {t(template.visibility === "private" ? "tpl.visibility.private" : "tpl.visibility.public")}
+                            </span>
+                          )}
+                        </div>
                         {/* 提示行固定高度：出现 / 消失都不顶动下方列表（否则拖拽时会跟着抖）；
                             不拖拽时这一行留给「未保存 / 冲突」状态 + 「放弃改动」出路（Push 264 追订） */}
                         <div className="flex h-4 items-center gap-1.5 text-xs">

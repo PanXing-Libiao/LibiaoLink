@@ -1,7 +1,7 @@
 /**
  * 任务模板接口（M3-05 余 · 第二段；契约 shared/src/modules/templates.ts · A1-16 / A1-17）。
  * 读（列表 / 详情）= 管理员 / 项目数据范围 / 有效项目关系 —— 任务模板页右侧模板面板与「项目总览 → 添加任务」卡片的模板来源；仅登录账号 403；
- * 可见范围：public 对所有具备读权限的账号可见；private 仅填写人本人可见（非填写人 404）；
+ * 可见范围：public 对所有具备读权限的账号可见；private 仅填写人本人可见（非填写人 404）；填写人或管理员可随编辑保存切换，系统预置模板保持 public；
  * 写（新建）= `assertCanManageTaskTemplates`；编辑 / 删除 = `assertCanManageTaskTemplate`（仅创建人本人或管理员），每次变更写审计留痕；
  * 删除 = 软删（deleted_at），已按该模板生成的项目任务不受影响；`version` 乐观锁：编辑 / 删除都要带。
  */
@@ -54,7 +54,7 @@ export class TaskTemplateController {
     return this.templates.getTemplate(id, actorId);
   }
 
-  /** 新建模板（name + stageKey + nodeIds）：重复 id / 未知节点 / 跨阶段节点 400；无编辑权限 403。 */
+  /** 新建模板（name + stageKey + visibility + nodeIds）：重复 id / 未知节点 / 跨阶段节点 400；无编辑权限 403。 */
   @Post()
   @HttpCode(201)
   create(
@@ -64,7 +64,7 @@ export class TaskTemplateController {
     return this.templates.createTemplate(body, actorId);
   }
 
-  /** 编辑模板（改名 / nodeIds 全量替换，乐观锁 version 必传）：不存在 404；版本过期 409。 */
+  /** 编辑模板（改名 / visibility / nodeIds 全量替换，乐观锁 version 必传）：不存在 404；版本过期 409。 */
   @Patch(":id")
   update(
     @Param("id", idParam) id: string,

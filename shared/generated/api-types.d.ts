@@ -2449,7 +2449,7 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** 编辑模板（改名 / 节点全量替换；乐观锁） */
+        /** 编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁） */
         patch: {
             parameters: {
                 query?: never;
@@ -13266,7 +13266,7 @@ export interface components {
             /** @description 节点顺序 = 数组顺序；同一模板内按 nodeId 去重 */
             nodes: components["schemas"]["TaskTemplateNode"][];
             createdBy: components["schemas"]["Uuid"] & (string | null);
-            /** @description 填写人姓名（users.display_name）；为空时界面显示系统 */
+            /** @description 填写人姓名（users.display_name）；为空时界面显示系统配置填写人贾海洋 */
             createdByName: string | null;
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
@@ -13302,9 +13302,10 @@ export interface components {
             title: string;
             titleEn: string | null;
         };
-        /** @description 编辑模板（改名 / 节点全量替换；乐观锁 version 必传） */
+        /** @description 编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁 version 必传） */
         TaskTemplateUpdateBody: {
             name?: string;
+            visibility?: components["schemas"]["TaskTemplateVisibility"] & unknown;
             /** @description 全量替换节点顺序（≤ 500 个，含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400 */
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];

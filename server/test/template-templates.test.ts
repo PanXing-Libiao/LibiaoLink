@@ -355,7 +355,7 @@ describe("新建模板（写 = taskTemplate.manage）", () => {
   });
 });
 
-describe("编辑模板（改名 / 节点全量替换 + 乐观锁）", () => {
+describe("编辑模板（改名 / 可见范围 / 节点全量替换 + 乐观锁）", () => {
   it("改名 + 节点整体替换：version +1、diff 只含 name 与 nodes、审计 action=update", async () => {
     const { service, repo, audit, permission } = makeService();
     const updated = await service.updateTemplate(TEMPLATE, { name: "  英国订单  ", nodeIds: [OTHER_NODE], version: 0 }, ACTOR);
@@ -371,6 +371,31 @@ describe("编辑模板（改名 / 节点全量替换 + 乐观锁）", () => {
       metadata: { stageKey: "install", visibility: "public", nodeCount: 1 },
     });
     expect(audit.records[0]?.changes).toEqual([{ field: "name", from: "硬件实施模板一", to: "英国订单" }]);
+  });
+
+  it("创建人可把公共模板改为仅个人使用，再改回公共模板", async () => {
+    const { service, repo, audit } = makeService({ admin: false });
+    repo.rows = [makeTemplate({ createdBy: ACTOR, visibility: "public" })];
+
+    const hidden = await service.updateTemplate(TEMPLATE, { visibility: "private", version: 0 }, ACTOR);
+    expect(hidden).toMatchObject({ visibility: "private", version: 1 });
+    expect(audit.records[0]?.changes).toEqual([{ field: "visibility", from: "public", to: "private" }]);
+    expect(audit.records[0]?.metadata).toMatchObject({ visibility: "private" });
+
+    const shown = await service.updateTemplate(TEMPLATE, { visibility: "public", version: 1 }, ACTOR);
+    expect(shown).toMatchObject({ visibility: "public", version: 2 });
+    expect(audit.records[1]?.changes).toEqual([{ field: "visibility", from: "private", to: "public" }]);
+    expect(audit.records[1]?.metadata).toMatchObject({ visibility: "public" });
+  });
+
+  it("系统预置模板没有个人填写人，不能改为仅个人使用", async () => {
+    const { service, repo, audit } = makeService();
+    repo.rows = [makeTemplate({ createdBy: null, visibility: "public" })];
+    await expect(
+      service.updateTemplate(TEMPLATE, { visibility: "private", version: 0 }, ACTOR),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(repo.rows[0]).toMatchObject({ visibility: "public", version: 0 });
+    expect(audit.records).toHaveLength(0);
   });
 
   it("其他账号编辑个人模板按不存在处理", async () => {

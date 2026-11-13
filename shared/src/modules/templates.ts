@@ -61,7 +61,7 @@ export const TaskNodeListResponseSchema = z
 
 /**
  * 模板可见范围：private = 仅填写人可见；public = 有任务模板浏览权的账号均可见。
- * 新建时选择，创建后不随改名 / 节点调整变化。
+ * 创建时选择；创建后由填写人或系统管理员在模板编辑中调整，保存时走同一份 PATCH 契约。
  */
 export const TaskTemplateVisibilitySchema = z
   .enum(["private", "public"])
@@ -85,7 +85,7 @@ export const TaskTemplateSchema = z
     visibility: TaskTemplateVisibilitySchema.openapi({ description: "可见范围：private 仅填写人可见；public 有模板浏览权的人可见" }),
     nodes: z.array(TaskTemplateNodeSchema).openapi({ description: "节点顺序 = 数组顺序；同一模板内按 nodeId 去重" }),
     createdBy: UuidSchema.nullable().openapi({ description: "填写人 user id；存量种子 / 系统导入为空" }),
-    createdByName: z.string().nullable().openapi({ description: "填写人姓名（users.display_name）；为空时界面显示系统" }),
+    createdByName: z.string().nullable().openapi({ description: "填写人姓名（users.display_name）；为空时界面显示系统配置填写人贾海洋" }),
     version: VersionSchema,
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
@@ -116,6 +116,9 @@ export const TaskTemplateCreateBodySchema = z
 export const TaskTemplateUpdateBodySchema = z
   .object({
     name: z.string().min(1).max(100).optional(),
+    visibility: TaskTemplateVisibilitySchema.optional().openapi({
+      description: "可见范围（可选）：private 仅填写人可见，public 有模板浏览权的人可见；不传 = 保持原值",
+    }),
     nodeIds: z
       .array(UuidSchema)
       .max(TASK_TEMPLATE_NODE_IDS_LIMIT)
@@ -123,7 +126,7 @@ export const TaskTemplateUpdateBodySchema = z
       .openapi({ description: "全量替换节点顺序（≤ 500 个，含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400" }),
     version: VersionSchema,
   })
-  .openapi("TaskTemplateUpdateBody", { description: "编辑模板（改名 / 节点全量替换；乐观锁 version 必传）" });
+  .openapi("TaskTemplateUpdateBody", { description: "编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁 version 必传）" });
 
 export const TaskTemplateDeleteBodySchema = z.object({ version: VersionSchema }).openapi("TaskTemplateDeleteBody");
 
@@ -139,7 +142,7 @@ export type TaskNodeDeleteResponse = z.infer<typeof TaskNodeDeleteResponseSchema
 export type TaskNodeListResponse = z.infer<typeof TaskNodeListResponseSchema>;
 export type TaskNodeUpdateBody = z.infer<typeof TaskNodeUpdateBodySchema>;
 
-/** 模板侧别名（第二段落库：名称 + 阶段 + 可见范围 + 节点顺序，全量替换 + 乐观锁）。 */
+/** 模板侧别名（第二段落库：名称 + 阶段 + 可见范围 + 节点顺序；可见范围与节点顺序均可随编辑更新，乐观锁必传）。 */
 export type TaskTemplateVisibility = z.infer<typeof TaskTemplateVisibilitySchema>;
 export type TaskTemplateNode = z.infer<typeof TaskTemplateNodeSchema>;
 export type TaskTemplate = z.infer<typeof TaskTemplateSchema>;

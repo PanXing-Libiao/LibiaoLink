@@ -36,6 +36,7 @@ export interface TaskTemplateNodeRef {
 /** 编辑补丁（只改传入的字段）。 */
 export interface TaskTemplateUpdatePatch {
   name?: string;
+  visibility?: "private" | "public";
 }
 
 /** 九阶段顺序（列表排序用）：与 shared/src/common/dicts.ts 的 STAGE_KEYS 同序；未知 key 排最后。 */
@@ -152,7 +153,7 @@ export class TaskTemplateRepository {
     );
   }
 
-  /** 乐观锁更新（改名）：version 不匹配返回 null（由 service 转 409 VERSION_CONFLICT）。 */
+  /** 乐观锁更新（改名 / 可见范围）：version 不匹配返回 null（由 service 转 409 VERSION_CONFLICT）。 */
   async updateWithVersion(
     id: string,
     expectedVersion: number,

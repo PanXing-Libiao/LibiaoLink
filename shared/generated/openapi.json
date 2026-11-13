@@ -11828,7 +11828,7 @@
               "string",
               "null"
             ],
-            "description": "填写人姓名（users.display_name）；为空时界面显示系统"
+            "description": "填写人姓名（users.display_name）；为空时界面显示系统配置填写人贾海洋"
           },
           "version": {
             "$ref": "#/components/schemas/Version"
@@ -11973,6 +11973,16 @@
             "minLength": 1,
             "maxLength": 100
           },
+          "visibility": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskTemplateVisibility"
+              },
+              {
+                "description": "可见范围（可选）：private 仅填写人可见，public 有模板浏览权的人可见；不传 = 保持原值"
+              }
+            ]
+          },
           "nodeIds": {
             "type": "array",
             "items": {
@@ -11988,7 +11998,7 @@
         "required": [
           "version"
         ],
-        "description": "编辑模板（改名 / 节点全量替换；乐观锁 version 必传）"
+        "description": "编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁 version 必传）"
       },
       "TaskTemplateVisibility": {
         "type": "string",
@@ -16535,7 +16545,7 @@
         "tags": [
           "templates"
         ],
-        "summary": "编辑模板（改名 / 节点全量替换；乐观锁）",
+        "summary": "编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁）",
         "parameters": [
           {
             "schema": {

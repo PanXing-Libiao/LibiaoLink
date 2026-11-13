@@ -40,7 +40,8 @@ function nodeSnapshot(row: TaskNodeRow): Record<string, unknown> {
  * - 写（POST / PATCH / DELETE）：系统管理员，或至少管理一个有效项目的项目经理；
  * - 留痕：新增 / 编辑 / 删除各写一条审计（对象类型 task_node；编辑写字段级 changes、删除为物理删行快照进 changes）；不写 outbox（与字典维护同口径）。
  * 第二段（任务模板 TaskTemplate）：读面与节点库相同；新建 = 系统管理员或至少管理一个有效项目的项目经理，编辑 / 删除还要求创建人本人或管理员，留痕 objectType = task_template、不写 outbox；
- * 可见范围：public 对所有具备模板浏览权的账号可见；private 仅填写人本人可见（列表 / 详情 / 从模板生成任务统一过滤）。
+ * 可见范围：public 对所有具备模板浏览权的账号可见；private 仅填写人本人可见（列表 / 详情 / 从模板生成任务统一过滤）；填写人或管理员可随编辑保存
+ * 在 private / public 间切换，系统预置模板（无填写人）保持 public。
  * 差异只有一处 —— 模板删除是**软删**（deleted_at / deleted_by，契约返回 deletedAt），节点库是物理删行。
  */
 @Injectable()
@@ -209,7 +210,7 @@ export class TemplateService {
   }
 
   /**
-   * PATCH /api/v1/task-templates/{id}：改名 / 节点全量替换（不动的字段不传；`nodeIds` 传了就整体替换，含增删与重排）。
+   * PATCH /api/v1/task-templates/{id}：改名 / 可见范围 / 节点全量替换（不动的字段不传；`nodeIds` 传了就整体替换，含增删与重排）。
    * 不存在 / 已软删 404；`version` 过期 409 VERSION_CONFLICT；重复 id / 未知节点 / 跨阶段节点 400。
    */
   async updateTemplate(id: string, body: TaskTemplateUpdateBody, actorId: string): Promise<TaskTemplate> {
@@ -230,6 +231,12 @@ export class TemplateService {
       const patch: TaskTemplateUpdatePatch = {};
       if (body.name !== undefined) {
         patch.name = normalizeTemplateName(body.name);
+      }
+      if (body.visibility !== undefined) {
+        if (body.visibility === "private" && before.createdBy === null) {
+          throw new AppError("VALIDATION_FAILED", "系统预置模板没有个人填写人，不能设为仅个人使用");
+        }
+        patch.visibility = body.visibility;
       }
       if (body.nodeIds !== undefined) {
         await this.assertNodesSameStage(before.stageKey, body.nodeIds, tx);
