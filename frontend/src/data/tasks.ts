@@ -113,6 +113,14 @@ export function taskCapabilitiesOf(task: Pick<ProjectTask, "capabilities">): Tas
 }
 
 /**
+ * 任务是否需要定档：只有设定了输出成果文件（deliverableTypes 非空）的任务才展示定档入口并允许走任务定档。
+ * 权限投影 canFinalize 只回答「谁可以定档」，本函数回答「该任务是否需要定档」；两者同时为真才显示入口。
+ */
+export function hasOutputDeliverables(task: Pick<ProjectTask, "deliverableTypes">): boolean {
+  return task.deliverableTypes.length > 0;
+}
+
+/**
  * 没有阶段的任务（看板「添加 → 临时任务」手工创建）的展示名（Push 196）：
  * 项目总览 / 甘特图固定垫底的分组头、看板卡片「所属阶段」与抽屉阶段签共用同一文案。
  */
@@ -137,6 +145,41 @@ export function isCompleteStatus(status: TaskStatus): boolean {
 /** 任务是否已完成（以服务端展示态为准）。 */
 export function isTaskDone(task: ProjectTask): boolean {
   return isCompleteStatus(task.status);
+}
+
+export type TaskFinalizeBlocker = "no-deliverables" | "not-complete" | "files-loading" | "missing-files";
+
+export type TaskFinalizeReadiness = {
+  ready: boolean;
+  blocker: TaskFinalizeBlocker | null;
+  missingDocTypes: string[];
+};
+
+/**
+ * 任务定档就绪（2026-11-12 业务口径）：必须绑定任务完成与输出成果文件。
+ * 完成态优先于文件判断；未配置成果类型不展示定档入口；files=null 表示详情清单尚未取回，按加载中处理。
+ * 上传口径与服务端门禁一致：范围内存在任一 draft / final / changed 文件即可，不比较 doc_type；
+ * 详情清单已过滤掉无当前版本的记录，archived 不计。missingDocTypes 仅用于“一份文件都没有”时的提示。
+ */
+export function taskFinalizeReadiness(
+  task: Pick<ProjectTask, "status" | "deliverableTypes">,
+  files: readonly { status: string }[] | null,
+): TaskFinalizeReadiness {
+  if (task.deliverableTypes.length === 0) {
+    return { ready: false, blocker: "no-deliverables", missingDocTypes: [] };
+  }
+  if (!isCompleteStatus(task.status)) {
+    return { ready: false, blocker: "not-complete", missingDocTypes: [] };
+  }
+  if (files === null) {
+    return { ready: false, blocker: "files-loading", missingDocTypes: [] };
+  }
+  const hasUploadedFile = files.some(
+    (file) => file.status === "draft" || file.status === "final" || file.status === "changed",
+  );
+  return hasUploadedFile
+    ? { ready: true, blocker: null, missingDocTypes: [] }
+    : { ready: false, blocker: "missing-files", missingDocTypes: [...task.deliverableTypes] };
 }
 
 /**
@@ -205,6 +248,26 @@ export function dateOnlyText(iso: string): string {
   }
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
   return parts;
+}
+
+/**
+ * 预计完成日期是否已过（2026-11-12 定档按钮规则）：按 Asia/Shanghai 业务今天比较，
+ * dueDate 当天不算过；空日期不锁。与后端 isUnfinalizeLockedByPlannedEnd 同口径。
+ */
+export function isPastPlannedEnd(dueDate: string, now: Date = new Date()): boolean {
+  return dueDate !== "" && dueDate < dateOnlyText(now.toISOString());
+}
+
+/**
+ * 逾期取消定档闸只锁任务负责人（2026-11-12 业务修订）：
+ * 当前账号的任务能力来源必须为 task_owner；项目经理 / 其他项目编辑者即使逾期仍可取消。
+ * 已定档且 plannedEnd 已过、能力来源为 task_owner 时返回 true。
+ */
+export function isTaskOwnerUnfinalizeLockedByPlannedEnd(
+  task: Pick<ProjectTask, "finalizedAt" | "dueDate" | "capabilities">,
+  now: Date = new Date(),
+): boolean {
+  return task.finalizedAt !== null && taskCapabilitiesOf(task).source === "task_owner" && isPastPlannedEnd(task.dueDate, now);
 }
 
 /** 预计所需天数 = 两个日期的含首尾天数（与源表口径一致：9月5日→9月22日 = 18 天）。 */

@@ -8,6 +8,9 @@ import type { ReportPhoto } from "../data/reports";
 import {
   TEMP_TASK_STAGE,
   dateOnlyText,
+  hasOutputDeliverables,
+  isTaskOwnerUnfinalizeLockedByPlannedEnd,
+  taskFinalizeReadiness,
   ownersLabel,
   daysBetweenInclusive,
   lateDeliveryLabel,
@@ -90,7 +93,7 @@ const CHANGE_FILE_STATUS_TEXT: Record<string, string> = {
 };
 
 /** 变更阶段下拉（A4-13「变更阶段」）：九阶段字典，与任务表阶段同名同序。 */
-const CHANGE_STAGE_VALUES = ["售前规划", "设计开发", "加工采购", "组装发货", "硬件实施", "软件部署", "试运行", "生产阶段", "验收"];
+const CHANGE_STAGE_VALUES = ["售前规划", "设计开发", "加工采购", "组装发货", "硬件实施", "软件部署", "试运行", "投产阶段", "验收"];
 
 /** 变更阶段展示（空 / 未知 → 「—」）。 */
 function stageLabelOf(stageKey: string | null): string {
@@ -218,7 +221,7 @@ function draftOf(task: ProjectTask | null): Draft {
 }
 
 type TaskDrawerProps = {
-  /** 当前账号是否可对该任务定档 / 取消定档（服务端投影 canFinalize）。 */
+  /** 当前账号是否可对该任务定档 / 取消定档（服务端投影 canFinalize，且任务已设定输出成果文件）。 */
   canFinalize?: boolean;
   /** 项目经理是项目级字段：仅当前项目编辑者可改并同步全项目；任务负责人不得改。 */
   canEditManagers?: boolean;
@@ -746,7 +749,19 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
   const managerEditable = editable && canEditManagers;
   const managerChoices = memberOptionsWithExisting(managerMembers, draft.managerIds, members);
   const ownerEditable = editable && capabilities.canAssignOwners;
-  const canFinalize = canFinalizeProp && capabilities.canFinalize;
+  const canFinalize = canFinalizeProp && capabilities.canFinalize && hasOutputDeliverables(task);
+  const finalizeReadiness = taskFinalizeReadiness(task, files);
+  const finalizeBlockedText =
+    finalizeReadiness.blocker === "not-complete"
+      ? t("drawer.finalize.blockedNotComplete")
+      : finalizeReadiness.blocker === "files-loading"
+        ? t("drawer.finalize.blockedFilesLoading")
+        : finalizeReadiness.blocker === "missing-files"
+          ? t("drawer.finalize.blockedMissingFiles", { types: finalizeReadiness.missingDocTypes.join("、") })
+          : null;
+  const unfinalizeLockedByPlannedEnd = isTaskOwnerUnfinalizeLockedByPlannedEnd(task);
+  const unfinalizeAria = unfinalizeLockedByPlannedEnd ? t("drawer.finalize.afterDueAria") : onUnfinalize === undefined ? t("drawer.finalize.onAria") : t("drawer.finalize.offAria");
+  const unfinalizeTitle = unfinalizeLockedByPlannedEnd ? t("drawer.finalize.afterDueTitle") : onUnfinalize === undefined ? t("drawer.finalize.onTitle") : t("drawer.finalize.offTitle");
   const visibleTabs = filesWritable ? DRAWER_TABS : DRAWER_TABS.filter((item) => item.key !== "change");
   /** 逾期提示与服务端展示态同一口径（已延期 = 未完成且过了预计完成日期）。 */
   const overdue = task.status === "已延期";
@@ -1600,14 +1615,15 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
               {canFinalize && task.finalizedAt !== null ? (
                 <span className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-zinc-400">{t("drawer.finalize.label")}</span>
-                  {onUnfinalize === undefined ? (
+                  {onUnfinalize === undefined || unfinalizeLockedByPlannedEnd ? (
                     <button
                       type="button"
                       role="switch"
                       aria-checked="true"
-                      aria-label={t("drawer.finalize.onAria")}
+                      aria-label={unfinalizeAria}
                       data-task-finalize="on"
-                      title={t("drawer.finalize.onTitle")}
+                      data-task-unfinalize-locked={unfinalizeLockedByPlannedEnd ? "true" : undefined}
+                      title={unfinalizeTitle}
                       disabled
                       className="relative inline-flex h-6 w-11 shrink-0 cursor-default items-center rounded-full bg-[#FECA04] transition-colors duration-200"
                     >
@@ -1618,9 +1634,9 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
                       type="button"
                       role="switch"
                       aria-checked="true"
-                      aria-label={t("drawer.finalize.offAria")}
+                      aria-label={unfinalizeAria}
                       data-task-finalize="on"
-                      title={t("drawer.finalize.offTitle")}
+                      title={unfinalizeTitle}
                       onClick={() => { setUnfinalizeConfirm(true); }}
                       className="relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full bg-[#FECA04] transition-colors duration-200 hover:brightness-95"
                     >
@@ -1628,7 +1644,23 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
                     </button>
                   )}
                 </span>
-              ) : !canFinalize || onFinalize === undefined ? null : (
+              ) : !canFinalize || onFinalize === undefined ? null : !finalizeReadiness.ready ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-zinc-400">{t("drawer.finalize.label")}</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked="false"
+                    aria-label={finalizeBlockedText ?? t("drawer.finalize.blockedAria")}
+                    data-task-finalize="blocked"
+                    title={finalizeBlockedText ?? t("drawer.finalize.blockedAria")}
+                    disabled
+                    className="relative inline-flex h-6 w-11 shrink-0 cursor-not-allowed items-center rounded-full bg-zinc-100 opacity-70"
+                  >
+                    <span className="pointer-events-none absolute left-[3px] top-[3px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white text-[9px] font-semibold text-zinc-400 shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all duration-200">{t("drawer.toggle.off")}</span>
+                  </button>
+                </span>
+              ) : (
                 <span className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-zinc-400">{t("drawer.finalize.label")}</span>
                   <button
@@ -1657,7 +1689,12 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
               </svg>
             </button>
           </div>
-          {canFinalize && finalizeConfirm && task.finalizedAt === null ? (
+          {canFinalize && task.finalizedAt === null && finalizeBlockedText !== null ? (
+            <p data-task-finalize-blocked-hint="true" className="mt-2 text-[11px] leading-4 text-amber-600">
+              {finalizeBlockedText}
+            </p>
+          ) : null}
+          {canFinalize && finalizeReadiness.ready && finalizeConfirm && task.finalizedAt === null ? (
             <div data-task-finalize-confirm="true" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
               <p className="text-xs leading-5 text-amber-800">{t("drawer.finalize.confirm")}</p>
               <span className="flex shrink-0 items-center gap-1">
@@ -1680,7 +1717,7 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
               </span>
             </div>
           ) : null}
-          {canFinalize && unfinalizeConfirm && task.finalizedAt !== null ? (
+          {canFinalize && unfinalizeConfirm && task.finalizedAt !== null && !unfinalizeLockedByPlannedEnd ? (
             <div data-task-unfinalize-confirm="true" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
               <p className="text-xs leading-5 text-amber-800">{t("drawer.unfinalize.confirm")}</p>
               <span className="flex shrink-0 items-center gap-1">

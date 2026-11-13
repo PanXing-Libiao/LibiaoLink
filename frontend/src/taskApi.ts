@@ -85,13 +85,16 @@ const STAGE_NAMES_BY_KEY: Record<string, string> = {
   install: "硬件实施",
   deploy: "软件部署",
   trial: "试运行",
-  production: "生产阶段",
+  production: "投产阶段",
   acceptance: "验收",
 };
 
 const STAGE_KEYS_BY_NAME: Record<string, string> = Object.fromEntries(
   Object.entries(STAGE_NAMES_BY_KEY).map(([key, name]) => [name, key]),
 );
+
+// 旧中文名只用于兼容历史调用；所有展示与写入仍使用“投产阶段”。
+STAGE_KEYS_BY_NAME["生产阶段"] = "production";
 
 /** 阶段 key → 展示名；null / 未知 key → 空串（展示层垫底归「临时任务」分组，Push 196 起原「未分组」；看板临时任务）。 */
 export function stageNameOf(stageKey: string | null): string {
@@ -342,7 +345,7 @@ export function finalizeTask(projectId: string, taskId: string, version: number)
   );
 }
 
-/** 任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）：抽屉「已」开关再次点击 → 二次确认后调用；已定档 → 清位重开（此后可修改）；未定档 → 幂等原样返回。 */
+/** 任务取消定档（Push 260 · 业务口径「把现在的定档改成 再次点击取消定档吧」）：抽屉「已」开关再次点击 → 二次确认后调用；预计完成日期当天及之前 → 清位重开（此后可修改）；预计完成日期已过且当前账号仅为任务负责人 → 服务端 409 TASK_UNFINALIZE_AFTER_PLAN，项目经理等项目编辑者仍可取消；未定档 → 幂等原样返回。 */
 export function unfinalizeTask(projectId: string, taskId: string, version: number): Promise<ApiTask> {
   return apiSend<ApiTask>(
     "/api/v1/projects/" + encodeURIComponent(projectId) + "/tasks/" + encodeURIComponent(taskId) + "/unfinalize",
@@ -369,6 +372,15 @@ export function taskWriteMessage(locale: Locale, error: { code: string; message:
   }
   if (error.code === "TASK_FINALIZED") {
     return textOf(locale, "tw.finalized");
+  }
+  if (error.code === "TASK_FINALIZE_NOT_READY") {
+    return textOf(locale, "tw.finalizeNotReady");
+  }
+  if (error.code === "TASK_REQUIRED_DOC_MISSING") {
+    return textOf(locale, "tw.requiredDocMissing");
+  }
+  if (error.code === "TASK_UNFINALIZE_AFTER_PLAN") {
+    return textOf(locale, "tw.unfinalizeAfterPlan");
   }
   if (error.code === "TASK_HAS_REFERENCES") {
     return textOf(locale, "tw.hasReferences");

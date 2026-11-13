@@ -62,8 +62,8 @@ export const DEFAULT_STAGES = [
   { key: "trial", name: "试运行", seq: 70, nodes: [
     { key: "trial.record", name: "试运行记录", seq: 10, constraints: [] },
   ] },
-  { key: "production", name: "生产阶段", seq: 80, nodes: [
-    { key: "production.record", name: "生产运行记录", seq: 10, constraints: [] },
+  { key: "production", name: "投产阶段", seq: 80, nodes: [
+    { key: "production.record", name: "投产运行记录", seq: 10, constraints: [] },
   ] },
   { key: "acceptance", name: "验收", seq: 90, nodes: [
     { key: "acceptance.apply", name: "验收申请", seq: 10, constraints: [] },

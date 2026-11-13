@@ -15,6 +15,10 @@ import { ChangeRequestController } from "./change.controller.js";
 import { ChangeRequestLibraryController } from "./change-library.controller.js";
 import { ChangeService } from "./change.service.js";
 import { FileController } from "./file.controller.js";
+import { FileArchiveCleanupHandler } from "./file-archive.cleanup.js";
+import { FileArchiveConcurrency } from "./file-archive.concurrency.js";
+import { FileArchiveRepository } from "./file-archive.repository.js";
+import { FileArchiveService } from "./file-archive.service.js";
 import { FileDownloadService } from "./file-download.service.js";
 import { FileLibraryController } from "./file-library.controller.js";
 import { FileRepository } from "./file.repository.js";
@@ -56,6 +60,10 @@ import { PreviewService } from "./preview.service.js";
     CadCacheMaintenance,
     CadPreviewService,
     FileRepository,
+    FileArchiveRepository,
+    FileArchiveConcurrency,
+    FileArchiveService,
+    FileArchiveCleanupHandler,
     FileService,
     ChangeService,
     MaterialReissueService,
@@ -71,6 +79,6 @@ import { PreviewService } from "./preview.service.js";
     // M4-05f 下载切片：版本短时签名（attachment）+ file.download 权限 + download 审计。
     FileDownloadService,
   ],
-  exports: [FileService, ChangeService, PreviewService, CadArchiveWorker],
+  exports: [FileService, ChangeService, PreviewService, CadArchiveWorker, FileArchiveCleanupHandler],
 })
 export class FileModule {}

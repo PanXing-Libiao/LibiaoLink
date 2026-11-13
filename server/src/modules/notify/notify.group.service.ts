@@ -19,6 +19,7 @@ import { basename, resolve } from "node:path";
 import { Injectable, Logger } from "@nestjs/common";
 import {
   NotifyGroupMessagePayloadSchema,
+  STAKEHOLDER_COMPANY_TYPE_NAMES,
   type NotifyDeliveryTopic,
   type NotifyGroupMessagePayload,
 } from "@libiaolink/contracts";
@@ -32,7 +33,9 @@ import {
   NotifyDeliveryArchiveRepository,
   type NotifyDeliveryMessageRow,
 } from "./notify.delivery-archive.repository.js";
-import { NotifyGroupRepository } from "./notify.group.repository.js";
+import { NotifyGroupRepository, type GroupStakeholderRow } from "./notify.group.repository.js";
+import type { ActorAuthorization } from "../identity/index.js";
+import { can, canSeeField, PermissionService } from "../permission/index.js";
 import {
   projectGroupDeliverability,
   ProjectGroupDeliveryAlertService,
@@ -143,6 +146,121 @@ export function parseGroupNameCommand(raw: string | null): GroupNameCommand | nu
   return { kind: "set", name };
 }
 
+/** 群内干系人查询提示。 */
+export const GROUP_STAKEHOLDER_COMMAND_HINT = "请发送「@机器人 干系人」查看本项目干系人。";
+
+/** 未绑定项目的群回执。 */
+export const GROUP_STAKEHOLDER_UNBOUND_HINT = "当前群尚未绑定项目，请到「企微绑定」页完成绑定后再查询干系人。";
+
+/** 单条群消息最多展示的干系人行数（超出时保留最近更新，避免触达 markdown 字节上限）。 */
+export const GROUP_STAKEHOLDER_MAX_ROWS = 50;
+
+/** 群内查询者身份：绑定本地账号且具备项目/干系人权限时才返回联系方式等敏感字段。 */
+export type GroupStakeholderViewer =
+  | { kind: "authorized"; authorization: ActorAuthorization }
+  | { kind: "restricted" }
+  | { kind: "anonymous" };
+
+/**
+ * 解析群内干系人命令：严格匹配「@机器人 干系人」。
+ * 裸 @机器人、未 @ 的关键词、其他命令变体与普通群聊均返回 false（不回复）。
+ */
+export function parseGroupStakeholderCommand(raw: string | null): boolean {
+  if (raw === null) {
+    return false;
+  }
+  let text = raw.trim();
+  if (text === "") {
+    return false;
+  }
+  let hadMention = false;
+  for (;;) {
+    const next = text.replace(/^(?:<@[^>]+>|@\S+)\s+/u, "").trim();
+    if (next === text) {
+      break;
+    }
+    hadMention = true;
+    text = next;
+  }
+  if (!hadMention || text === "") {
+    return false;
+  }
+  return text === "干系人";
+}
+
+/** 表格单元格：空白 → —；折叠换行，转义反斜杠与竖线，防止破表。 */
+function markdownCell(value: string | null | undefined): string {
+  const normalized = (value ?? "").replace(/\s+/gu, " ").trim();
+  if (normalized === "") {
+    return "—";
+  }
+  return normalized.replace(/\\/gu, "\\\\").replace(/\|/gu, "\\|");
+}
+
+/**
+ * 群内干系人 markdown：列名 / 顺序 / 缺省值照系统「干系人」页；默认最近更新在前。
+ * 字段级权限同源（canSeeField）：无权或未绑定平台账号时，受保护字段以 — 占位并附说明。
+ */
+export function renderGroupStakeholdersMarkdown(input: {
+  projectName: string;
+  rows: readonly GroupStakeholderRow[];
+  viewer: GroupStakeholderViewer;
+}): string {
+  const title = "**" + input.projectName.replace(/\|/gu, "\\|") + " · 干系人**";
+  if (input.rows.length === 0) {
+    return title + "\n\n该项目暂无干系人。";
+  }
+  const authorization = input.viewer.kind === "authorized" ? input.viewer.authorization : null;
+  const visible = (field: string): boolean =>
+    authorization !== null && canSeeField(authorization, "stakeholder", field);
+  const lines = [
+    title,
+    "",
+    "| 干系人姓名 | 电话 / WhatsApp | 微信 | 邮箱 Email | 职务 / 责任板块 | 所属公司 | 填写者 | 干系人角色 |",
+    "|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|",
+  ];
+  const limit = Math.min(input.rows.length, GROUP_STAKEHOLDER_MAX_ROWS);
+  for (const row of input.rows.slice(0, limit)) {
+    const companyType =
+      STAKEHOLDER_COMPANY_TYPE_NAMES[row.companyType as keyof typeof STAKEHOLDER_COMPANY_TYPE_NAMES] ??
+      row.companyType;
+    const companyName = visible("company") ? (row.company ?? "").trim() : "";
+    const companyCell = companyName === "" ? companyType : companyType + " / " + companyName;
+    lines.push(
+      "| " +
+        markdownCell(row.name) +
+        " | " +
+        (visible("phone") ? markdownCell(row.phone) : "—") +
+        " | " +
+        (visible("wechat") ? markdownCell(row.wechat) : "—") +
+        " | " +
+        (visible("email") ? markdownCell(row.email) : "—") +
+        " | " +
+        (visible("title") ? markdownCell(row.title) : "—") +
+        " | " +
+        markdownCell(companyCell) +
+        " | " +
+        markdownCell(row.createdByName) +
+        " | " +
+        markdownCell(row.role) +
+        " |",
+    );
+  }
+  const notes: string[] = [];
+  if (input.rows.length > limit) {
+    notes.push("仅显示最近更新的 " + String(limit) + " 位（共 " + String(input.rows.length) + " 位）。");
+  }
+  if (input.viewer.kind === "anonymous") {
+    notes.push("未识别到你的平台账号，联系方式与商务字段已隐藏；请先在平台「设置 → 企业微信绑定」完成绑定。");
+  } else if (input.viewer.kind === "restricted") {
+    notes.push("当前企微账号未关联到有权查看本项目的平台账号，联系方式与商务字段已隐藏；请确认平台账号的项目权限。");
+  } else if (["phone", "wechat", "email", "title", "company"].some((field) => !visible(field))) {
+    notes.push("部分字段因权限不足已隐藏（联系方式需「干系人联系方式查看」，职务 / 公司需「干系人查看」）。");
+  }
+  const content = lines.join("\n") + (notes.length === 0 ? "" : "\n\n" + notes.join(" "));
+  return truncateGroupMarkdown(content).content;
+}
+
 /** 回调可选群名归一：trim + 最多 64 个 Unicode 字符；空 → null。 */
 function normalizeGroupName(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
@@ -179,6 +297,7 @@ export class NotifyGroupService {
     private readonly config: AppConfig,
     private readonly storage: ObjectStorage,
     private readonly deliveryAlerts: ProjectGroupDeliveryAlertService,
+    private readonly permissions: PermissionService,
   ) {}
 
   /**
@@ -216,6 +335,7 @@ export class NotifyGroupService {
    * 群消息回调 ingest（长连接 onMessage 接线）：只处理群聊消息回调（cmd=aibot_msg_callback / chattype=group /
    * 合法 chatid）。已绑定群 → 会话激活置位（幂等）；未绑定群 → 写入候选表供设置页自动发现，绑定后删除候选行。
    * 群名命令（@机器人 发「群名 XXX」/「群名：XXX」/「设置群名 XXX」）只更新展示名，不做绑定授权；
+   * 群内「@机器人 + 干系人」类命令按当前绑定项目返回 markdown 表格（敏感字段按查询者权限裁剪）。
    * 绑定仍由设置页按 project.update 权限完成。事件回调、单聊、缺 chatid 或非法 chatid 一律忽略。
    */
   async activateFromCallback(incoming: AibotIncomingMessage): Promise<void> {
@@ -228,14 +348,18 @@ export class NotifyGroupService {
       return;
     }
     const at = this.clock.now();
-    const command = incoming.msgtype === "text" ? parseGroupNameCommand(incoming.text) : null;
+    const nameCommand = incoming.msgtype === "text" ? parseGroupNameCommand(incoming.text) : null;
+    const stakeholderCommand =
+      nameCommand === null && incoming.msgtype === "text" ? parseGroupStakeholderCommand(incoming.text) : false;
     const row = await this.repository.findGroupByChatid(incoming.chatid);
     if (row === null) {
-      const name = command?.kind === "set" ? command.name : normalizeGroupName(incoming.chatName);
+      const name = nameCommand?.kind === "set" ? nameCommand.name : normalizeGroupName(incoming.chatName);
       await this.repository.observeCandidate({ chatid: incoming.chatid, name }, at);
       this.logger.log("群回调已登记候选群：" + maskChatid(incoming.chatid));
-      if (command !== null) {
-        await this.replyNameCommand(incoming, command, false);
+      if (nameCommand !== null) {
+        await this.replyNameCommand(incoming, nameCommand, false);
+      } else if (stakeholderCommand) {
+        await this.replyCallbackText(incoming, GROUP_STAKEHOLDER_UNBOUND_HINT, "干系人命令");
       }
       return;
     }
@@ -245,14 +369,16 @@ export class NotifyGroupService {
         this.logger.log("群会话已激活：" + maskChatid(incoming.chatid) + " · project=" + activated.projectId);
       }
     }
-    if (command?.kind === "set") {
-      const updated = await this.repository.setGroupName(incoming.chatid, command.name, at);
+    if (nameCommand?.kind === "set") {
+      const updated = await this.repository.setGroupName(incoming.chatid, nameCommand.name, at);
       if (updated !== null) {
         this.logger.log("群名已更新：" + maskChatid(incoming.chatid));
       }
     }
-    if (command !== null) {
-      await this.replyNameCommand(incoming, command, true);
+    if (nameCommand !== null) {
+      await this.replyNameCommand(incoming, nameCommand, true);
+    } else if (stakeholderCommand) {
+      await this.replyStakeholdersCommand(incoming, row.projectId);
     }
   }
 
@@ -262,9 +388,6 @@ export class NotifyGroupService {
     command: GroupNameCommand,
     bound: boolean,
   ): Promise<void> {
-    if (incoming.reqId === null || incoming.fromUserId === null || incoming.chatid === null) {
-      return;
-    }
     let content: string;
     if (command.kind === "set") {
       content = bound
@@ -275,6 +398,14 @@ export class NotifyGroupService {
     } else {
       content = GROUP_NAME_COMMAND_HINT;
     }
+    await this.replyCallbackText(incoming, content, "群名命令");
+  }
+
+  /** 会话内文本回执（被动回复，尽力而为；失败不影响主流程）。 */
+  private async replyCallbackText(incoming: AibotIncomingMessage, content: string, label: string): Promise<void> {
+    if (incoming.reqId === null || incoming.fromUserId === null || incoming.chatid === null) {
+      return;
+    }
     try {
       const result = await this.aibot.replyToCallback({
         reqId: incoming.reqId,
@@ -284,11 +415,100 @@ export class NotifyGroupService {
       });
       if (!result.ok) {
         this.logger.warn(
-          "群名命令回执未送达：" + maskChatid(incoming.chatid) + describeWecomFailure(result.errcode, result.errmsg),
+          label + "回执未送达：" + maskChatid(incoming.chatid) + describeWecomFailure(result.errcode, result.errmsg),
         );
       }
     } catch {
-      this.logger.warn("群名命令回执异常：" + maskChatid(incoming.chatid));
+      this.logger.warn(label + "回执异常：" + maskChatid(incoming.chatid));
+    }
+  }
+
+  /** 群内干系人查询：项目名 → 干系人 → 查询者权限 → markdown 表格（主动群消息，确保表格按 markdown 渲染）。 */
+  private async replyStakeholdersCommand(incoming: AibotIncomingMessage, projectId: string): Promise<void> {
+    if (incoming.chatid === null) {
+      return;
+    }
+    const projectName = await this.repository.findProjectName(projectId);
+    if (projectName === null) {
+      await this.sendGroupQueryMarkdown(
+        incoming.chatid,
+        "**干系人**\n\n项目不存在或已归档，无法查询干系人。",
+      );
+      return;
+    }
+    let rows: GroupStakeholderRow[];
+    try {
+      rows = await this.repository.listProjectStakeholders(projectId);
+    } catch {
+      this.logger.warn("干系人查询读取失败：project=" + projectId + " · " + maskChatid(incoming.chatid));
+      await this.sendGroupQueryMarkdown(
+        incoming.chatid,
+        "**" + projectName + " · 干系人**\n\n干系人信息读取失败，请稍后重试。",
+      );
+      return;
+    }
+    const viewer =
+      rows.length === 0
+        ? ({ kind: "anonymous" } as const)
+        : await this.resolveGroupStakeholderViewer(projectId, incoming.fromUserId);
+    const content = renderGroupStakeholdersMarkdown({ projectName, rows, viewer });
+    await this.sendGroupQueryMarkdown(incoming.chatid, content);
+  }
+
+  /**
+   * 查询者身份：企微 from.userid 先按当前机器人绑定行映射到库内用户，再校验项目可见性与 stakeholder.view。
+   * 未绑定 / 无项目权限不是错误 —— 降级为公共字段表格，敏感字段一律不出现。
+   */
+  private async resolveGroupStakeholderViewer(
+    projectId: string,
+    wecomUserid: string | null,
+  ): Promise<GroupStakeholderViewer> {
+    if (wecomUserid === null) {
+      return { kind: "anonymous" };
+    }
+    const botId = this.config.env.WECOM_BOT_ID;
+    if (botId === "") {
+      return { kind: "anonymous" };
+    }
+    try {
+      const actorId = await this.repository.findBoundLocalUserId(botId, wecomUserid);
+      if (actorId === null) {
+        return { kind: "anonymous" };
+      }
+      const access = await this.permissions.resolveProjectAccess(actorId, projectId);
+      if (access === null) {
+        return { kind: "restricted" };
+      }
+      const authorization = await this.permissions.getAuthorization(actorId);
+      if (!can(authorization, "stakeholder.view")) {
+        return { kind: "restricted" };
+      }
+      return { kind: "authorized", authorization };
+    } catch {
+      this.logger.warn("干系人查询权限解析失败：project=" + projectId);
+      return { kind: "restricted" };
+    }
+  }
+
+  /** 群查询 markdown 发送（回调已激活会话；字节截断与失败留痕同群播报口径）。 */
+  private async sendGroupQueryMarkdown(chatid: string, content: string): Promise<void> {
+    const safe = truncateGroupMarkdown(content);
+    if (safe.truncated) {
+      this.logger.warn("干系人查询内容超字节上限已截断：" + maskChatid(chatid));
+    }
+    try {
+      const result = await this.aibot.sendGroupMarkdown({
+        chatid,
+        content: safe.content,
+        groupActivated: true,
+      });
+      if (!result.ok) {
+        this.logger.warn(
+          "干系人查询回执未送达：" + maskChatid(chatid) + describeWecomFailure(result.errcode, result.errmsg),
+        );
+      }
+    } catch {
+      this.logger.warn("干系人查询回执异常：" + maskChatid(chatid));
     }
   }
 

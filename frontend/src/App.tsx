@@ -708,6 +708,7 @@ export default function App() {
           return { kind: "error", message: t("app.err.projectGone") };
         }
       }
+      // 旧服务端滚动升级兼容；新服务端仅有 409 ARCHIVE_NOT_READY，不再进入缺项二次确认。
       if (error instanceof ApiError && error.code === "ARCHIVE_GATE_NOT_PASSED" && options?.archiveConfirm !== true) {
         return { kind: "archive-confirm", missing: error.details.map((detail) => detail.message) };
       }

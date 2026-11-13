@@ -12,6 +12,6 @@ export const PROJECT_STAGES = [
   "硬件实施",
   "软件部署",
   "试运行",
-  "生产阶段",
+  "投产阶段",
   "验收",
 ] as const;

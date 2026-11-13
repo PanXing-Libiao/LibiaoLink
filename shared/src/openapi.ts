@@ -206,6 +206,8 @@ import {
   MaterialReissueResultSchema,
   ChangeRequestListQuerySchema,
   ChangeRequestListResponseSchema,
+  FileArchiveRequestSchema,
+  FileArchiveResponseSchema,
   FileDetailSchema,
   FileDownloadUrlResponseSchema,
   FileFinalizeBodySchema,
@@ -265,7 +267,7 @@ const calendarDayParams = z.object({ date: DateOnlySchema });
  * /api/v1 契约唯一入口：由各模块 Zod schema 注册而来。
  * 生成物（generated/openapi.json 与 generated/api-types.d.ts）由 npm run generate 产出，禁止手改（CONTRIBUTING §14）。
  */
-export function buildOpenApiDocument() {
+export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generateDocument"]> {
   const registry = new OpenAPIRegistry();
   registry.register("ResourceInvalidationPayload", ResourceInvalidationPayloadSchema);
 
@@ -418,7 +420,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/projects/{id}/archive",
     tags: ["projects"],
-    summary: "项目归档（门禁：验收阶段完成 + 成果文件齐全性检查；缺项 422 返回清单，confirm=true 确认越过后归档并生成清单）",
+    summary: "项目归档（门禁：项目内未删除任务全部完成；有未完成任务 409 ARCHIVE_NOT_READY 且 confirm 不可越过；通过后置位并生成引用式清单）",
     request: { params: idParams, body: json(ProjectArchiveBodySchema) },
     responses: {
       200: { description: "归档记录与清单（项目进入只读保护：写路径 409 PROJECT_ARCHIVED）", ...json(ProjectArchiveViewSchema) },
@@ -619,13 +621,14 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/projects/{id}/tasks/{taskId}/finalize",
     tags: ["tasks"],
-    summary: "任务定档（抽屉开关入口 · Push 252）：未定档 → 置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回",
+    summary: "任务定档（抽屉开关入口 · Push 252）：先校验任务已完成、已配置输出成果且成果文件齐全；未就绪 409 TASK_FINALIZE_NOT_READY / 缺件 422 TASK_REQUIRED_DOC_MISSING；通过后置位锁定（此后写口 409 TASK_FINALIZED）；已定档 → 幂等原样返回",
     request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskFinalizeBodySchema) },
     responses: {
       200: { description: "定档后的任务（Task 同形；幂等路径原样返回）", ...json(TaskSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
+      422: commonErrors[422],
     },
   });
 
@@ -633,7 +636,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/projects/{id}/tasks/{taskId}/unfinalize",
     tags: ["tasks"],
-    summary: "任务取消定档（抽屉「已」开关再次点击 · Push 260）：已定档 → 清位重新开放修改（留痕「取消定档」）；未定档 → 幂等原样返回",
+    summary: "任务取消定档（抽屉「已」开关再次点击 · Push 260）：预计完成日期当天及之前 → 清位重新开放修改（留痕「取消定档」）；预计完成日期已过且当前账号仅为任务负责人 → 409 TASK_UNFINALIZE_AFTER_PLAN，只能定档不能取消；项目经理等项目编辑者仍可取消；未定档 → 幂等原样返回",
     request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskUnfinalizeBodySchema) },
     responses: {
       200: { description: "取消定档后的任务（Task 同形；幂等路径原样返回）", ...json(TaskSchema) },
@@ -1191,6 +1194,23 @@ export function buildOpenApiDocument() {
 
   registry.registerPath({
     method: "post",
+    path: "/api/v1/projects/{id}/files/download-archive",
+    tags: ["files"],
+    summary: "项目文件批量打包 ZIP（服务端生成临时归档并返回单次短时签名地址）",
+    description:
+      "单批最多 50 个版本、单文件不超过 200 MB、解压后总量不超过 2 GB；任一文件或版本校验失败、对象读取失败、超限或写包失败时整批失败（全有或全无）。" +
+      "同一 (fileId, versionId) 仅入包一次，按首次提交顺序排列；要求 file.download 权限并逐文件写 download 审计。",
+    request: { params: idParams, body: json(FileArchiveRequestSchema) },
+    responses: {
+      200: { description: "ZIP 已生成，返回单次短时签名下载地址", ...json(FileArchiveResponseSchema) },
+      400: commonErrors[400],
+      404: commonErrors[404],
+      429: errorResponse("同一账号已有打包任务在进行（RATE_LIMITED）"),
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
     path: "/api/v1/files/uploads",
     tags: ["files"],
     summary: "发起上传（分片直传；version = 草稿替换 / change = 定档后变更，申请即通过）",
@@ -1324,7 +1344,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/files/{id}/finalize",
     tags: ["files"],
-    summary: "定档（锁版；此后修改必须走变更）",
+    summary: "定档（锁版；此后修改必须走变更；仅挂接任务已完成且输出成果齐全时才联动任务定档）",
     request: { params: idParams, headers: idempotencyHeader, body: json(FileFinalizeBodySchema) },
     responses: {
       200: { description: "已定档的文件", ...json(FileSchema) },

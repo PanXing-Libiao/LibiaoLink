@@ -465,6 +465,15 @@ class FakeFileRepository {
     return taskId;
   }
 
+  /** 文件定档联动任务定档门禁（2026-11-12）：默认就绪；防绕过用例置 false。 */
+  taskFinalizationReady = true;
+  taskFinalizationCalls: string[] = [];
+
+  async isTaskFinalizationReady(taskId: string, _client: unknown): Promise<boolean> {
+    this.taskFinalizationCalls.push(taskId);
+    return this.taskFinalizationReady;
+  }
+
   /** 定档兜底撤销调用记录（防绕过补漏）。 */
   abortedTaskUploadSessions: { taskId: string; at: Date }[] = [];
   /** abortActiveTaskUploadSessions 的返回条数（任务审计 metadata 断言用）。 */
@@ -2805,6 +2814,19 @@ describe("Push 249 · 任务定档联动与写口闸（业务口径「若是则�
     expect(h2.repo.finalizedTasks).toEqual([]);
     expect(h2.repo.abortedTaskUploadSessions).toEqual([]);
     expect(h2.audit.entries.map((entry) => (entry as { objectType: string }).objectType)).toEqual(["file"]);
+  });
+
+  it("任务未完成 / 成果未齐：文件仍可独立定档，但不得联动锁定任务（防绕过）", async () => {
+    const h = makeService();
+    h.repo.taskFinalizationReady = false;
+    h.repo.file = makeFileRow({ status: "draft", currentVersionId: VERSION, version: 5, taskId: TASK });
+    h.repo.versions = [makeVersionRow({ id: VERSION, seq: 1 })];
+    const result = await h.service.finalizeFile(FILE, { version: 5 }, ACTOR);
+    expect(result.status).toBe("final");
+    expect(h.repo.taskFinalizationCalls).toEqual([TASK]);
+    expect(h.repo.finalizedTasks).toEqual([]);
+    expect(h.repo.abortedTaskUploadSessions).toEqual([]);
+    expect(h.audit.entries.map((entry) => (entry as { objectType: string }).objectType)).toEqual(["file"]);
   });
 
   it("挂接任务的文件定档：非负责人且项目只读 → 403（不锁文件、不联动任务）", async () => {

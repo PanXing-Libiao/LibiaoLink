@@ -378,7 +378,7 @@ function CategoryTags({ values }: { values: readonly string[] }) {
 
 /** 关联阶段色签（Push 208 追加 · 业务口径「要有颜色 两处」· 业务样 = 九阶段各一档浅色）：
  *  售前规划 #adcbff / 设计开发 #ade4ff / 加工采购 #dcdfe4 / 组装发货 #ffb5b3 / 硬件实施 #ace2c5 /
- *  软件部署 #ffcea3 / 试运行 #ffea99 / 生产阶段 #e7b4ff / 验收 #ffb3dc —— 与「问题归类」共用同一张调色盘。 */
+ *  软件部署 #ffcea3 / 试运行 #ffea99 / 投产阶段 #e7b4ff / 验收 #ffb3dc —— 与「问题归类」共用同一张调色盘。 */
 const STAGE_TAG_CLASS: Record<string, string> = {
   售前规划: "bg-[#adcbff]",
   设计开发: "bg-[#ade4ff]",
@@ -387,7 +387,7 @@ const STAGE_TAG_CLASS: Record<string, string> = {
   硬件实施: "bg-[#ace2c5]",
   软件部署: "bg-[#ffcea3]",
   试运行: "bg-[#ffea99]",
-  生产阶段: "bg-[#e7b4ff]",
+  投产阶段: "bg-[#e7b4ff]",
   验收: "bg-[#ffb3dc]",
 };
 
