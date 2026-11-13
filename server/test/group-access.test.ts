@@ -1492,6 +1492,44 @@ describe("PermissionService 群组接入", () => {
     expect(await deletedRelation.service.canReadBlueprint(PROJECT_A)).toBe(false);
   });
 
+  it("蓝图地图总览读取权：项目数据范围 / 管理员 / 关闭限制 / 有效项目关系放行，仅登录拒绝", async () => {
+    const denied = serviceWith({ groupKeys: ["libiaorobot.com/项目部"], rules: [] });
+    expect(await denied.service.canBrowseProjectOverview(PROJECT_A)).toBe(false);
+
+    const loginOnly = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "none" })],
+    });
+    expect(await loginOnly.service.canBrowseProjectOverview(PROJECT_A)).toBe(false);
+
+    const emptyScope = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "selected", projectIds: [] })],
+    });
+    expect(await emptyScope.service.canBrowseProjectOverview(PROJECT_A)).toBe(true);
+
+    const disabled = serviceWith({ groupKeys: ["libiaorobot.com/项目部"], rules: [], groupEnforced: false });
+    expect(await disabled.service.canBrowseProjectOverview(PROJECT_A)).toBe(true);
+
+    const admin = serviceWith({ groupKeys: ["libiaorobot.com/系统管理员"], rules: [] });
+    expect(await admin.service.canBrowseProjectOverview(PROJECT_A)).toBe(true);
+
+    const member = serviceWith({ groupKeys: [], rules: [] });
+    member.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_B], deletedAt: null });
+    member.repository.memberships.set(PROJECT_A, "project_member");
+    expect(await member.service.canBrowseProjectOverview(PROJECT_A)).toBe(true);
+
+    const taskOwner = serviceWith({ groupKeys: [], rules: [] });
+    taskOwner.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_B], deletedAt: null });
+    taskOwner.repository.taskOwnerProjectIds.add(PROJECT_A);
+    expect(await taskOwner.service.canBrowseProjectOverview(PROJECT_A)).toBe(true);
+
+    const deletedRelation = serviceWith({ groupKeys: [], rules: [] });
+    deletedRelation.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_B], deletedAt: new Date() });
+    deletedRelation.repository.taskOwnerProjectIds.add(PROJECT_A);
+    expect(await deletedRelation.service.canBrowseProjectOverview(PROJECT_A)).toBe(false);
+  });
+
   it("own 项目范围展开为本人负责或进入名册的项目", async () => {
     const { service, repository } = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],

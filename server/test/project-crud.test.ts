@@ -5,6 +5,7 @@ import {
   ProjectRepository,
   isUniqueViolation,
   type ProjectChildrenCounts,
+  type ProjectMapOverviewRow,
   type ProjectRow,
   type ProjectViewRow,
 } from "../src/modules/project/project.repository.js";
@@ -119,6 +120,19 @@ class FakeProjectRepository {
 
   async findViewById(id: string): Promise<ProjectViewRow | null> {
     return this.visible(id);
+  }
+
+  async listMapOverview(): Promise<ProjectMapOverviewRow[]> {
+    return this.rows
+      .filter((view) => view.project.deletedAt === null)
+      .map((view) => ({
+        id: view.project.id,
+        code: view.project.code,
+        name: view.project.name,
+        region: view.project.region,
+        projectType: view.project.projectType,
+        status: view.project.status,
+      }));
   }
 
   async findRowById(id: string): Promise<ProjectRow | null> {
@@ -251,6 +265,7 @@ class FakeAuditService {
 class FakePermissionService {
   groupAccess = { enforced: false, admin: false, allEdit: true, ownEdit: true };
   levels = new Map<string, "edit" | "view">();
+  overviewAllowed = true;
 
   constructor(private readonly adminIds: readonly string[] = []) {}
 
@@ -265,6 +280,10 @@ class FakePermissionService {
     ownEdit: boolean;
   }> {
     return this.groupAccess;
+  }
+
+  async canBrowseProjectOverview(): Promise<boolean> {
+    return this.overviewAllowed;
   }
 
   async projectGroupAccessLevelsOf(
@@ -610,6 +629,37 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
       [UUID_B, "view"],
     ]);
     expect((await service.getProject(UUID_B, UUID_A)).groupAccessLevel).toBe("view");
+  });
+
+  it("蓝图地图总览：有浏览权可读全部项目，无本项目权限的项目 accessLevel=null 且不含明细", async () => {
+    const { service, permission } = makeService([
+      projectRow({ id: UUID_A, seqNo: 1 }),
+      projectRow({ id: UUID_B, seqNo: 2 }),
+      projectRow({ id: UUID_C, seqNo: 3 }),
+    ]);
+    permission.levels.set(UUID_A, "edit");
+    permission.levels.set(UUID_B, "view");
+
+    const overview = await service.listProjectMapOverview({ kind: "ids", ids: [UUID_A, UUID_B] }, UUID_A);
+
+    expect(overview.total).toBe(3);
+    expect(overview.items.map((item) => [item.id, item.accessLevel])).toEqual([
+      [UUID_A, "edit"],
+      [UUID_B, "view"],
+      [UUID_C, null],
+    ]);
+    expect(Object.keys(overview.items[0] ?? {}).sort()).toEqual([
+      "accessLevel",
+      "code",
+      "id",
+      "name",
+      "projectType",
+      "region",
+      "status",
+    ]);
+
+    permission.overviewAllowed = false;
+    await expectAppErrorAsync(() => service.listProjectMapOverview({ kind: "all" }, UUID_A), "FORBIDDEN");
   });
 
   it("列表：普通栏排除回收站；项目回收站只返回已软删项目", async () => {

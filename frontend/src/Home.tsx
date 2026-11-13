@@ -20,7 +20,7 @@ import { useFocusTrap } from "./components/useFocusTrap";
 import { dictLabel, typeAccent, type Dicts } from "./dicts";
 import { directoryMemberOptions, directoryName, type DirectoryUser } from "./directory";
 import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
-import { EMPTY_FACETS, buildListQuery, fetchProjectFacets, fetchProjectList, toUiProject, type ProjectExportFormat, type ProjectFacets } from "./projectApi";
+import { EMPTY_FACETS, buildListQuery, fetchProjectFacets, fetchProjectList, fetchProjectMapOverview, toUiProject, type ProjectExportFormat, type ProjectFacets, type ProjectMapOverviewItem } from "./projectApi";
 import { newSavedFilterId, sameCriteria } from "./savedFilters";
 import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
@@ -115,6 +115,24 @@ type LoadError =
   | { kind: "network" }
   | { kind: "api"; message: string; code: string };
 
+/** 筛选后 0 条时，用蓝图全量概况判断：当前条件是否其实命中了无权进入明细的项目。 */
+function mapOverviewMatchesListRequest(project: ProjectMapOverviewItem, filters: ListQueryState): boolean {
+  if (filters.managerIds.length > 0 || filters.timeFrom !== null || filters.timeTo !== null) {
+    return false;
+  }
+  if (filters.regions.length > 0 && !filters.regions.includes(project.region)) {
+    return false;
+  }
+  if (filters.projectTypes.length > 0 && !filters.projectTypes.includes(project.projectType)) {
+    return false;
+  }
+  if (filters.statuses.length > 0 && !filters.statuses.includes(project.status)) {
+    return false;
+  }
+  const keyword = filters.q.trim().toLocaleLowerCase();
+  return keyword === "" || (project.name + "\n" + project.code).toLocaleLowerCase().includes(keyword);
+}
+
 export default function Home({ me, dicts, directory, managerCandidates, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, canExportProject, onExportProject, exportingProjectId, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const t = useT();
   const locale = useLocale();
@@ -181,7 +199,9 @@ export default function Home({ me, dicts, directory, managerCandidates, dictTool
   const query = activeFilters.q;
   const keyword = query.trim();
   const hasFilters = hasListFilters(activeFilters);
-  const permissionEmpty = !hasFilters && keyword === "" && permissions?.groupProjectAccess === "empty";
+  /** 当前筛选命中全量项目、但没有任何项目可进入明细（服务端列表因此为 0）。 */
+  const [inaccessibleFilterMatch, setInaccessibleFilterMatch] = useState(false);
+  const permissionEmpty = permissions?.groupProjectAccess === "empty" || inaccessibleFilterMatch;
   const currentPermissionText = permissions === null || permissions.groupScopePermissions.length === 0
     ? null
     : t("access.currentPermissionScopes", {
@@ -316,6 +336,44 @@ export default function Home({ me, dicts, directory, managerCandidates, dictTool
       cancelled = true;
     };
   }, [requestKey, reloadToken, refreshToken]);
+
+  // 筛选后 0 条：区分“确实没有匹配项目”和“匹配项目存在但当前账号无权进入明细”。
+  useEffect(() => {
+    let cancelled = false;
+    const current = requestRef.current;
+    const hasRequest = current.q.trim() !== "" || hasListFilters(current);
+    if (
+      permissions?.groupProjectAccess !== "allowed" ||
+      loading ||
+      loadError !== null ||
+      items.length > 0 ||
+      !hasRequest
+    ) {
+      setInaccessibleFilterMatch(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void (async () => {
+      try {
+        const overview = await fetchProjectMapOverview();
+        if (!cancelled) {
+          setInaccessibleFilterMatch(
+            overview.items.some(
+              (project) => project.accessLevel === null && mapOverviewMatchesListRequest(project, current),
+            ),
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setInaccessibleFilterMatch(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [items.length, loadError, loading, permissions?.groupProjectAccess, requestKey]);
 
   // 常用筛选胶囊计数：按该组合单独取一次 total（服务端同口径判定），与当前筛选无关
   useEffect(() => {

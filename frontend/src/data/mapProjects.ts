@@ -15,7 +15,7 @@
 import { WORLD_MAP_COUNTRIES, WORLD_MAP_MICRO_STATES, type WorldMapCountry, type WorldMapMicroState } from "./worldMap";
 import { accentOfItem, dictLabel, type Dicts } from "../dicts";
 import { PROJECT_STATUS_TEXT, PROJECT_STATUS_VALUES, type ProjectStatusValue } from "../types";
-import type { ApiProject } from "../projectApi";
+import type { ProjectMapOverviewItem } from "../projectApi";
 
 /** 项目状态（契约 projects.status）：取值与文案收敛到 types.ts 的单一来源（Push 262 —— 卡片状态字 / 编辑弹窗 / 地图图例同口径）。 */
 export type MapProjectStatus = ProjectStatusValue;
@@ -36,6 +36,8 @@ export type MapProjectItem = {
   readonly projectType: string;
   readonly projectTypeName: string;
   readonly accent: string;
+  /** 当前账号对该项目的最终访问级别；null = 仅展示概况，不能进入详情。 */
+  readonly accessLevel: "edit" | "view" | null;
 };
 
 /** 一根立柱：一个国家（或微国）上的项目分布。 */
@@ -231,13 +233,13 @@ type Bucket = {
   readonly nameZh: string;
   readonly x: number;
   readonly y: number;
-  readonly projects: ApiProject[];
+  readonly projects: ProjectMapOverviewItem[];
   readonly regions: string[];
 };
 
 /** 项目清单 → 立柱（按国聚合）。锚点取不到的国家记入「未落到图上」。 */
-export function buildMapDistribution(projects: readonly ApiProject[], dicts: Dicts): HubMapDistribution {
-  const byRegion = new Map<string, ApiProject[]>();
+export function buildMapDistribution(projects: readonly ProjectMapOverviewItem[], dicts: Dicts): HubMapDistribution {
+  const byRegion = new Map<string, ProjectMapOverviewItem[]>();
   for (const project of projects) {
     const list = byRegion.get(project.region);
     if (list === undefined) {
@@ -298,6 +300,7 @@ export function buildMapDistribution(projects: readonly ApiProject[], dicts: Dic
         projectType: project.projectType,
         projectTypeName: dictLabel(dicts, "projectType", project.projectType),
         accent: accent.color,
+        accessLevel: project.accessLevel,
       };
     });
     items.sort((a, b) => MAP_PROJECT_STATUS_ORDER.indexOf(a.status) - MAP_PROJECT_STATUS_ORDER.indexOf(b.status) || (a.name < b.name ? -1 : 1));

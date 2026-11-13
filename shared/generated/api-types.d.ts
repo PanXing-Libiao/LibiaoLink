@@ -224,6 +224,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/map-overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 蓝图地图项目概况（有项目浏览权即可读取全部未删除项目的最少字段；accessLevel=null 不可进入详情） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 全部未删除项目概况 + 当前账号可否进入详情 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectMapOverviewResponse"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}": {
         parameters: {
             query?: never;
@@ -12588,6 +12633,23 @@ export interface components {
         /** @description 项目经理候选名单（GET /projects/manager-candidates） */
         ProjectManagerCandidateList: {
             items: components["schemas"]["ProjectManagerCandidate"][];
+            total: number;
+        };
+        /** @description 蓝图地图项目概况（最小展示字段 + 当前账号是否可进入详情） */
+        ProjectMapOverviewItem: {
+            id: components["schemas"]["Uuid"];
+            code: string;
+            name: string;
+            /** @description 项目落地地区（字典 region） */
+            region: string;
+            /** @description 项目类型（字典 project_type） */
+            projectType: string;
+            status: components["schemas"]["ProjectStatus"];
+            accessLevel: components["schemas"]["GroupAccessAccessLevel"] & (string | null);
+        };
+        /** @description 蓝图地图全部未删除项目概况（不受项目详情可见集裁剪） */
+        ProjectMapOverviewResponse: {
+            items: components["schemas"]["ProjectMapOverviewItem"][];
             total: number;
         };
         /** @description 项目成员（名册行） */
