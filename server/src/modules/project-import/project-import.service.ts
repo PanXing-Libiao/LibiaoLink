@@ -509,17 +509,13 @@ export class ProjectImportService implements OnModuleInit {
       const english = translatedSelected.get(item.index);
       if (english !== undefined) selectedEnglish.set(id, english);
     }
-    const eligibleManagerIds = await this.managerEligibility.eligibleUserIds();
+    // Excel 导入以源表为准：命中账号的项目经理直接保留，不套用「项目部成员 / 系统管理员」资格过滤；
+    // 新建 / 编辑项目与名册指派仍在 ProjectManagerEligibilityService 校验。
     const managerIds: string[] = [];
-    const ineligibleManagerNames: string[] = [];
     for (const name of placement.managerNames) {
       const displayName = stripParen(name);
       const id = resolution.byName.get(displayName) ?? null;
       if (id === null) continue;
-      if (!eligibleManagerIds.has(id)) {
-        if (!ineligibleManagerNames.includes(displayName)) ineligibleManagerNames.push(displayName);
-        continue;
-      }
       if (!managerIds.includes(id)) managerIds.push(id);
     }
     const extraSeeds: LegacyIssueSeed[] = [];
@@ -533,28 +529,17 @@ export class ProjectImportService implements OnModuleInit {
     if (unresolvedChangeApplicants.length > 0) extraSeeds.push(changeApplicantMissingSeed(unresolvedChangeApplicants));
     const unresolvedChangeWriters = unresolvedNamesOf(changeWriterIds);
     if (unresolvedChangeWriters.length > 0) extraSeeds.push(changeWriterMissingSeed(unresolvedChangeWriters));
-    if (ineligibleManagerNames.length > 0) {
-      extraSeeds.push(ineligibleManagerSeed(ineligibleManagerNames, managerIds.length === 0));
-    }
     if (managerIds.length === 0) {
-      if (!eligibleManagerIds.has(actorId)) {
-        throw new AppError(
-          "VALIDATION_FAILED",
-          "导入项目的项目经理必须选择有效项目部成员或系统管理员；源表项目经理不符合条件，且导入人也不具备项目经理资格，请调整源表或由符合条件的账号导入",
-        );
-      }
+      // 源表经理账号仍不存在时保留既有兜底：导入人记录为项目经理并提醒；导入路径不校验项目经理资格。
       managerIds.push(actorId);
-      if (ineligibleManagerNames.length === 0) {
-        extraSeeds.push(
-          managerFallbackSeed(placement.managerNames.map((name) => stripParen(name))),
-        );
-      }
+      extraSeeds.push(managerFallbackSeed(placement.managerNames.map((name) => stripParen(name))));
     }
     const groupAccess = await this.permission.groupAccessOf(actorId);
     const autoManageOwnProjects =
       groupAccess.enforced && !groupAccess.admin && groupAccess.ownEdit && !groupAccess.allEdit;
     let addImporterAsProjectMember = false;
     if (autoManageOwnProjects && !managerIds.includes(actorId)) {
+      const eligibleManagerIds = await this.managerEligibility.eligibleUserIds();
       if (eligibleManagerIds.has(actorId)) {
         // 「仅自己的项目可编辑」且本人符合资格：与 ProjectService 新建口径一致，自动成为项目经理。
         managerIds.push(actorId);
@@ -1190,6 +1175,7 @@ function collectPeople(parse: LegacyParse): string[] {
     seen.add(base);
     names.push(base);
   };
+  for (const manager of parse.project.managerNames) push(manager);
   for (const task of parse.tasks) {
     push(task.managerName ?? "");
     for (const owner of task.ownerNames) push(owner);
@@ -1592,28 +1578,6 @@ function unknownPeopleSeed(names: readonly string[]): LegacyIssueSeed {
       "People missing from the registry (no pinyin username): " +
       list +
       ". Add them to the registry and re-run the preview; owners / managers fall back for this import.",
-  };
-}
-
-function ineligibleManagerSeed(names: readonly string[], fallbackImporter: boolean): LegacyIssueSeed {
-  const list = names.join("、");
-  return {
-    level: "warning",
-    code: "MANAGER_INELIGIBLE",
-    row: null,
-    subject: list,
-    zh:
-      "源表项目经理不符合资格（仅有效项目部成员或系统管理员）：" +
-      list +
-      (fallbackImporter
-        ? "；本次已改记导入人为项目经理，请导入后核对成员名册"
-        : "；本次已跳过，请在项目成员名册中重新指定"),
-    en:
-      "Managers do not meet the eligibility rule (active Project Department member or system administrator): " +
-      list +
-      (fallbackImporter
-        ? ". The importer is recorded as project manager for this import; please verify the roster."
-        : ". They were skipped; please assign an eligible project manager in the member list."),
   };
 }
 

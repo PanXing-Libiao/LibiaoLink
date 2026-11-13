@@ -37,7 +37,7 @@ import { stageNameOf } from "./taskApi";
 import { replaceTemplateSection, templateSectionFromParam, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import { isLocalizedLocale, stageText, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT } from "./i18n";
 import { lockBodyScroll } from "./scrollLock";
-import { refreshTaskNodePending } from "./taskNodePending";
+import { markTaskNodeNotificationsSeen, refreshTaskNodePending, taskNodeNotificationKeys, useTaskNodePendingBadge } from "./taskNodePending";
 import type { MeResponse } from "./types";
 
 /** 任务模板的九阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
@@ -344,6 +344,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
    * 只有这个板块是开的才取申请列表，免得每个阶段板块都去打一次申请接口。
    */
   const nodeRequestsSectionActive = page === "templates" && activeSection === TEMPLATE_SPECIAL_SECTION;
+  /** 顶栏「任务模板」的待处理红点：进入「入库审核」前同步亮在本板块标签上。 */
+  const navTemplatesPending = useTaskNodePendingBadge();
 
   /**
    * 公共节点申请（业务口径 2026-11-13「给一个申请的渠道，让管理员审核」）：
@@ -478,6 +480,23 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
       alive = false;
     };
   }, [nodeRequestsSectionActive, canManageNodes, nodeRequestsVersion]);
+
+  /** 进入「入库审核」= 当前通知已读：顶栏与标签红点同时熄灭；后续只有新申请 / 新驳回才重新亮。 */
+  useEffect(() => {
+    if (!nodeRequestsSectionActive) {
+      return;
+    }
+    const notificationKeys = [
+      ...taskNodeNotificationKeys(pendingRequests, true),
+      ...taskNodeNotificationKeys(myRequests, false),
+    ];
+    if (notificationKeys.length === 0) {
+      return;
+    }
+    if (markTaskNodeNotificationsSeen(notificationKeys)) {
+      void refreshTaskNodePending(canManageNodes);
+    }
+  }, [nodeRequestsSectionActive, pendingRequests, myRequests, canManageNodes]);
 
   useEffect(() => {
     prefetchLocalizedText(Object.values(templatesByStage).flat().map((item) => item.name));
@@ -1009,7 +1028,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
     })();
   };
 
-  /** 驳回：原因必填（1..200，服务端复核）；成功后刷新列表，申请人随后能在「我的申请」看到原因。 */
+  /** 驳回：原因必填（默认「无」，可改；1..200，服务端复核）；成功后刷新列表，申请人随后能在「我的申请」看到原因。 */
   const rejectRequest = (request: TaskNodeRequest): void => {
     if (actingRequestId !== null) {
       return;
@@ -1298,17 +1317,30 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
             <button
               type="button"
               data-template-extra-section="inbound_review"
-              onClick={() => replaceTemplateSection(TEMPLATE_SPECIAL_SECTION)}
+              onClick={() => {
+                if (nodeRequestsSectionActive) {
+                  setNodeRequestsVersion((version) => version + 1);
+                }
+                replaceTemplateSection(TEMPLATE_SPECIAL_SECTION);
+              }}
               aria-current={TEMPLATE_SPECIAL_SECTION === activeSection ? "page" : undefined}
               className={"shrink-0 " + templateTabClass(TEMPLATE_SPECIAL_SECTION === activeSection)}
             >
               {stageText(locale, TEMPLATE_SPECIAL_SECTION)}
+              {navTemplatesPending ? (
+                <span
+                  role="img"
+                  data-template-inbound-review-dot=""
+                  aria-label={t("nav.templates.pendingAria")}
+                  className="ml-1.5 inline-block h-2 w-2 shrink-0 rounded-full bg-rose-500 align-middle"
+                />
+              ) : null}
             </button>
             {/*
               新建模板的入口在板块标签栏这一行：点一下 = POST 一份空模板（默认名「未命名模板」），
               新面板插到「任务节点」右侧、原来的模板往右挪。写 = 系统管理员或有效项目经理，无权不渲染（服务端仍是最终裁决）。
             */}
-            {canManageTemplates ? (
+            {canManageTemplates && !nodeRequestsSectionActive ? (
               <button
                 type="button"
                 data-template-new=""
@@ -1328,15 +1360,15 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
 
           {/* 入库审核工作台（2026-11-13 用户口径「远端仓库已经有审核的页面，我们用他的；本地的不用」
               「我们的清单和他的审核页正好互补」）：本地左列列头的入口按钮 + 申请浮层已删除，
-              申请清单（待审核 / 我的申请）整体迁到「入库审核」板块内容上方；该板块原有的节点库 / 模板面板
-              （远端 b66ffd88 的实现）保持不动。「待审核」只给 canManageNodes（现仅系统管理员）的账号。 */}
+              申请清单（待审核 / 我的申请）整体迁到「入库审核」板块；该板块只保留审核工作台，
+              节点库 / 模板面板与「新建模板」入口不在本板块渲染。「待审核」只给 canManageNodes（现仅系统管理员）的账号。 */}
           {nodeRequestsSectionActive ? (
             <section
               data-node-requests-workbench=""
               aria-label={t("nodeRequests.entry")}
-              className="mt-6 overflow-clip rounded-2xl border border-white/80 bg-white/85 shadow-[0_8px_32px_rgba(15,23,42,0.10)] backdrop-blur-xl"
+              className="mx-auto mt-4 flex w-full max-w-6xl flex-col overflow-clip rounded-2xl border border-white/80 bg-white/85 shadow-[0_8px_32px_rgba(15,23,42,0.10)] backdrop-blur-xl lg:h-[calc(100dvh-180px)]"
             >
-              <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 px-5 py-3.5">
+              <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-zinc-200 px-4 py-2.5">
                 <h2 className="text-base font-semibold text-zinc-900">{t("nodeRequests.entry")}</h2>
                 {/* 列表只在进入板块时取一次：停在板块里等新申请时，用它手动重取（复用「重新加载」键） */}
                 <button
@@ -1349,7 +1381,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                   {t("common.reload")}
                 </button>
               </div>
-              <div role="tablist" aria-label={t("nodeRequests.entry")} className="flex flex-wrap items-center gap-1 border-b border-zinc-100 px-4 text-sm">
+              <div role="tablist" aria-label={t("nodeRequests.entry")} className="flex shrink-0 flex-wrap items-center gap-1 border-b border-zinc-100 px-4 text-sm">
                 {canManageNodes ? (
                   <button
                     type="button"
@@ -1358,7 +1390,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                     data-node-request-tab="pending"
                     onClick={() => { setNodeRequestsTab("pending"); setRejectingRequestId(null); setRejectReason(""); }}
                     className={
-                      "border-b-2 px-3 py-2 font-medium transition " +
+                      "border-b-2 px-2.5 py-1.5 font-medium transition " +
                       (shownRequestsTab === "pending"
                         ? "border-zinc-900 text-zinc-900"
                         : "border-transparent text-zinc-500 hover:text-zinc-800")
@@ -1379,7 +1411,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                   data-node-request-tab="mine"
                   onClick={() => { setNodeRequestsTab("mine"); setRejectingRequestId(null); setRejectReason(""); }}
                   className={
-                    "border-b-2 px-3 py-2 font-medium transition " +
+                    "border-b-2 px-2.5 py-1.5 font-medium transition " +
                     (shownRequestsTab === "mine"
                       ? "border-zinc-900 text-zinc-900"
                       : "border-transparent text-zinc-500 hover:text-zinc-800")
@@ -1393,7 +1425,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                   )}
                 </button>
               </div>
-              <div className="max-h-[min(560px,72vh)] overflow-y-auto px-5 py-4">
+              <div data-node-request-list="" className="max-h-[min(420px,50vh)] overflow-y-auto px-3 py-2 lg:max-h-none lg:min-h-0 lg:flex-1">
                 {nodeRequestsError === null ? null : (
                   <p className="rounded-xl border border-dashed border-rose-200 bg-rose-50/70 px-4 py-6 text-center text-xs text-rose-700">
                     {t("nodeRequests.loadFailed", { message: nodeRequestsError })}
@@ -1416,7 +1448,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                     <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyPending")}</p>
                   ) : (
                     <>
-                      <ul className="space-y-3">
+                      <ul className="space-y-1.5">
                         {pendingRequests.map((request) => {
                           const draft = requestDraftOf(request);
                           const titleEmpty = draft.title.trim() === "";
@@ -1427,7 +1459,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                               key={request.id}
                               data-node-request-item={request.id}
                               data-node-request-status={request.status}
-                              className="rounded-xl border border-zinc-200 bg-white px-3 py-3 text-xs"
+                              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs"
                             >
                               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                                 <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">
@@ -1443,7 +1475,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                                   {t("nodeRequests.sourceProject", { name: sourceProjectLabel(request) })}
                                 </span>
                               </div>
-                              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                              <div className="mt-1.5 grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-center">
                                 <input
                                   type="text"
                                   value={draft.title}
@@ -1464,34 +1496,34 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                                   className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
                                   data-node-request-title-en={request.id}
                                 />
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={acting || titleEmpty}
+                                    onClick={() => { approveRequest(request); }}
+                                    data-node-request-approve={request.id}
+                                    className="rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                                  >
+                                    {t("nodeRequests.approve")}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={acting}
+                                    onClick={() => {
+                                      setRejectingRequestId(rejecting ? null : request.id);
+                                      setRejectReason("无");
+                                    }}
+                                    data-node-request-reject={request.id}
+                                    className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {t("nodeRequests.reject")}
+                                  </button>
+                                  {!acting ? null : <span className="text-[11px] text-zinc-400">{t("common.saving")}</span>}
+                                </div>
                               </div>
                               {!titleEmpty ? null : (
                                 <p className="mt-1 text-[11px] text-rose-600">{t("import.nodes.requestNameRequired")}</p>
                               )}
-                              <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <button
-                                  type="button"
-                                  disabled={acting || titleEmpty}
-                                  onClick={() => { approveRequest(request); }}
-                                  data-node-request-approve={request.id}
-                                  className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                                >
-                                  {t("nodeRequests.approve")}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={acting}
-                                  onClick={() => {
-                                    setRejectingRequestId(rejecting ? null : request.id);
-                                    setRejectReason("");
-                                  }}
-                                  data-node-request-reject={request.id}
-                                  className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  {t("nodeRequests.reject")}
-                                </button>
-                                {!acting ? null : <span className="text-[11px] text-zinc-400">{t("common.saving")}</span>}
-                              </div>
                               {!rejecting ? null : (
                                 <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-2.5">
                                   <label
@@ -1543,13 +1575,13 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                   myRequests.length === 0 ? (
                     <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyMine")}</p>
                   ) : (
-                    <ul className="space-y-3">
+                    <ul className="space-y-1.5">
                       {myRequests.map((request) => (
                         <li
                           key={request.id}
                           data-node-request-item={request.id}
                           data-node-request-status={request.status}
-                          className="rounded-xl border border-zinc-200 bg-white px-3 py-3 text-xs"
+                          className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs"
                         >
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                             <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">
@@ -1566,30 +1598,30 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                               {t(NODE_REQUEST_STATUS_KEY[request.status])}
                             </span>
                           </div>
-                          <p className="mt-1 text-[11px] text-zinc-500">
-                            {t("nodeRequests.submittedAt", { time: formatDateTime(request.requestedAt) })}
-                            {" · "}
-                            {t("nodeRequests.sourceProject", { name: sourceProjectLabel(request) })}
-                          </p>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-zinc-500">
+                            <span>
+                              {t("nodeRequests.submittedAt", { time: formatDateTime(request.requestedAt) })}
+                              {" · "}
+                              {t("nodeRequests.sourceProject", { name: sourceProjectLabel(request) })}
+                            </span>
+                            {request.status !== "pending" ? null : (
+                              <button
+                                type="button"
+                                disabled={actingRequestId !== null}
+                                onClick={() => { withdrawRequest(request); }}
+                                data-node-request-withdraw={request.id}
+                                className="ml-auto rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {t("nodeRequests.withdraw")}
+                              </button>
+                            )}
+                          </div>
                           {request.reviewNote === null || request.reviewNote === "" ? null : (
                             <p className="mt-1 text-[11px] text-zinc-600">
                               {(request.status === "rejected" ? t("nodeRequests.rejectReason") : t("nodeRequests.reviewNote")) +
                                 " · " +
                                 request.reviewNote}
                             </p>
-                          )}
-                          {request.status !== "pending" ? null : (
-                            <div className="mt-2 flex items-center gap-2">
-                              <button
-                                type="button"
-                                disabled={actingRequestId !== null}
-                                onClick={() => { withdrawRequest(request); }}
-                                data-node-request-withdraw={request.id}
-                                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {t("nodeRequests.withdraw")}
-                              </button>
-                            </div>
                           )}
                         </li>
                       ))}
@@ -1600,7 +1632,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
             </section>
           ) : null}
 
-          <div className="relative mt-6">
+          {nodeRequestsSectionActive ? null : (
+          <div data-template-board="" className="relative mt-6">
             {/* 毛玻璃底衬：玻璃要有可透的背景才看得出效果，这里垫一层很淡的色雾（纯装饰、不接收鼠标事件）。 */}
             <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 overflow-x-clip">
               <div className="sticky top-0 h-[70vh]">
@@ -2010,6 +2043,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
               </div>
             </div>
           </div>
+          )}
           {newTemplateVisibilityOpen ? (
             <div
               className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/30 px-4 backdrop-blur-[2px]"
