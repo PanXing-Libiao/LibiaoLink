@@ -3103,6 +3103,88 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/task-templates/{id}/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 在模板内新增私有节点（只属于当前模板，不进入公共节点库） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key"?: components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskTemplateNodeCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 创建成功 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskTemplateNode"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users": {
         parameters: {
             query?: never;
@@ -14131,12 +14213,22 @@ export interface components {
             items: components["schemas"]["TaskTemplate"][];
             total: number;
         };
-        /** @description 模板内节点（引用任务节点库 + 模板内顺序 + 名称摘要） */
+        /** @description 模板内节点（公共节点或该模板私有节点 + 模板内顺序 + 名称摘要） */
         TaskTemplateNode: {
             nodeId: components["schemas"]["Uuid"];
             seq: number;
             title: string;
             titleEn: string | null;
+        };
+        /** @description 在指定模板内新增私有节点（不进入公共节点库） */
+        TaskTemplateNodeCreateBody: {
+            /**
+             * @description 节点名称（当前模板内唯一）
+             * @example 货架复检
+             */
+            title: string;
+            /** @description 英文名（可空） */
+            titleEn?: string | null;
         };
         /** @description 编辑模板（改名 / 可见范围 / 节点全量替换；乐观锁 version 必传） */
         TaskTemplateUpdateBody: {
