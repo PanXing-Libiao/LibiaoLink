@@ -796,7 +796,7 @@ export default function App() {
   /** 归档权（Push 262 · M7-04 前端接线一部分）：决定编辑弹窗「已归档」选项是否可选（服务端逐请求仍是最终裁决）。 */
   const canArchiveProject = permissions === null || hasPermission(permissions, "project.archive");
   /**
-   * 任务模板页拆成两档写权限：节点库 = 系统管理员或有效项目经理；公共模板新建同左，单份模板维护仅创建人或管理员。
+   * 任务模板页拆成两档写权限：公共节点库 = 仅系统管理员；公共模板新建 = 管理员或有效项目经理，单份模板维护仅创建人或管理员。
    * 任务负责人 / 普通成员只读；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN。
    */
   const canManageNodes = canEditTaskNodes(permissions);

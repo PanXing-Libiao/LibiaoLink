@@ -832,7 +832,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "post",
     path: "/api/v1/task-nodes",
     tags: ["templates"],
-    summary: "新增任务节点（管理端维护节点库；同阶段同名 409）",
+    summary: "新增公共任务节点（仅系统管理员；同阶段同名 409）",
     request: { headers: idempotencyHeader, body: json(TaskNodeCreateBodySchema) },
     responses: {
       201: { description: "创建成功", ...json(TaskNodeSchema) },
@@ -846,7 +846,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "patch",
     path: "/api/v1/task-nodes/{id}",
     tags: ["templates"],
-    summary: "编辑任务节点（改名 / 英文名；乐观锁 version 必传）",
+    summary: "编辑公共任务节点（仅系统管理员；乐观锁 version 必传）",
     request: { params: idParams, body: json(TaskNodeUpdateBodySchema) },
     responses: {
       200: { description: "编辑成功", ...json(TaskNodeSchema) },
@@ -861,7 +861,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "delete",
     path: "/api/v1/task-nodes/{id}",
     tags: ["templates"],
-    summary: "删除任务节点（物理删行；删除前快照写审计；已生成的项目任务不变）",
+    summary: "删除公共任务节点（仅系统管理员；物理删行；已生成的项目任务不变）",
     request: { params: idParams },
     responses: {
       200: { description: "已删除", ...json(TaskNodeDeleteResponseSchema) },

@@ -1107,16 +1107,13 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
 
                 {scopedNodes.length === 0 ? null : (
                   <section className="rounded-2xl border border-zinc-200 bg-white p-5" data-import-node-summary="">
+                    {/* 业务口径 2026-11-13（PM「这两条文字提示放在这里过于啰嗦了，因为下面已经有相似的文字提示了」）：
+                        「节点比对结果」标题下的 summaryHint 与 adminNotice 两行提示不再渲染 —— 分类面板与每条节点行内
+                        已各自给出同样的说明；键由 lead 统一清理。 */}
                     <h3 className="text-sm font-semibold text-zinc-900">{t("import.nodes.summaryTitle")}</h3>
-                    <p className="mt-1 text-xs text-zinc-500">{t("import.nodes.summaryHint")}</p>
                     <p className="mt-3 text-xs font-medium text-zinc-700" data-import-auto-matched="">
                       {t("import.nodes.autoMatched", { n: exactMatches.length })}
                     </p>
-                    {pendingNodes.length === 0 ? null : (
-                      <p className="mt-2 text-xs text-amber-700" data-import-unmatched-notice="">
-                        {t("import.nodes.adminNotice")}
-                      </p>
-                    )}
                     {!hasCategorizedNodes ? null : (<>
                     <div
                       role="tablist"

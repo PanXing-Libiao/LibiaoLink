@@ -2700,7 +2700,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** 新增任务节点（管理端维护节点库；同阶段同名 409） */
+        /** 新增公共任务节点（仅系统管理员；同阶段同名 409） */
         post: {
             parameters: {
                 query?: never;
@@ -2771,7 +2771,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** 删除任务节点（物理删行；删除前快照写审计；已生成的项目任务不变） */
+        /** 删除公共任务节点（仅系统管理员；物理删行；已生成的项目任务不变） */
         delete: {
             parameters: {
                 query?: never;
@@ -2815,7 +2815,7 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** 编辑任务节点（改名 / 英文名；乐观锁 version 必传） */
+        /** 编辑公共任务节点（仅系统管理员；乐观锁 version 必传） */
         patch: {
             parameters: {
                 query?: never;
@@ -11173,7 +11173,7 @@ export interface components {
             groupOwnEdit?: boolean;
             /** @description 当前账号是否拥有指定项目编辑权限 */
             groupSelectedEdit?: boolean;
-            /** @description 是否可新增 / 编辑 / 删除公共任务节点库：管理员，或至少管理一个未删除项目的项目经理；部门编辑范围不授予 */
+            /** @description 是否可新增 / 编辑 / 删除公共任务节点库：仅系统管理员；项目经理、部门编辑范围与普通成员均不授予 */
             taskNodeManage?: boolean;
             /** @description 是否可浏览公共任务模板：管理员、有项目数据范围的账号，或至少有一个可浏览有效项目关系（项目经理 / 项目成员 / 任务负责人） */
             taskTemplateRead?: boolean;
