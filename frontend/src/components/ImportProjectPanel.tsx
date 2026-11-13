@@ -701,14 +701,13 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                   <span className="text-zinc-700" data-import-node-excel-name="">{node.name}</span>
                   {node.sourceNameEn === null || node.sourceNameEn === "" ? null : <span className="text-zinc-400">{node.sourceNameEn}</span>}
                 </p>
-                {nodeEnglish(node) === null || nodeEnglish(node) === "" ? <p className="text-amber-600">{t("import.nodes.nameEnMissing")}</p> : null}
               </div>
             </div>
-            {node.matchKind !== "uncertain" && node.matchKind !== "new" ? null : (
-              <p className="mt-2 text-[11px] text-amber-700">
-                {node.matchKind === "new" ? t("import.nodes.badgeNew") : t("import.nodes.badgeUncertain")}
-              </p>
-            )}
+            {/* 业务口径 2026-11-13 22:34（PM「这些说明也删」）：AI 判 new 的行不再铺「AI 判断没有同义节点…」，
+                只有「AI 无法确认」保留一句，提醒需要人工选一下。 */}
+            {node.matchKind === "uncertain" ? (
+              <p className="mt-2 text-[11px] text-amber-700">{t("import.nodes.badgeUncertain")}</p>
+            ) : null}
             {node.matchKind !== "semantic" || suggested === undefined ? null : (
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" aria-pressed={selected?.id === suggested.id} className={actionClass(selected?.id === suggested.id)}
@@ -717,7 +716,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                 </button>
                 <button type="button" aria-pressed={choice === "standalone"} className={actionClass(choice === "standalone")}
                   onClick={() => applyNodeChoice(node, "standalone")} data-import-choose-standalone={node.groupIndex}>
-                  {t("import.nodes.keepExcelName")}
+                  {t("import.nodes.keepImportedName")}
                 </button>
               </div>
             )}
@@ -1194,11 +1193,8 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                               ? t("import.nodes.aiMatchesTitle", { n: aiMatchedNodes.length })
                               : t("import.nodes.pendingTitle", { n: pendingNodes.length })}
                           </h4>
-                          {/* 业务口径 2026-11-13 22:23（PM「这些删了」）：未匹配 / AI 无法确认这一栏不再铺一段说明，
-                              行内按钮「选择已有节点 / 保留 Excel 名称」已经表达了动作。 */}
-                          {currentNodeCategory === "ai" ? (
-                            <p className="mt-1 text-xs text-blue-800">{t("import.nodes.aiMatchesHint")}</p>
-                          ) : null}
+                          {/* 业务口径 2026-11-13 22:23 / 22:34（PM「这些删了」「这些说明也删」）：
+                              分类面板标题下不再铺任何说明，行内按钮已经表达了动作。 */}
                           {renderNodeRows(nodesByCategory[currentNodeCategory])}
                         </>
                       )}
