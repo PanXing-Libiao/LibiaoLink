@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTaskNodeReviewMessage,
+  buildTaskNodeReviewResultMessage,
   looksLikeTaskNodeReviewReply,
   parseTaskNodeReviewReply,
 } from "../src/modules/template/task-node-review-wecom.js";
@@ -52,6 +53,22 @@ describe("企微公共节点审核消息", () => {
     expect(body).toContain("驳回潘兴的1号申请 （空格后填写理由 空则默认为无）");
     expect(body).toContain("[打开入库审核](https://test-pm.libiaorobot.com/#/templates?section=inbound_review)");
     expect(body.split("| 审核信息 |").length - 1).toBe(1);
+  });
+
+  it("审核结果只保留阶段、任务、申请人和通过 / 驳回", () => {
+    const approved = buildTaskNodeReviewResultMessage({
+      stageName: "硬件实施",
+      request: { title: "第四批空箱上架", requestedByName: "潘兴" },
+      decision: "approved",
+    });
+    expect(approved).toBe("**阶段**：硬件实施\n**任务**：第四批空箱上架\n**申请人**：潘兴\n**审核结果**：审核通过");
+    const rejected = buildTaskNodeReviewResultMessage({
+      stageName: "硬件实施",
+      request: { title: "第四批空箱上架", requestedByName: "潘兴" },
+      decision: "rejected",
+    });
+    expect(rejected).toContain("**审核结果**：审核驳回");
+    expect(rejected.split("\n")).toHaveLength(4);
   });
 
   it("节点名中的竖线不破坏 Markdown 表格", () => {
