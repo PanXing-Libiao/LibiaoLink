@@ -1,8 +1,9 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post, Put, Query, UseGuards } from "@nestjs/common";
 import {
   TaskNodeRequestApproveBodySchema,
   TaskNodeRequestListQuerySchema,
   TaskNodeRequestRejectBodySchema,
+  TaskNodeReviewNotificationSettingsBodySchema,
   UuidSchema,
 } from "@libiaolink/contracts";
 import type {
@@ -11,10 +12,13 @@ import type {
   TaskNodeRequestListQuery,
   TaskNodeRequestListResponse,
   TaskNodeRequestRejectBody,
+  TaskNodeReviewNotificationSettings,
+  TaskNodeReviewNotificationSettingsBody,
 } from "@libiaolink/contracts";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { TaskNodeRequestService } from "./task-node-request.service.js";
+import { TaskNodeReviewNotificationService } from "./task-node-review-notification.service.js";
 
 const idParam = new ZodValidationPipe(UuidSchema);
 
@@ -27,7 +31,10 @@ const idParam = new ZodValidationPipe(UuidSchema);
 @Controller("api/v1/task-node-requests")
 @UseGuards(SessionGuard, CsrfGuard)
 export class TaskNodeRequestController {
-  constructor(private readonly requests: TaskNodeRequestService) {}
+  constructor(
+    private readonly requests: TaskNodeRequestService,
+    private readonly notifications: TaskNodeReviewNotificationService,
+  ) {}
 
   /** 申请列表：mine=true 只看本人；缺省 = 审核人视角全部（含 pendingCount 供入口角标）。 */
   @Get()
@@ -36,6 +43,21 @@ export class TaskNodeRequestController {
     @CurrentActorId() actorId: string,
   ): Promise<TaskNodeRequestListResponse> {
     return this.requests.list(query, actorId);
+  }
+
+  /** 审核页左侧的企微通知设置：全局单例；只有当前公共节点审核管理员可读。 */
+  @Get("notification-settings")
+  getNotificationSettings(@CurrentActorId() actorId: string): Promise<TaskNodeReviewNotificationSettings> {
+    return this.notifications.getSettings(actorId);
+  }
+
+  /** 保存开关与每日通知时间（Asia/Shanghai）；写审计，worker 到点派发。 */
+  @Put("notification-settings")
+  updateNotificationSettings(
+    @Body(new ZodValidationPipe(TaskNodeReviewNotificationSettingsBodySchema)) body: TaskNodeReviewNotificationSettingsBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<TaskNodeReviewNotificationSettings> {
+    return this.notifications.updateSettings(body, actorId);
   }
 
   /** 通过：可先改中英文名；同阶段已有同名公共节点时直接关联（linkedExisting=true），不重复建节点。 */

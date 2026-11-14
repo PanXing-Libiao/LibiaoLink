@@ -345,49 +345,19 @@ describe("TaskNodeRequestService.createFromImport（导入内提交）", () => {
     expect(h.nodes.inserts).toEqual([]);
   });
 
-  it("申请创建时按仍生效的审核人逐人写企微通知，一条申请一条消息", async () => {
+  it("申请创建不再即时写企微通知，等待每日计划派发", async () => {
     const h = createHarness();
-    const reviewerA = REVIEWER;
-    const reviewerB = "99999999-9999-4999-8999-999999999999";
-    h.permission.reviewers = [reviewerA, reviewerB];
-    const outbox: Array<{ topic: string; dedupeKey: string; payload: Record<string, unknown> }> = [];
-    const tx = {
-      insert: () => ({
-        values: (value: { topic: string; dedupeKey: string; payload: Record<string, unknown> }) => ({
-          onConflictDoUpdate: async () => {
-            outbox.push(value);
-          },
-        }),
-      }),
-    };
-    const outcome = await h.service.createFromImport(
+    h.permission.reviewers = [REVIEWER];
+    await h.service.createFromImport(
       {
         actorId: ACTOR,
         projectId: PROJECT_ID,
         previewId: PREVIEW_ID,
         items: [{ stageKey: "install", title: "企微联调节点", titleEn: null }],
       },
-      tx as never,
+      {} as never,
     );
-    const request = outcome.requests[0];
-    if (request === undefined) throw new Error("缺少新建申请");
-    expect(outbox).toHaveLength(2);
-    expect(outbox.map((row) => row.dedupeKey)).toEqual([
-      "task-node-request-review:" + request.id + ":" + reviewerA,
-      "task-node-request-review:" + request.id + ":" + reviewerB,
-    ]);
-    expect(outbox[0]?.topic).toBe("notify.message");
-    expect(outbox[0]?.payload).toMatchObject({
-      recipientId: reviewerA,
-      type: "approval",
-      channel: "wecom_aibot",
-      refType: "task_node_request",
-      refId: request.id,
-      templateCode: "TASK_NODE_REQUEST_REVIEW",
-    });
-    const body = String(outbox[0]?.payload.body ?? "");
-    expect(body).toContain("| 审核信息 | 潘兴的1号申请 |");
-    expect(body).toContain("同意潘兴的1号申请");
+    expect(h.database.outbox).toEqual([]);
   });
 
   it("并发下插入撞唯一索引（返回 null）时复用既有待审申请", async () => {

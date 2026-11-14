@@ -150,6 +150,22 @@ export const TaskNodeRequestDecisionResponseSchema = z
   .openapi("TaskNodeRequestDecisionResponse", { description: "申请审核 / 撤销结果" });
 
 /**
+ * 公共节点审核企微通知设置（全局单例）：开关关闭 = 不发送待审核申请通知；开启后每天到 dailyTime
+ * 统一发送尚未通知的 pending 申请。时刻按 Asia/Shanghai（北京时间）解释。
+ */
+export const TaskNodeReviewNotificationSettingsSchema = z
+  .object({
+    enabled: z.boolean().openapi({ description: "是否发送企微审核通知" }),
+    dailyTime: z
+      .string()
+      .regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)
+      .openapi({ example: "09:00", description: "每日通知时刻（Asia/Shanghai，HH:mm）" }),
+  })
+  .openapi("TaskNodeReviewNotificationSettings", { description: "公共节点审核企微通知设置（全局单例）" });
+
+export const TaskNodeReviewNotificationSettingsBodySchema = TaskNodeReviewNotificationSettingsSchema;
+
+/**
  * 模板可见范围：private = 仅填写人可见；public = 有任务模板浏览权的账号均可见。
  * 创建时选择；创建后仅填写人本人可在模板编辑中调整，保存时走同一份 PATCH 契约。
  * 系统预置模板（createdBy 为空）没有填写人，任何人（包括管理员）都不能调整其可见范围。
@@ -250,6 +266,8 @@ export type TaskNodeRequestListResponse = z.infer<typeof TaskNodeRequestListResp
 export type TaskNodeRequestApproveBody = z.infer<typeof TaskNodeRequestApproveBodySchema>;
 export type TaskNodeRequestRejectBody = z.infer<typeof TaskNodeRequestRejectBodySchema>;
 export type TaskNodeRequestDecisionResponse = z.infer<typeof TaskNodeRequestDecisionResponseSchema>;
+export type TaskNodeReviewNotificationSettings = z.infer<typeof TaskNodeReviewNotificationSettingsSchema>;
+export type TaskNodeReviewNotificationSettingsBody = z.infer<typeof TaskNodeReviewNotificationSettingsBodySchema>;
 
 /** 模板侧别名（第二段落库：名称 + 阶段 + 可见范围 + 节点顺序；可见范围与节点顺序均可随编辑更新，乐观锁必传）。 */
 export type TaskTemplateVisibility = z.infer<typeof TaskTemplateVisibilitySchema>;

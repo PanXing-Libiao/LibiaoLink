@@ -19,16 +19,19 @@ import {
   deleteTaskTemplate,
   fetchStageNodes,
   fetchStageTemplates,
+  getTaskNodeReviewNotificationSettings,
   listTaskNodeRequests,
   nodeRequestWriteMessage,
   nodeWriteMessage,
   rejectTaskNodeRequest,
   templateWriteMessage,
   updateStageNode,
+  updateTaskNodeReviewNotificationSettings,
   updateTaskTemplate,
   withdrawTaskNodeRequest,
   type TaskNodeItem,
   type TaskNodeRequest,
+  type TaskNodeReviewNotificationSettings,
   type TemplateItem,
   type TemplateVisibility,
 } from "./templateApi";
@@ -379,6 +382,14 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const [actingRequestId, setActingRequestId] = useState<string | null>(null);
   /** 审核动作的结果提示（顶部 Toast，成功 / 失败同一位置）。 */
   const [nodeRequestNotice, setNodeRequestNotice] = useState<{ kind: "ok" | "error" | "info"; text: string } | null>(null);
+  /** 审核页左侧的企微通知设置（全局单例；只有 canReviewNodes 时读取 / 可编辑）。 */
+  const [reviewNotifySettings, setReviewNotifySettings] = useState<TaskNodeReviewNotificationSettings>({
+    enabled: true,
+    dailyTime: "09:00",
+  });
+  const [reviewNotifyReady, setReviewNotifyReady] = useState(false);
+  const [reviewNotifySaving, setReviewNotifySaving] = useState(false);
+  const [reviewNotifyError, setReviewNotifyError] = useState<string | null>(null);
 
   useEffect(() => subscribeLiveHints((resources) => {
     if (!resources.includes("templates")) return;
@@ -485,6 +496,30 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
       alive = false;
     };
   }, [nodeRequestsSectionActive, canReviewNodes, nodeRequestsVersion]);
+
+  /** 审核页左侧设置单独取数：失败不影响申请列表；只有审核管理员会请求。 */
+  useEffect(() => {
+    if (!nodeRequestsSectionActive || !canReviewNodes) {
+      return;
+    }
+    let alive = true;
+    setReviewNotifyError(null);
+    void (async () => {
+      try {
+        const settings = await getTaskNodeReviewNotificationSettings();
+        if (!alive) return;
+        setReviewNotifySettings(settings);
+        setReviewNotifyReady(true);
+      } catch (error) {
+        if (!alive) return;
+        setReviewNotifyReady(false);
+        setReviewNotifyError(error instanceof Error ? error.message : t("tpl.err.retryLater"));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [nodeRequestsSectionActive, canReviewNodes]);
 
   /** 进入「入库审核」= 当前通知已读：顶栏与标签红点同时熄灭；后续只有新申请 / 新驳回才重新亮。 */
   useEffect(() => {
@@ -968,6 +1003,34 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const nodeRequestErrorMessage = (error: unknown, fallback: string): string =>
     error instanceof ApiError ? nodeRequestWriteMessage(error) : fallback;
 
+  /** 通知设置采用「立即保存」：乐观更新，失败回滚并出 Toast；保存中禁用开关与时间，防连点竞态。 */
+  const saveReviewNotifySettings = (next: TaskNodeReviewNotificationSettings): void => {
+    if (!reviewNotifyReady || reviewNotifySaving) {
+      return;
+    }
+    const previous = reviewNotifySettings;
+    setReviewNotifySettings(next);
+    setReviewNotifySaving(true);
+    setReviewNotifyError(null);
+    void (async () => {
+      try {
+        const saved = await updateTaskNodeReviewNotificationSettings(next);
+        setReviewNotifySettings(saved);
+        setNodeRequestNotice({ kind: "ok", text: t("nodeRequests.notify.saved") });
+      } catch (error) {
+        setReviewNotifySettings(previous);
+        setNodeRequestNotice({
+          kind: "error",
+          text: t("nodeRequests.notify.saveFailed", {
+            message: error instanceof Error ? error.message : t("tpl.err.retryLater"),
+          }),
+        });
+      } finally {
+        setReviewNotifySaving(false);
+      }
+    })();
+  };
+
   /** 审核行当前的中英文名（没编辑过 = 申请原值；英文名空串 = 无英文，提交时传 null）。 */
   const requestDraftOf = (request: TaskNodeRequest): { title: string; titleEn: string } =>
     requestDrafts[request.id] ?? { title: request.title, titleEn: request.titleEn ?? "" };
@@ -1376,6 +1439,70 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
               <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-zinc-200 px-4 py-2.5">
                 <h2 className="text-base font-semibold text-zinc-900">{t("nodeRequests.entry")}</h2>
               </div>
+              <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+                {canReviewNodes ? (
+                  <aside
+                    data-node-review-notification-settings=""
+                    className="shrink-0 border-b border-zinc-100 bg-zinc-50/65 px-4 py-3 lg:w-52 lg:border-b-0 lg:border-r lg:px-3 lg:py-4"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-zinc-800">{t("nodeRequests.notify.title")}</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={reviewNotifySettings.enabled}
+                        aria-label={t("nodeRequests.notify.title")}
+                        data-node-review-notification-switch=""
+                        disabled={!reviewNotifyReady || reviewNotifySaving}
+                        onClick={() => {
+                          saveReviewNotifySettings({ ...reviewNotifySettings, enabled: !reviewNotifySettings.enabled });
+                        }}
+                        className={
+                          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 " +
+                          (reviewNotifySettings.enabled ? "bg-emerald-500" : "bg-zinc-300")
+                        }
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={
+                            "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform " +
+                            (reviewNotifySettings.enabled ? "translate-x-[18px]" : "translate-x-0.5")
+                          }
+                        />
+                      </button>
+                    </div>
+                    <label
+                      htmlFor="task-node-review-notification-time"
+                      className="mt-3 block text-[11px] font-medium text-zinc-600"
+                    >
+                      {t("nodeRequests.notify.dailyTime")}
+                    </label>
+                    <input
+                      id="task-node-review-notification-time"
+                      type="time"
+                      value={reviewNotifySettings.dailyTime}
+                      aria-label={t("nodeRequests.notify.dailyTime")}
+                      data-node-review-notification-time=""
+                      disabled={!reviewNotifyReady || reviewNotifySaving || !reviewNotifySettings.enabled}
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        if (!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(value)) return;
+                        saveReviewNotifySettings({ ...reviewNotifySettings, dailyTime: value });
+                      }}
+                      className="mt-1.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition focus:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
+                    />
+                    <p className="mt-1.5 text-[10px] leading-4 text-zinc-500">
+                      {reviewNotifyError !== null
+                        ? t("nodeRequests.notify.loadFailed", { message: reviewNotifyError })
+                        : !reviewNotifyReady
+                          ? t("common.loading")
+                          : reviewNotifySettings.enabled
+                            ? t("nodeRequests.notify.timeHint")
+                            : t("nodeRequests.notify.offHint")}
+                    </p>
+                  </aside>
+                ) : null}
+                <div className="flex min-h-0 flex-1 flex-col">
               <div role="tablist" aria-label={t("nodeRequests.entry")} className="flex shrink-0 flex-wrap items-center gap-1 border-b border-zinc-100 px-4 text-sm">
                 {canReviewNodes ? (
                   <button
@@ -1702,6 +1829,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                     </ul>
                   )
                 ) : null}
+              </div>
+                </div>
               </div>
             </section>
           ) : null}

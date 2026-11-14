@@ -66,6 +66,13 @@
 - 本次复核：`npm run typecheck` / `npm run build` / `npm test` / `npm run check:boundaries` 全过；`shared` 的 `generate` / `typecheck` / `build` / `check` 全过。
 - 真机回放：第一段 `frontend/scripts/m3-05-task-nodes-e2e.mjs` 48 项全过，证据 `docs/m3-05-回放证据(节点库增删改·前端).md`；第二段 `frontend/scripts/m3-05-task-templates-e2e.mjs` **60 项全过**（含硬刷新后仍在 / 未保存改动必须消失 / 面板顺序 = 接口顺序），证据 `docs/m3-05-回放证据(模板落库·前端).md`。
 
+## 企微审核通知设置（2026-11-15 · 0099）
+
+- 契约：`TaskNodeReviewNotificationSettingsSchema` / `TaskNodeReviewNotificationSettingsBodySchema`；`GET / PUT /api/v1/task-node-requests/notification-settings`，仅当前 `taskNodeReview` 审核管理员可读写，保存写 `task_node_review_notification_settings` 审计。
+- 数据：`task_node_review_notification_settings` 单例（开关 / 每日 HH:mm / last_dispatched_on）；迁移 `0099` 建默认行（开启 · 09:00）。
+- 派发：申请创建不再即时写审核通知；worker 每分钟调用 `TaskNodeReviewNotificationService.flushScheduledNotifications()`，到点后锁单例行，给每条 pending 申请的每位当前有效审核人写一条 `TASK_NODE_REQUEST_REVIEW` outbox，`last_dispatched_on` 防同日重复，`dedupe_key` 防同一申请同一审核人重复。审批结果通知仍在审核事务内即时发送。
+- 测试：`test/task-node-review-notification.test.ts` 覆盖权限 / 审计 / 关闭 / 未到点 / 到点派发 / 同日不重复 / 次日新申请 / 无审核人；`test/task-node-requests.test.ts` 断言申请创建不再即时通知。
+
 ## 待办（后续）
 
 - 模板实例化 `POST /api/v1/projects/{id}/tasks/from-template`（`templateId` + 可选 `nodeIds`，`skipExisting` 默认 true → `created` + `skipped`）：已入契约（Push 62）、未实现；前端「添加任务」卡片目前逐条创建 + 按「同阶段同名」判重，接线后卡片能带上节点库来源。

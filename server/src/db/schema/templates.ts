@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, date, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./identity.js";
 import { projects } from "./projects.js";
 import { projectImportPreviews } from "./imports.js";
@@ -118,6 +118,31 @@ export const taskNodeRequests = pgTable(
         or (${table.status} = 'approved' and ${table.reviewedBy} is not null and ${table.reviewedAt} is not null and ${table.nodeId} is not null)
         or (${table.status} = 'rejected' and ${table.reviewedBy} is not null and ${table.reviewedAt} is not null and ${table.reviewNote} is not null and ${table.nodeId} is null)
         or (${table.status} = 'withdrawn' and ${table.reviewedBy} is null and ${table.reviewedAt} is null and ${table.nodeId} is null)`,
+    ),
+  ],
+);
+
+/**
+ * task_node_review_notification_settings（0099 · 2026-11-15）：公共节点审核企微通知全局设置。
+ * 单例 id = true；enabled = 是否发送待审核申请通知；daily_time = 每日派发时刻（Asia/Shanghai）；
+ * last_dispatched_on = 最近一次派发所在上海业务日，用于保证同一业务日只派发一次。
+ * 审批结果通知不走本设置，仍由审核动作即时发送。
+ */
+export const taskNodeReviewNotificationSettings = pgTable(
+  "task_node_review_notification_settings",
+  {
+    id: boolean("id").primaryKey().default(true),
+    enabled: boolean("enabled").notNull().default(true),
+    dailyTime: text("daily_time").notNull().default("09:00"),
+    lastDispatchedOn: date("last_dispatched_on"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: uuid("updated_by").references(() => users.id),
+  },
+  () => [
+    check("ck_task_node_review_notification_settings_single", sql.raw("id")),
+    check(
+      "ck_task_node_review_notification_settings_daily_time",
+      sql.raw("daily_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'"),
     ),
   ],
 );

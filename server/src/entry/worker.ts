@@ -10,7 +10,7 @@ import { PROJECT_RECYCLE_SWEEP_BATCH, ProjectService } from "../modules/project/
 import { IMPORT_PREVIEW_SWEEP_INTERVAL_MS, ProjectImportService } from "../modules/project-import/index.js";
 import { NotifyDmService, NotifyGroupService, NotifyService, WecomAibotClient } from "../modules/notify/index.js";
 import { ReportQueryService } from "../modules/report-query/index.js";
-import { TaskNodeRequestService } from "../modules/template/index.js";
+import { TaskNodeRequestService, TaskNodeReviewNotificationService } from "../modules/template/index.js";
 import {
   buildOutboxLanes,
   JobScheduler,
@@ -51,6 +51,7 @@ async function bootstrap(): Promise<void> {
   const dmNotify = app.get(NotifyDmService);
   const reportQuery = app.get(ReportQueryService);
   const taskNodeRequests = app.get(TaskNodeRequestService);
+  const taskNodeReviewNotifications = app.get(TaskNodeReviewNotificationService);
   const dispatcher = app.get(OutboxDispatcher);
   const alerts = app.get(OutboxAlertProbe);
   const retention = app.get(OutboxRetention);
@@ -319,6 +320,14 @@ async function bootstrap(): Promise<void> {
           "调度 tick：领取 " + stats.claimed + " / 执行 " + stats.executed + " / 失败 " + stats.failed + " / 产出 " +
             stats.produced,
         );
+      }
+      try {
+        const nodeNotify = await taskNodeReviewNotifications.flushScheduledNotifications();
+        if (nodeNotify.state === "dispatched" && nodeNotify.produced > 0) {
+          logger.log("公共节点审核通知已按每日时间派发：产出 " + nodeNotify.produced + " 条");
+        }
+      } catch (error) {
+        logger.error("公共节点审核通知派发失败（下一分钟重试）：" + messageOf(error));
       }
     } catch (error) {
       logger.error("调度 tick 失败：" + messageOf(error));

@@ -7,6 +7,7 @@
  * - 模板内新增 POST /api/v1/task-templates/{id}/nodes（只写当前模板私有节点，不进入公共节点库）
  * - 公共节点申请：GET /api/v1/task-node-requests（mine = true 看本人申请，任何账号可用；缺省 = 审核人看全部，需 `taskNodeReview`）
  *   + POST .../{id}/approve（通过时按同阶段同名判重：已存在则关联、否则建节点）/ .../{id}/reject（原因必填）/ .../{id}/withdraw
+ *   + GET / PUT .../notification-settings（审核页左侧企微通知开关与每日时间；仅审核管理员）
  *   —— 导入面板里「保留 Excel 原名」的节点可顺带申请；申请本身不改节点库，审核通过才落 task_nodes。
  * 任务模板（第二段 · Push 182）：GET/POST /api/v1/task-templates、PATCH/DELETE /api/v1/task-templates/{id}
  *   —— 写同样 = 模板管理权（新建：管理员或有效项目经理；编辑 / 删除：创建人或管理员）；新建时可选 private（仅自己）/ public（有浏览权的人），
@@ -157,6 +158,12 @@ export type TaskNodeRequest = {
   updatedAt: string;
 };
 
+/** 公共节点审核企微通知设置：全局单例；dailyTime = Asia/Shanghai 的 HH:mm。 */
+export type TaskNodeReviewNotificationSettings = {
+  enabled: boolean;
+  dailyTime: string;
+};
+
 /** 申请列表：pendingCount = 当前视角下的待审条数（审核人 = 全局待审；本人视角 = 本人待审）。 */
 export type TaskNodeRequestList = { items: TaskNodeRequest[]; total: number; pendingCount: number };
 
@@ -187,6 +194,22 @@ export async function listTaskNodeRequests(
   }
   const path = "/api/v1/task-node-requests" + (query.length === 0 ? "" : "?" + query.join("&"));
   return apiRequest<TaskNodeRequestList>(path);
+}
+
+/** 读取审核页左侧的企微通知设置（仅当前公共节点审核管理员）。 */
+export function getTaskNodeReviewNotificationSettings(): Promise<TaskNodeReviewNotificationSettings> {
+  return apiRequest<TaskNodeReviewNotificationSettings>("/api/v1/task-node-requests/notification-settings");
+}
+
+/** 保存开关与每日通知时间（整份保存；Asia/Shanghai HH:mm）。 */
+export function updateTaskNodeReviewNotificationSettings(
+  settings: TaskNodeReviewNotificationSettings,
+): Promise<TaskNodeReviewNotificationSettings> {
+  return apiSend<TaskNodeReviewNotificationSettings>(
+    "/api/v1/task-node-requests/notification-settings",
+    "PUT",
+    settings,
+  );
 }
 
 /** 审核通过：中英文名缺省 = 按申请原值定稿（titleEn 显式 null = 清空）；同阶段同名已有公共节点则直接关联。 */
