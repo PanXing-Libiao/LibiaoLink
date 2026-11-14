@@ -61,6 +61,16 @@ function templateTabClass(active: boolean): string {
 /** 左列节点池的兜底空数组（取不到该板块那份时用，避免每次渲染都新建一个）。 */
 const EMPTY_NODE_LIST: readonly TaskNodeItem[] = [];
 
+/** 每日通知时间下拉：小时 / 分钟都用系统自绘 SelectMenu，不再使用浏览器原生 time 选择器。 */
+const REVIEW_NOTIFY_HOUR_OPTIONS = Array.from({ length: 24 }, (_, index) => {
+  const value = String(index).padStart(2, "0");
+  return { value, label: value };
+});
+const REVIEW_NOTIFY_MINUTE_OPTIONS = Array.from({ length: 60 }, (_, index) => {
+  const value = String(index).padStart(2, "0");
+  return { value, label: value };
+});
+
 type TemplateNode = TaskNodeItem;
 
 /**
@@ -1031,6 +1041,15 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
     })();
   };
 
+  /** 时 / 分下拉分别保存；另一边保持当前值，仍走同一整份 PUT。 */
+  const saveReviewNotifyTimePart = (part: "hour" | "minute", value: string): void => {
+    const [hour = "00", minute = "00"] = reviewNotifySettings.dailyTime.split(":");
+    saveReviewNotifySettings({
+      ...reviewNotifySettings,
+      dailyTime: part === "hour" ? value + ":" + minute : hour + ":" + value,
+    });
+  };
+
   /** 审核行当前的中英文名（没编辑过 = 申请原值；英文名空串 = 无英文，提交时传 null）。 */
   const requestDraftOf = (request: TaskNodeRequest): { title: string; titleEn: string } =>
     requestDrafts[request.id] ?? { title: request.title, titleEn: request.titleEn ?? "" };
@@ -1471,35 +1490,44 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                         />
                       </button>
                     </div>
-                    <label
-                      htmlFor="task-node-review-notification-time"
-                      className="mt-3 block text-[11px] font-medium text-zinc-600"
-                    >
-                      {t("nodeRequests.notify.dailyTime")}
-                    </label>
-                    <input
-                      id="task-node-review-notification-time"
-                      type="time"
-                      value={reviewNotifySettings.dailyTime}
-                      aria-label={t("nodeRequests.notify.dailyTime")}
+                    <div className="mt-3 text-[11px] font-medium text-zinc-600">
+                      {t("nodeRequests.notify.dailyTime")} {t("nodeRequests.notify.beijingTime")}
+                    </div>
+                    <div
                       data-node-review-notification-time=""
-                      disabled={!reviewNotifyReady || reviewNotifySaving || !reviewNotifySettings.enabled}
-                      onChange={(event) => {
-                        const value = event.currentTarget.value;
-                        if (!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(value)) return;
-                        saveReviewNotifySettings({ ...reviewNotifySettings, dailyTime: value });
-                      }}
-                      className="mt-1.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition focus:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
-                    />
-                    <p className="mt-1.5 text-[10px] leading-4 text-zinc-500">
-                      {reviewNotifyError !== null
-                        ? t("nodeRequests.notify.loadFailed", { message: reviewNotifyError })
-                        : !reviewNotifyReady
-                          ? t("common.loading")
-                          : reviewNotifySettings.enabled
-                            ? t("nodeRequests.notify.timeHint")
+                      className="mt-1.5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1"
+                    >
+                      <SelectMenu
+                        value={reviewNotifySettings.dailyTime.slice(0, 2)}
+                        options={REVIEW_NOTIFY_HOUR_OPTIONS}
+                        onChange={(hour) => {
+                          saveReviewNotifyTimePart("hour", hour);
+                        }}
+                        ariaLabel={t("nodeRequests.notify.hour")}
+                        disabled={!reviewNotifyReady || reviewNotifySaving || !reviewNotifySettings.enabled}
+                      />
+                      <span aria-hidden="true" className="text-center text-xs font-semibold text-zinc-400">
+                        :
+                      </span>
+                      <SelectMenu
+                        value={reviewNotifySettings.dailyTime.slice(3, 5)}
+                        options={REVIEW_NOTIFY_MINUTE_OPTIONS}
+                        onChange={(minute) => {
+                          saveReviewNotifyTimePart("minute", minute);
+                        }}
+                        ariaLabel={t("nodeRequests.notify.minute")}
+                        disabled={!reviewNotifyReady || reviewNotifySaving || !reviewNotifySettings.enabled}
+                      />
+                    </div>
+                    {reviewNotifyError !== null || !reviewNotifyReady || !reviewNotifySettings.enabled ? (
+                      <p className="mt-1.5 text-[10px] leading-4 text-zinc-500">
+                        {reviewNotifyError !== null
+                          ? t("nodeRequests.notify.loadFailed", { message: reviewNotifyError })
+                          : !reviewNotifyReady
+                            ? t("common.loading")
                             : t("nodeRequests.notify.offHint")}
-                    </p>
+                      </p>
+                    ) : null}
                   </aside>
                 ) : null}
                 <div className="flex min-h-0 flex-1 flex-col">
