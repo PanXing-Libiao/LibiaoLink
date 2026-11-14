@@ -277,6 +277,18 @@ export class PermissionService {
   }
 
   /**
+   * 当前真正可审核的审核人：名单 ∩ 仍生效的系统管理员。
+   * 申请创建时按此名单投递企微；被移出管理员或审核名单的账号不再收到新通知。
+   */
+  async listEffectiveTaskNodeReviewers(): Promise<string[]> {
+    const reviewerIds = await this.repository.listTaskNodeReviewerUserIds();
+    const effective = await Promise.all(
+      reviewerIds.map(async (userId) => ((await this.canReviewTaskNodeRequests(userId)) ? userId : null)),
+    );
+    return effective.filter((userId): userId is string => userId !== null);
+  }
+
+  /**
    * 公共任务模板维护（账号级）：系统管理员，或至少管理一个未软删项目的项目经理。
    * 项目经理来源 = projects.manager_ids ∪ 名册 role_in_project=project_manager；部门 / 个人 edit 范围不再单独授予。
    * 项目经理兼任务负责人时按项目经理身份可写；只负责任务、未担任项目经理的账号仍只读。

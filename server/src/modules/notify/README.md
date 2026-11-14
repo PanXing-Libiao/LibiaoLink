@@ -1,5 +1,12 @@
 # notify 模块（S7·outbox · S7-4 · 通知投递内核 j1 / M5-04 首刀 · Push 178 + 接线段渠道护栏 · Push 180） + S8-3 契约落地（SSE 实时流 / 稍后提醒）· Push 210 + M5-04-1 SSE 实现 · Push 211 + M5-04-2 稍后提醒实现 · Push 212 + M5-04 收口 · Push 213 + M5-03-1 企微适配器内核 · Push 215 + M5-03-2 契约段 · Push 221 + 群通道迁移 0046 · Push 222 + M5-03-2 智能机器人长连接客户端（webhook 面退役）· Push 223 + M5-03-2 接线段（群绑定读写 + notify.group 消费 + 回调 ingest）· Push 224 + M5-03-3 应用消息 + C5-04 降级 + 告警出口 · Push 226 + M5-03-4 开工（T3-6 收官 · 93001 锁定 · PoC-2 证据骨架）· Push 227 + M5-03-4 T5 反向修复（告警复报去重）· Push 229 + M5-03-4 告警 / 失败文案收敛（核心语义口径）· Push 230 + M5-03-5-3 单聊 aibot 实现段（sendUserMarkdown + 限速 single + NotifyDmService + 激活仓储 + 回放）· Push 237 + M5-03-5-4 单聊 aibot 接线段（outbox 路由分流 + `:aibot` 产出接线 + worker 回调分流 + 集成回放）· Push 238 + M5-03-5-6 绑定码链路（迁移 0055 · 单聊 ingest 绑定 + 密文 open_userid 寻址 + D4 话术）· Push 247 + M5-03-5-6 契约刀（取码 / 查绑定态 / 解绑 + `audit_logs` + 生成客户端）· Push 249 + outbox 告警可执行化与恢复日报 · Push 257 + 单聊 enter_chat 欢迎语 · Push 261
 
+## 公共节点申请审核通知与回复（2026-11-14 · 0098）
+
+- 通知来源：模板域在申请创建 / 导入事务内写 `notify.message`（`channel=wecom_aibot`、`templateCode=TASK_NODE_REQUEST_REVIEW`、`refType=task_node_request`），每条申请对每个当前仍生效的审核管理员生成一条单聊消息；文案由模板域生成单申请横向 Markdown 表。
+- 回调分流：worker 在普通单聊 ingest 之前识别「同意 / 驳回」意图；完整命令由模板域解析，绑定身份统一走 `NotifyDmService.resolveBoundDmActor()`（登记激活 + `(bot_id, from.userid)` 绑定行 → 本地用户），回复走 `replyToDmCallback()`。
+- 权限 / 边界：企微回复仍由 `TaskNodeRequestService` 复核 `taskNodeReview`，未绑定、无权限、申请已处理 / 不存在均回中文提示；不改群回调、单聊绑定码 ingest、站内信或既有 `notify.message` 路由。
+- 回归：`server/test/task-node-review-wecom.test.ts` 覆盖 Markdown / 命令解析；`server/test/task-node-requests.test.ts` 覆盖企微同意、驳回（理由默认「无」）与异常回执。
+
 ## 群内查询项目干系人（2026-11-12）
 
 - 触发：严格匹配「@机器人 干系人」；裸 @机器人、未 @ 的关键词、其他命令变体、普通群聊与群名命令均不触发查询。

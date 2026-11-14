@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
@@ -17,6 +17,8 @@ export interface TaskNodeRequestRow {
   requestedBy: string;
   requestedByName: string | null;
   requestedAt: Date;
+  /** 申请人维度申请号（pending 内稳定；企微回复以此寻址）。 */
+  requestNo: number;
   projectId: string | null;
   projectCode: string | null;
   projectName: string | null;
@@ -45,6 +47,7 @@ export interface TaskNodeRequestInsertInput {
   titleEn: string | null;
   requestedBy: string;
   requestedAt: Date;
+  requestNo: number;
   projectId: string | null;
   sourcePreviewId: string | null;
 }
@@ -83,6 +86,58 @@ export class TaskNodeRequestRepository {
       : and(eq(taskNodeRequests.status, "pending"), eq(taskNodeRequests.requestedBy, requestedBy));
     const rows = await db.select({ value: sql<number | null>`count(*)` }).from(taskNodeRequests).where(where);
     return Number(rows[0]?.value ?? 0);
+  }
+
+  /** 同一申请人的待审编号起点：有 pending 时取 pending 最大号 + 1，无 pending 时从 1 重新开始。 */
+  async nextRequestNo(requestedBy: string, tx?: DbClient): Promise<number> {
+    const db = tx ?? this.database.db;
+    const rows = await db
+      .select({ value: sql<number | null>`max(${taskNodeRequests.requestNo})` })
+      .from(taskNodeRequests)
+      .where(and(eq(taskNodeRequests.requestedBy, requestedBy), eq(taskNodeRequests.status, "pending")));
+    return Number(rows[0]?.value ?? 0) + 1;
+  }
+
+  /** 同一申请人的申请号分配串行化（事务级 advisory lock；只影响编号，不锁历史行）。 */
+  async lockRequestNumbering(requestedBy: string, tx: DbClient): Promise<void> {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${"task-node-request-no:" + requestedBy}, 0))`);
+  }
+
+  /**
+   * 企微回复寻址：申请人显示名 + 申请号，只返回当前 pending 行。
+   * 同名历史申请不参与命中，避免处理过的旧编号抢走新通知。
+   */
+  async findPendingByRequesterNameAndNo(
+    requestedByName: string,
+    requestNo: number,
+    tx?: DbClient,
+  ): Promise<TaskNodeRequestRow | null> {
+    const db = tx ?? this.database.db;
+    const rows = await this.selectRows(db)
+      .where(
+        and(
+          eq(taskNodeRequests.status, "pending"),
+          eq(taskNodeRequests.requestNo, requestNo),
+          eq(requester.displayName, requestedByName),
+        ),
+      )
+      .orderBy(asc(taskNodeRequests.requestedAt), asc(taskNodeRequests.id))
+      .limit(1);
+    return rows.length === 0 ? null : toRow(rows[0]!);
+  }
+
+  /** 同申请人 + 申请号最近一条（含已处理）：用于企微回复区分“已处理”与“不存在”。 */
+  async findLatestByRequesterNameAndNo(
+    requestedByName: string,
+    requestNo: number,
+    tx?: DbClient,
+  ): Promise<TaskNodeRequestRow | null> {
+    const db = tx ?? this.database.db;
+    const rows = await this.selectRows(db)
+      .where(and(eq(taskNodeRequests.requestNo, requestNo), eq(requester.displayName, requestedByName)))
+      .orderBy(desc(taskNodeRequests.requestedAt), desc(taskNodeRequests.id))
+      .limit(1);
+    return rows.length === 0 ? null : toRow(rows[0]!);
   }
 
   /** 单条（读面带 join：申请人 / 审核人显示名 + 来源项目）。 */
@@ -139,6 +194,7 @@ export class TaskNodeRequestRepository {
         status: "pending",
         requestedBy: input.requestedBy,
         requestedAt: input.requestedAt,
+        requestNo: input.requestNo,
         projectId: input.projectId,
         sourcePreviewId: input.sourcePreviewId,
       })
@@ -209,6 +265,7 @@ export class TaskNodeRequestRepository {
         requestedBy: taskNodeRequests.requestedBy,
         requestedByName: requester.displayName,
         requestedAt: taskNodeRequests.requestedAt,
+        requestNo: taskNodeRequests.requestNo,
         projectId: taskNodeRequests.projectId,
         projectCode: projects.code,
         projectName: projects.name,

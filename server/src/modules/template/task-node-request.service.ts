@@ -10,14 +10,21 @@ import type {
   TaskNodeRequestRejectBody,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
+import { AppConfig } from "../../config/config.module.js";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
+import { appendOutboxIfAbsent } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
 import { PermissionService } from "../permission/index.js";
 import { TaskNodeRepository } from "./task-node.repository.js";
 import type { TaskNodeRow } from "./task-node.repository.js";
 import { TaskNodeRequestRepository } from "./task-node-request.repository.js";
 import type { TaskNodeRequestRow } from "./task-node-request.repository.js";
+import {
+  buildTaskNodeReviewMessage,
+  looksLikeTaskNodeReviewReply,
+  parseTaskNodeReviewReply,
+} from "./task-node-review-wecom.js";
 
 const STAGE_NAME_BY_KEY = STAGE_NAMES as Record<string, string>;
 
@@ -78,6 +85,7 @@ export class TaskNodeRequestService {
     private readonly permission: PermissionService,
     private readonly audit: AuditService,
     private readonly database: DatabaseService,
+    private readonly config: AppConfig,
   ) {}
 
   /** GET /api/v1/task-node-requests：审核人看全部（可按阶段 / 状态筛），本人视角只看自己。 */
@@ -112,10 +120,14 @@ export class TaskNodeRequestService {
     tx: DbClient,
   ): Promise<ImportNodeRequestResult> {
     const requests: TaskNodeRequestRow[] = [];
+    const created: TaskNodeRequestRow[] = [];
     const existingNodes: Array<{ stageKey: string; title: string }> = [];
     let reusedPending = 0;
     const seen = new Set<string>();
     const at = new Date();
+    if (params.items.length > 0) {
+      await this.requests.lockRequestNumbering(params.actorId, tx);
+    }
     for (const item of params.items) {
       const title = item.title.trim();
       if (title === "") continue;
@@ -140,6 +152,7 @@ export class TaskNodeRequestService {
           titleEn: item.titleEn === null || item.titleEn.trim() === "" ? null : item.titleEn.trim(),
           requestedBy: params.actorId,
           requestedAt: at,
+          requestNo: await this.requests.nextRequestNo(params.actorId, tx),
           projectId: params.projectId,
           sourcePreviewId: params.previewId,
         },
@@ -147,6 +160,7 @@ export class TaskNodeRequestService {
       );
       if (inserted !== null) {
         requests.push(inserted);
+        created.push(inserted);
         continue;
       }
       // 并发下另一条同阶段同名申请抢先落库：复用既有 pending。
@@ -156,7 +170,97 @@ export class TaskNodeRequestService {
         reusedPending += 1;
       }
     }
+    await this.enqueueReviewNotifications(created, tx);
     return { requests, existingNodes, reusedPending };
+  }
+
+  /**
+   * 一条申请一条企微 Markdown，发给当前仍有效的公共节点审核人。
+   * 通知与申请 / 导入同事务落 outbox：回滚时通知一起回滚；已复用的 pending 申请不重复通知。
+   */
+  private async enqueueReviewNotifications(created: readonly TaskNodeRequestRow[], tx: DbClient): Promise<void> {
+    if (created.length === 0) return;
+    const reviewerIds = await this.permission.listEffectiveTaskNodeReviewers();
+    if (reviewerIds.length === 0) return;
+    const nodesByStage = new Map<string, TaskNodeRow[]>();
+    const baseUrl = this.config.env.PUBLIC_APP_BASE_URL;
+    for (const request of created) {
+      let existingNodes = nodesByStage.get(request.stageKey);
+      if (existingNodes === undefined) {
+        existingNodes = await this.nodes.list(request.stageKey, tx);
+        nodesByStage.set(request.stageKey, existingNodes);
+      }
+      const stageName = STAGE_NAME_BY_KEY[request.stageKey] ?? request.stageKey;
+      const title = "公共节点入库审核｜" + stageName;
+      const body = buildTaskNodeReviewMessage({ request, existingNodes, publicBaseUrl: baseUrl });
+      for (const reviewerId of reviewerIds) {
+        await appendOutboxIfAbsent(tx, {
+          topic: "notify.message",
+          dedupeKey: "task-node-request-review:" + request.id + ":" + reviewerId,
+          payload: {
+            recipientId: reviewerId,
+            type: "approval",
+            channel: "wecom_aibot",
+            title,
+            body,
+            refType: "task_node_request",
+            refId: request.id,
+            templateCode: "TASK_NODE_REQUEST_REVIEW",
+            mergeKey: "task-node-request:" + request.id,
+          },
+        });
+      }
+    }
+  }
+
+  /** 企微审核回复是否为完整可执行命令；格式错误但意图明显时另走 help 回执。 */
+  acceptsWecomReview(text: string): boolean {
+    return parseTaskNodeReviewReply(text) !== null;
+  }
+
+  looksLikeWecomReview(text: string): boolean {
+    return looksLikeTaskNodeReviewReply(text);
+  }
+
+  /**
+   * 执行企微回复审核：申请人显示名 + 申请号定位当前 pending；同意不改名，驳回省略理由时记「无」。
+   * 返回会话内回执；任何失败都收敛为可读中文，不向企微透出内部 id。
+   */
+  async handleWecomReview(actorId: string, text: string): Promise<string> {
+    const command = parseTaskNodeReviewReply(text);
+    if (command === null) {
+      return "回复格式：同意潘兴的1号申请 / 驳回潘兴的1号申请 与节点重复";
+    }
+    const label = command.requesterName + "的" + String(command.requestNo) + "号申请";
+    try {
+      await this.permission.assertCanReviewTaskNodeRequests(actorId, "审核公共节点申请需要已授权的管理员权限");
+    } catch {
+      return "无审核权限：仅公共节点审核管理员可处理";
+    }
+    const pending = await this.requests.findPendingByRequesterNameAndNo(command.requesterName, command.requestNo);
+    if (pending === null) {
+      const latest = await this.requests.findLatestByRequesterNameAndNo(command.requesterName, command.requestNo);
+      return latest === null ? "未找到待审核申请：" + label : "该申请已处理：" + label;
+    }
+    if (command.decision === "reject" && command.reason !== null && command.reason.length > 200) {
+      return "驳回理由最多 200 字";
+    }
+    try {
+      if (command.decision === "approve") {
+        const result = await this.approve(pending.id, {}, actorId);
+        return "已同意：" + label + "，" + (result.node?.title ?? pending.title);
+      }
+      const result = await this.reject(pending.id, { reason: command.reason ?? "无" }, actorId);
+      return "已驳回：" + label + "，原因：" + (result.request.reviewNote ?? "无");
+    } catch (error) {
+      if (error instanceof AppError && error.code === "FORBIDDEN") {
+        return "无审核权限：仅公共节点审核管理员可处理";
+      }
+      if (error instanceof AppError && error.message.includes("已处理")) {
+        return "该申请已处理：" + label;
+      }
+      return "审核失败：" + (error instanceof Error ? error.message : String(error));
+    }
   }
 
   /** POST /api/v1/task-node-requests/{id}/approve：可先改中英文名；同阶段同名已存在则直接关联。 */
