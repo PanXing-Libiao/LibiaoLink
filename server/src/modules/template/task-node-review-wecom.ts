@@ -83,6 +83,7 @@ function nodeSummary(nodes: readonly Pick<TaskNodeRow, "title">[]): string {
  * 不把多条申请并排，手机端只需上下滑动；当前节点过长时保留可读摘要并标出总数。
  */
 export function buildTaskNodeReviewMessage(input: {
+  stageName: string;
   request: Pick<
     TaskNodeRequestRow,
     "title" | "titleEn" | "requestedByName" | "requestNo" | "projectCode" | "projectName" | "requestedAt"
@@ -101,7 +102,7 @@ export function buildTaskNodeReviewMessage(input: {
   return [
     "| 审核信息 | " + requestLabel + " |",
     "|---|---|",
-    "| 当前阶段现有公共节点 | " + cell(nodeSummary(input.existingNodes)) + " |",
+    "| " + cell(input.stageName) + "现有公共节点 | " + cell(nodeSummary(input.existingNodes)) + " |",
     "| 申请加入公共节点 | **" + cell(input.request.title) + "**" + (input.request.titleEn === null ? "" : " / " + cell(input.request.titleEn)) + " |",
     "| 申请号 | " + String(input.request.requestNo) + "号 |",
     "| 申请人 | " + requesterName + " |",

@@ -39,12 +39,14 @@ describe("企微公共节点审核命令", () => {
 describe("企微公共节点审核消息", () => {
   it("一条申请一条消息，第一列字段名，附回复格式和平台链接", () => {
     const body = buildTaskNodeReviewMessage({
+      stageName: "硬件实施",
       request: REQUEST,
       existingNodes: [{ title: "空箱上架" }, { title: "空箱复检" }],
       publicBaseUrl: "https://test-pm.libiaorobot.com/",
     });
     expect(body).toContain("| 审核信息 | 潘兴的1号申请 |");
-    expect(body).toContain("| 当前阶段现有公共节点 | 共 2 个：空箱上架、空箱复检 |");
+    expect(body).toContain("| 硬件实施现有公共节点 | 共 2 个：空箱上架、空箱复检 |");
+    expect(body).not.toContain("当前阶段现有公共节点");
     expect(body).toContain("| 申请加入公共节点 | **第四批空箱上架** / The fourth batch");
     expect(body).toContain("同意潘兴的1号申请");
     expect(body).toContain("驳回潘兴的1号申请 （空格后填写理由 空则默认为无）");
@@ -54,6 +56,7 @@ describe("企微公共节点审核消息", () => {
 
   it("节点名中的竖线不破坏 Markdown 表格", () => {
     const body = buildTaskNodeReviewMessage({
+      stageName: "硬件实施",
       request: { ...REQUEST, title: "A|B" },
       existingNodes: [{ title: "X|Y" }],
       publicBaseUrl: "",
