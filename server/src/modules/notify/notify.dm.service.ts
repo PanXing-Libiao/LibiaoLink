@@ -256,6 +256,26 @@ export class NotifyDmService {
   }
 
   /**
+   * 企微业务回复的统一身份入口：先登记单聊激活，再按 (bot_id, from.userid) 解析绑定用户。
+   * 审核命令等“会话内动作”复用绑定态，不接受未绑定账号或非活跃账号。
+   */
+  async resolveBoundDmActor(incoming: AibotIncomingMessage): Promise<string | null> {
+    if (incoming.cmd !== "aibot_msg_callback" || incoming.chattype !== "single" || incoming.fromUserId === null) {
+      return null;
+    }
+    const userid = incoming.fromUserId;
+    if (!DM_USERID_PATTERN.test(userid)) return null;
+    await this.repository.upsertActivationFromCallback({ botId: this.botId(), wecomUserid: userid, at: this.clock.now() });
+    return await this.resolveReportQueryActor(userid);
+  }
+
+  /** 业务命令的会话内纯文本回执（审核通过 / 驳回等即时反馈）。 */
+  async replyToDmCallback(incoming: AibotIncomingMessage, content: string): Promise<void> {
+    if (incoming.fromUserId === null) return;
+    await this.replyToCallback(incoming, incoming.fromUserId, content);
+  }
+
+  /**
    * 单聊回调 ingest（M5-03-5-6 · 口径 §5；长连接 `onMessage` 接线在 entry/worker.ts）：
    * ① 过滤：仅 cmd=aibot_msg_callback 且 chattype=single 且 from.userid 合法；事件回调（enter_chat 等）与
    *    群聊一律不处理（群聊不绑定 —— 防「发到群里以为绑定成功」）；

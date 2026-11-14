@@ -38,6 +38,7 @@ function makeRequest(overrides: Partial<TaskNodeRequestRow> = {}): TaskNodeReque
     requestedBy: ACTOR,
     requestedByName: "潘兴",
     requestedAt: AT,
+    requestNo: 1,
     projectId: PROJECT_ID,
     projectCode: "LBGW-20260331-1459",
     projectName: "UK-VANILLA",
@@ -102,6 +103,28 @@ class FakeRequestRepository {
     return row === undefined ? null : { ...row };
   }
 
+  async lockRequestNumbering(): Promise<void> {}
+
+  async nextRequestNo(requestedBy: string): Promise<number> {
+    const pendingNumbers = this.rows
+      .filter((row) => row.requestedBy === requestedBy && row.status === "pending")
+      .map((row) => row.requestNo);
+    return (pendingNumbers.length === 0 ? 0 : Math.max(...pendingNumbers)) + 1;
+  }
+
+  async findPendingByRequesterNameAndNo(requestedByName: string, requestNo: number): Promise<TaskNodeRequestRow | null> {
+    const row = this.rows.find(
+      (item) => item.requestedByName === requestedByName && item.requestNo === requestNo && item.status === "pending",
+    );
+    return row === undefined ? null : { ...row };
+  }
+
+  async findLatestByRequesterNameAndNo(requestedByName: string, requestNo: number): Promise<TaskNodeRequestRow | null> {
+    const rows = this.rows.filter((item) => item.requestedByName === requestedByName && item.requestNo === requestNo);
+    const row = rows.at(-1);
+    return row === undefined ? null : { ...row };
+  }
+
   async insertIfAbsent(input: TaskNodeRequestInsertInput): Promise<TaskNodeRequestRow | null> {
     this.inserts.push({ ...input });
     const conflict = this.rows.some((row) => row.stageKey === input.stageKey && row.title === input.title && row.status === "pending");
@@ -114,6 +137,7 @@ class FakeRequestRepository {
       titleEn: input.titleEn,
       requestedBy: input.requestedBy,
       requestedAt: input.requestedAt,
+      requestNo: input.requestNo,
       projectId: input.projectId,
       status: "pending",
     });
@@ -165,6 +189,10 @@ class FakeNodeRepository {
     return this.rows.length === 0 ? 0 : Math.max(...this.rows.map((row) => row.seq));
   }
 
+  async list(stageKey: string): Promise<TaskNodeRow[]> {
+    return this.rows.filter((row) => row.stageKey === stageKey).map((row) => ({ ...row }));
+  }
+
   async insert(input: TaskNodeInsertInput): Promise<TaskNodeRow> {
     this.counter += 1;
     this.inserts.push({ ...input });
@@ -182,8 +210,12 @@ class FakeNodeRepository {
 
 class FakePermission {
   allowed = true;
+  reviewers: string[] = [];
   async assertCanReviewTaskNodeRequests(): Promise<void> {
     if (!this.allowed) throw new AppError("FORBIDDEN", "审核公共节点申请需要已授权的管理员权限");
+  }
+  async listEffectiveTaskNodeReviewers(): Promise<string[]> {
+    return this.allowed ? [...this.reviewers] : [];
   }
 }
 
@@ -212,6 +244,7 @@ function createHarness(): {
     permission as unknown as PermissionService,
     audit as unknown as AuditService,
     database as unknown as DatabaseService,
+    { env: { PUBLIC_APP_BASE_URL: "https://test.example" } } as never,
   );
   return { service, requests, nodes, permission, audit };
 }
@@ -293,6 +326,51 @@ describe("TaskNodeRequestService.createFromImport（导入内提交）", () => {
     expect(h.nodes.inserts).toEqual([]);
   });
 
+  it("申请创建时按仍生效的审核人逐人写企微通知，一条申请一条消息", async () => {
+    const h = createHarness();
+    const reviewerA = REVIEWER;
+    const reviewerB = "99999999-9999-4999-8999-999999999999";
+    h.permission.reviewers = [reviewerA, reviewerB];
+    const outbox: Array<{ topic: string; dedupeKey: string; payload: Record<string, unknown> }> = [];
+    const tx = {
+      insert: () => ({
+        values: (value: { topic: string; dedupeKey: string; payload: Record<string, unknown> }) => ({
+          onConflictDoUpdate: async () => {
+            outbox.push(value);
+          },
+        }),
+      }),
+    };
+    const outcome = await h.service.createFromImport(
+      {
+        actorId: ACTOR,
+        projectId: PROJECT_ID,
+        previewId: PREVIEW_ID,
+        items: [{ stageKey: "install", title: "企微联调节点", titleEn: null }],
+      },
+      tx as never,
+    );
+    const request = outcome.requests[0];
+    if (request === undefined) throw new Error("缺少新建申请");
+    expect(outbox).toHaveLength(2);
+    expect(outbox.map((row) => row.dedupeKey)).toEqual([
+      "task-node-request-review:" + request.id + ":" + reviewerA,
+      "task-node-request-review:" + request.id + ":" + reviewerB,
+    ]);
+    expect(outbox[0]?.topic).toBe("notify.message");
+    expect(outbox[0]?.payload).toMatchObject({
+      recipientId: reviewerA,
+      type: "approval",
+      channel: "wecom_aibot",
+      refType: "task_node_request",
+      refId: request.id,
+      templateCode: "TASK_NODE_REQUEST_REVIEW",
+    });
+    const body = String(outbox[0]?.payload.body ?? "");
+    expect(body).toContain("| 审核信息 | 潘兴的1号申请 |");
+    expect(body).toContain("同意潘兴的1号申请");
+  });
+
   it("并发下插入撞唯一索引（返回 null）时复用既有待审申请", async () => {
     const h = createHarness();
     h.requests.rows = [makeRequest({ id: REQUEST_ID, title: "并发节点" })];
@@ -308,6 +386,37 @@ describe("TaskNodeRequestService.createFromImport（导入内提交）", () => {
     );
     expect(outcome.requests.map((row) => row.id)).toEqual([REQUEST_ID]);
     expect(outcome.reusedPending).toBe(1);
+  });
+});
+
+describe("TaskNodeRequestService.handleWecomReview（企微回复）", () => {
+  it("同意：按申请人 + 申请号定位 pending，回执带通过后的节点名", async () => {
+    const h = createHarness();
+    h.requests.rows = [makeRequest({ requestNo: 1, title: "第四批空箱上架" })];
+    const reply = await h.service.handleWecomReview(REVIEWER, "同意潘兴的1号申请");
+    expect(reply).toBe("已同意：潘兴的1号申请，第四批空箱上架");
+    expect(h.requests.rows[0]?.status).toBe("approved");
+  });
+
+  it("驳回：省略理由记「无」，带理由按原文落库", async () => {
+    const h = createHarness();
+    h.requests.rows = [makeRequest({ requestNo: 2, status: "pending" })];
+    const reply = await h.service.handleWecomReview(REVIEWER, "驳回潘兴的2号申请");
+    expect(reply).toBe("已驳回：潘兴的2号申请，原因：无");
+    expect(h.requests.rows[0]?.reviewNote).toBe("无");
+    h.requests.rows = [makeRequest({ id: "77777777-7777-4777-8777-777777777777", requestNo: 3, status: "pending" })];
+    const withReason = await h.service.handleWecomReview(REVIEWER, "驳回潘兴的3号申请 与节点重复");
+    expect(withReason).toBe("已驳回：潘兴的3号申请，原因：与节点重复");
+  });
+
+  it("无权限 / 已处理 / 不存在都回可读中文", async () => {
+    const h = createHarness();
+    h.permission.allowed = false;
+    expect(await h.service.handleWecomReview(REVIEWER, "同意潘兴的1号申请")).toContain("无审核权限");
+    h.permission.allowed = true;
+    h.requests.rows = [makeRequest({ requestNo: 1, status: "approved" })];
+    expect(await h.service.handleWecomReview(REVIEWER, "同意潘兴的1号申请")).toBe("该申请已处理：潘兴的1号申请");
+    expect(await h.service.handleWecomReview(REVIEWER, "同意潘兴的9号申请")).toBe("未找到待审核申请：潘兴的9号申请");
   });
 });
 

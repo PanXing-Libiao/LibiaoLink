@@ -83,6 +83,8 @@ export const taskNodeRequests = pgTable(
     status: text("status").notNull().default("pending"),
     requestedBy: uuid("requested_by").notNull().references(() => users.id),
     requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    /** 申请人维度申请号：企微回复“潘兴的1号申请”的稳定寻址键（0098）。 */
+    requestNo: integer("request_no").notNull(),
     projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
     sourcePreviewId: uuid("source_preview_id").references(() => projectImportPreviews.id, { onDelete: "set null" }),
     reviewedBy: uuid("reviewed_by").references(() => users.id),
@@ -96,11 +98,15 @@ export const taskNodeRequests = pgTable(
     uniqueIndex("uq_task_node_requests_pending_title")
       .on(table.stageKey, table.title)
       .where(sql`status = 'pending'`),
+    uniqueIndex("uq_task_node_requests_pending_no")
+      .on(table.requestedBy, table.requestNo)
+      .where(sql`status = 'pending'`),
     index("ix_task_node_requests_status").on(table.status, table.requestedAt, table.id),
     index("ix_task_node_requests_requester").on(table.requestedBy, table.requestedAt, table.id),
     index("ix_task_node_requests_node").on(table.nodeId).where(sql`node_id is not null`),
     check("ck_task_node_requests_stage_key", sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`),
     check("ck_task_node_requests_status", sql`${table.status} in ('pending', 'approved', 'rejected', 'withdrawn')`),
+    check("ck_task_node_requests_request_no", sql`${table.requestNo} > 0`),
     check("ck_task_node_requests_title", sql`char_length(btrim(${table.title})) between 1 and 200`),
     check(
       "ck_task_node_requests_title_en",

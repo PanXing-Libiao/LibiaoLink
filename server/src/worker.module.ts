@@ -9,6 +9,7 @@ import { ProjectModule } from "./modules/project/index.js";
 import { ProjectImportModule } from "./modules/project-import/index.js";
 import { NotifyModule } from "./modules/notify/index.js";
 import { ReportQueryModule } from "./modules/report-query/index.js";
+import { TemplateModule } from "./modules/template/index.js";
 import { OutboxModule } from "./outbox/index.js";
 import { StorageModule } from "./storage/index.js";
 
@@ -34,6 +35,7 @@ export class WorkerModule {
         ProjectImportModule,
         NotifyModule,
         ReportQueryModule,
+        TemplateModule,
         OutboxModule.forRoot(env),
       ],
     };
