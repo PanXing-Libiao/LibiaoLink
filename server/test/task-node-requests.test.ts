@@ -5,7 +5,7 @@
  * 3) 通过：可先改中英文名，按同阶段同名判重建公共节点并写节点 / 申请两条审计；已有同名节点时直接关联（linkedExisting）；
  * 4) 驳回：原因必填；已处理申请再审核 / 撤销一律 400；撤销仅本人且仅 pending；
  * 5) 权限：通过 / 驳回 / 审核人列表都走公共节点审核人白名单判定。
- * 6) 结果通知：审批成功后只给另一位当前有效审核人写一条四行 Markdown；并发后到者只回已处理，不重复建节点 / 发通知。
+ * 6) 结果通知：审批成功后只给另一位当前有效审核人写一条五行 Markdown；并发后到者只回已处理，不重复建节点 / 发通知。
  * 契约见 shared/src/modules/templates.ts；真机口径见 server/src/modules/template/README.md。
  */
 import { describe, expect, it } from "vitest";
@@ -157,6 +157,7 @@ class FakeRequestRepository {
       ...this.rows[index]!,
       status: input.status,
       reviewedBy: input.reviewedBy,
+      reviewedByName: input.reviewedBy === REVIEWER ? "吴孟杰" : "李侠伟",
       reviewedAt: input.reviewedAt,
       reviewNote: input.reviewNote,
       nodeId: input.nodeId,
@@ -453,7 +454,7 @@ describe("TaskNodeRequestService.approve / reject / withdraw", () => {
     expect(h.audit.records[1]?.action).toBe("update");
   });
 
-  it("通过：只给另一位审核人补发四行结果通知，并绑定申请去重键", async () => {
+  it("通过：只给另一位审核人补发五行结果通知，并绑定申请去重键", async () => {
     const h = createHarness();
     h.requests.rows = [makeRequest()];
     h.permission.reviewers = [REVIEWER, REVIEWER_B];
@@ -475,7 +476,7 @@ describe("TaskNodeRequestService.approve / reject / withdraw", () => {
         mergeKey: "task-node-request-result:" + REQUEST_ID,
       },
     });
-    expect(event.payload.body).toBe("**阶段**：硬件实施\n**任务**：货架复检\n**申请人**：潘兴\n**审核结果**：审核通过");
+    expect(event.payload.body).toBe("**阶段**：硬件实施\n**任务**：货架复检\n**申请人**：潘兴\n**审核人**：吴孟杰\n**审核结果**：审核通过");
   });
 
   it("并发只有一个赢家：后到审核返回已处理，不重复建节点或发结果", async () => {
@@ -521,7 +522,7 @@ describe("TaskNodeRequestService.approve / reject / withdraw", () => {
     if (event === undefined) throw new Error("缺少结果通知");
     expect(event.dedupeKey).toBe("task-node-request-review-result:" + REQUEST_ID + ":" + REVIEWER_B);
     expect(event.payload).toMatchObject({ recipientId: REVIEWER_B, templateCode: "TASK_NODE_REQUEST_REVIEW_RESULT" });
-    expect(event.payload.body).toBe("**阶段**：硬件实施\n**任务**：货架复检\n**申请人**：潘兴\n**审核结果**：审核驳回");
+    expect(event.payload.body).toBe("**阶段**：硬件实施\n**任务**：货架复检\n**申请人**：潘兴\n**审核人**：吴孟杰\n**审核结果**：审核驳回");
   });
 
   it("驳回：原因必填；驳回后不再建节点", async () => {

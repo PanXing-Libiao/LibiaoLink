@@ -55,20 +55,20 @@ describe("企微公共节点审核消息", () => {
     expect(body.split("| 审核信息 |").length - 1).toBe(1);
   });
 
-  it("审核结果只保留阶段、任务、申请人和通过 / 驳回", () => {
+  it("审核结果只保留阶段、任务、申请人、审核人和通过 / 驳回", () => {
     const approved = buildTaskNodeReviewResultMessage({
       stageName: "硬件实施",
-      request: { title: "第四批空箱上架", requestedByName: "潘兴" },
+      request: { title: "第四批空箱上架", requestedByName: "潘兴", reviewedByName: "吴孟杰" },
       decision: "approved",
     });
-    expect(approved).toBe("**阶段**：硬件实施\n**任务**：第四批空箱上架\n**申请人**：潘兴\n**审核结果**：审核通过");
+    expect(approved).toBe("**阶段**：硬件实施\n**任务**：第四批空箱上架\n**申请人**：潘兴\n**审核人**：吴孟杰\n**审核结果**：审核通过");
     const rejected = buildTaskNodeReviewResultMessage({
       stageName: "硬件实施",
-      request: { title: "第四批空箱上架", requestedByName: "潘兴" },
+      request: { title: "第四批空箱上架", requestedByName: "潘兴", reviewedByName: "吴孟杰" },
       decision: "rejected",
     });
     expect(rejected).toContain("**审核结果**：审核驳回");
-    expect(rejected.split("\n")).toHaveLength(4);
+    expect(rejected.split("\n")).toHaveLength(5);
   });
 
   it("节点名中的竖线不破坏 Markdown 表格", () => {
