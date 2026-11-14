@@ -313,7 +313,6 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
               placeholder={t("drawer.manager.placeholder")}
               ariaLabel={t("drawer.manager.aria")}
             />
-            <span className="mt-1 block text-xs text-zinc-400">{t("manager.candidateHint")}</span>
           </div>
           <div className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">{t("modal.province")}</span>

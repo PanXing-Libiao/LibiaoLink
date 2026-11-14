@@ -451,7 +451,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
   /** 项目经理 = 项目级字段：任务行展示同一条项目名单；修改会同步整个项目，不是单行独立字段。 */
   const managerIds = task.managerIds;
   const managerLabel = task.managers.length === 0 ? "—" : task.managers.join("、");
-  const managerTitle = managerLabel + " — " + t("drawer.manager.caption");
+  const managerTitle = managerLabel;
   const managersEditable = canEditManagers ?? onChangeManagers !== undefined;
   const managerChoices = memberOptionsWithExisting(managerMembers, managerIds, members);
   const managersLocked = !managersEditable || taskFinalized;

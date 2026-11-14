@@ -4,9 +4,10 @@
  * 前置（与同目录 m3-05 脚本同口径）：前端 dev（3000）+ api（3001）+ 本地沙箱 PG + 本机 Chrome。
  * 环境变量：DATABASE_URL / REPLAY_USER / CHROME_PATH / CDP_PORT / SHOT_DIR
  *
- * 验什么（8 项）：权限管理删了 3 处说明且脚注长解释进了悬停 title；设置页企微引导句已删；
- * 甘特图长口诀已删；项目空间「未选择筛选条件」已删；入库审核「通过前可改中英文名…」已删而工作台仍在；
- * 文件库顶部说明按标签分流；模型管理说明已改短。同时把 8 张页面截图落到 SHOT_DIR（默认 /tmp/after-shots）。
+ * 验什么（9 项）：权限管理成员表底部说明已删、保存栏正文保留，脚注长解释进了悬停 title；
+ * 设置页企微引导句保留；甘特图改为可展开的 6 条操作提示；项目空间「未选择筛选条件」已删；
+ * 入库审核「通过前可改中英文名…」已删而工作台仍在；文件库顶部说明按标签分流；模型管理说明已改短。
+ * 同时把 8 张页面截图落到 SHOT_DIR（默认 /tmp/after-shots）。
  * 说明：会建一条临时会话（跑完撤销）；沙箱库专用，不要指向正式 / 测试环境。
  */
 import { spawn } from "node:child_process";
@@ -61,14 +62,16 @@ async function page(route, waitMs) { await send("Page.navigate", { url: "http://
 const has = async (s) => (await get("document.body.innerText.indexOf(" + JSON.stringify(s) + ")>=0")) === true;
 
 await page("#/access");
-check("权限管理：3 处说明已删", (await has("部门较多时按层级分组显示")) === false && (await has("拥有全部页面与数据权限")) === false && (await has("部门默认作用于全体直属成员")) === false);
+check("权限管理：左侧目录与管理员说明已删", (await has("部门较多时按层级分组显示")) === false && (await has("拥有全部页面与数据权限")) === false);
+check("权限管理：成员表红框说明已删，底部保存栏正文保留", (await has("个人覆盖部门默认，自动项目角色始终保留。")) === false && (await has("部门默认作用于全体直属成员；个人规则覆盖同部门默认，自动项目角色始终保留。")) === true);
 check("权限管理：脚注改短句且长解释进了悬停 title", (await has("同一项目命中多个范围时取最高权限")) === true && (await get("(function(){var es=document.querySelectorAll('[title]');for(var i=0;i<es.length;i++){if(es[i].getAttribute('title').indexOf('不会降级项目经理的自动编辑权')>=0)return true;}return false;})()")) === true);
 await shot("1-权限管理.png");
 await page("#/settings");
-check("设置：企微引导句已删、步骤保留", (await has("帮助你及时收到")) === false && (await has("复制机器人链接")) === true);
+check("设置：企微引导说明保留、步骤保留", (await has("帮助你及时收到")) === true && (await has("复制机器人链接")) === true);
 await shot("2-设置-企微.png");
 await page("#/project/" + P + "?view=gantt");
-check("甘特图：长口诀已删、悬停短句仍在", (await has("条上操作（对齐参考样例）")) === false);
+const help = await get('(function(){var e=document.querySelector("[data-gantt-help]");if(!e)return null;return {tag:e.tagName,text:e.textContent,display:getComputedStyle(e).display};})()');
+check("甘特图：长口诀已删，6 条操作提示直接显示且无下拉", (await has("条上操作（对齐参考样例）")) === false && help && help.tag === "DIV" && help.display !== "none" && help.text.indexOf("操作提示") >= 0 && help.text.indexOf("拖任务条：改期") >= 0 && help.text.indexOf("拖分隔线：调宽；双击：复位") >= 0);
 await shot("3-甘特图.png", "[data-gantt-toolbar]");
 await page("#/projects");
 check("项目空间：「未选择筛选条件」已删", (await has("未选择筛选条件")) === false);
