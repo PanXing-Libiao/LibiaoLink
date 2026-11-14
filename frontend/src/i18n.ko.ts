@@ -103,8 +103,6 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "access.personalSaveFailed": "개인 권한을 저장하지 못했습니다: {message}",
   "access.tabTaskNodeReview": "공용 노드 검토",
   "access.reviewers.title": "공용 노드 검토",
-  "access.reviewers.adminOnly": "시스템 관리자만 변경 가능",
-  "access.reviewers.hint": "작업 템플릿 '입고 검토'의 공용 노드 신청은 선택된 관리자만 처리할 수 있습니다. 이 명단은 공용 노드 라이브러리 유지 권한을 변경하지 않습니다.",
   "access.reviewers.selectedLabel": "선택된 검토자",
   "access.reviewers.adminPool": "활성 관리자",
   "access.reviewers.search": "관리자 이름, 사용자명 또는 이메일 검색",
