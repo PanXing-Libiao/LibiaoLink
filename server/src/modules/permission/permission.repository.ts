@@ -11,6 +11,7 @@ import type {
 import { DatabaseService } from "../../db/database.service.js";
 import {
   groupAccessAdmins,
+  taskNodeReviewers,
   groupAccessMemberRules,
   groupAccessMemberScopePermissions,
   groupAccessRules,
@@ -323,6 +324,28 @@ export class PermissionRepository {
       .where(eq(groupAccessAdmins.userId, userId))
       .returning({ userId: groupAccessAdmins.userId });
     return rows.length > 0;
+  }
+
+  // ---------- 公共任务节点审核人（0097） ----------
+
+  /** 已保存的审核人 users.id；空数组 = 尚未配置，此时任何管理员都不具备公共节点审核权。 */
+  async listTaskNodeReviewerUserIds(): Promise<string[]> {
+    const rows = await this.database.db
+      .select({ userId: taskNodeReviewers.userId })
+      .from(taskNodeReviewers)
+      .orderBy(asc(taskNodeReviewers.createdAt), asc(taskNodeReviewers.userId));
+    return rows.map((row) => row.userId);
+  }
+
+  /** 整体替换审核人名单；校验与审计在服务层完成后调用。 */
+  async replaceTaskNodeReviewers(userIds: readonly string[], assignedBy: string, at: Date): Promise<void> {
+    await this.database.db.transaction(async (tx) => {
+      await tx.delete(taskNodeReviewers);
+      if (userIds.length === 0) return;
+      await tx.insert(taskNodeReviewers).values(
+        userIds.map((userId) => ({ userId, assignedBy, createdAt: at })),
+      );
+    });
   }
 
   // ---------- 群组访问（0068） ----------

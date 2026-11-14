@@ -1,10 +1,10 @@
 /**
  * 公共任务节点申请（0096 · 2026-11-13）服务回归：
- * 1) 列表：mine=true 只看本人（任何账号可用，含本人待审数）；审核人视角需要节点库维护权（无权限 403），含全局待审数；
+ * 1) 列表：mine=true 只看本人（任何账号可用，含本人待审数）；审核人视角需要公共节点审核人白名单（无权限 403），含全局待审数；
  * 2) 导入侧提交：跳过「该阶段已有同名公共节点」、复用同阶段同名待审申请、批内同名去重、名称 trim；
  * 3) 通过：可先改中英文名，按同阶段同名判重建公共节点并写节点 / 申请两条审计；已有同名节点时直接关联（linkedExisting）；
  * 4) 驳回：原因必填；已处理申请再审核 / 撤销一律 400；撤销仅本人且仅 pending；
- * 5) 权限：通过 / 驳回 / 审核人列表都走 taskNodeManage 同口径判定。
+ * 5) 权限：通过 / 驳回 / 审核人列表都走公共节点审核人白名单判定。
  * 契约见 shared/src/modules/templates.ts；真机口径见 server/src/modules/template/README.md。
  */
 import { describe, expect, it } from "vitest";
@@ -182,8 +182,8 @@ class FakeNodeRepository {
 
 class FakePermission {
   allowed = true;
-  async assertCanManageTaskNodes(): Promise<void> {
-    if (!this.allowed) throw new AppError("FORBIDDEN", "维护任务节点库需要项目经理或管理员权限");
+  async assertCanReviewTaskNodeRequests(): Promise<void> {
+    if (!this.allowed) throw new AppError("FORBIDDEN", "审核公共节点申请需要已授权的管理员权限");
   }
 }
 
@@ -242,7 +242,7 @@ describe("TaskNodeRequestService.list（申请列表）", () => {
     expect(h.requests.listFilters[0]).toEqual({ stageKey: null, status: null, requestedBy: ACTOR });
   });
 
-  it("审核人视角：需要节点库维护权，无权限 403；有权限回全部 + 全局待审数", async () => {
+  it("审核人视角：需要公共节点审核权，无权限 403；有权限回全部 + 全局待审数", async () => {
     const h = createHarness();
     h.requests.rows = [
       makeRequest({ id: REQUEST_ID }),

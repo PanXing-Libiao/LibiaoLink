@@ -209,6 +209,8 @@ import {
   GroupAccessOverviewSchema,
   GroupAccessRuleInputSchema,
   GroupAccessRuleResponseSchema,
+  GroupAccessTaskNodeReviewersInputSchema,
+  GroupAccessTaskNodeReviewersResponseSchema,
 } from "./modules/group-access.ts";
 import {
   ChangeRequestDetailSchema,
@@ -1728,6 +1730,21 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     request: { body: json(GroupAccessMemberRuleDeleteInputSchema) },
     responses: {
       204: { description: "已恢复部门默认" },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "put",
+    path: "/api/v1/access/task-node-reviewers",
+    tags: ["access"],
+    summary: "保存公共任务节点审核人名单（仅权限管理员；只能选择当前生效的系统管理员，至少一名）",
+    request: { body: json(GroupAccessTaskNodeReviewersInputSchema) },
+    responses: {
+      200: { description: "保存后的审核人名单", ...json(GroupAccessTaskNodeReviewersResponseSchema) },
       400: commonErrors[400],
       401: commonErrors[401],
       403: commonErrors[403],

@@ -148,6 +148,7 @@ export class PermissionService {
       groupOwnEdit: groupAccess.ownEdit,
       groupSelectedEdit: groupAccess.selectedEdit,
       taskNodeManage: await this.canManageTaskNodes(actorId),
+      taskNodeReview: await this.canReviewTaskNodeRequests(actorId),
       taskTemplateRead: await this.canReadBlueprint(actorId),
       taskTemplateManage: await this.canManageTaskTemplates(actorId),
       auditScope,
@@ -257,6 +258,22 @@ export class PermissionService {
   async assertCanManageTaskNodes(actorId: string, message?: string): Promise<void> {
     if (await this.canManageTaskNodes(actorId)) return;
     throw new AppError("FORBIDDEN", message ?? "维护公共任务节点库需要系统管理员权限");
+  }
+
+  /**
+   * 公共任务节点申请审核：必须先仍是系统管理员，再命中权限页保存的审核人白名单。
+   * 名单为空 = 尚未配置，任何管理员都不可审核；管理员保存至少一名审核人后，审核权才生效。
+   * 公共节点库本身的维护权仍走 taskNodeManage，两者不混用。
+   */
+  async canReviewTaskNodeRequests(actorId: string): Promise<boolean> {
+    if (!(await this.canManageTaskNodes(actorId))) return false;
+    const reviewerIds = await this.repository.listTaskNodeReviewerUserIds();
+    return reviewerIds.includes(actorId);
+  }
+
+  async assertCanReviewTaskNodeRequests(actorId: string, message?: string): Promise<void> {
+    if (await this.canReviewTaskNodeRequests(actorId)) return;
+    throw new AppError("FORBIDDEN", message ?? "审核公共节点申请需要已授权的系统管理员权限");
   }
 
   /**

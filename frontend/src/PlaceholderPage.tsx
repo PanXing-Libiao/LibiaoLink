@@ -252,6 +252,8 @@ type PlaceholderPageProps = {
   section: string | null;
   /** 是否可维护公共任务节点库（仅系统管理员；模板私有节点按单份模板维护权判定）。 */
   canManageNodes: boolean;
+  /** 是否可审核公共任务节点申请（当前管理员且被权限页勾选）。 */
+  canReviewNodes: boolean;
   /** 是否可新建公共任务模板（管理员，或至少管理一个有效项目的项目经理）。 */
   canManageTemplates: boolean;
   /** 单份模板是否可维护：管理员，或仍为有效项目经理的创建人。 */
@@ -284,7 +286,7 @@ function InsertLine({ className }: { className: string }) {
   );
 }
 
-export default function PlaceholderPage({ me, page, section, canManageNodes, canManageTemplates, canManageTemplate, canChangeTemplateVisibility }: PlaceholderPageProps) {
+export default function PlaceholderPage({ me, page, section, canManageNodes, canReviewNodes, canManageTemplates, canManageTemplate, canChangeTemplateVisibility }: PlaceholderPageProps) {
   const t = useT();
   const locale = useLocale();
   const localize = useLocalizedTranslator();
@@ -351,11 +353,11 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
    * 公共节点申请（业务口径 2026-11-13「给一个申请的渠道，让管理员审核」）：
    * 2026-11-13 追订（用户口径「远端已经有审核的页面，用他的；我们的清单和他的审核页互补」）——
    * 本地左列列头的入口按钮 + 申请浮层已删除，申请清单整体迁进「入库审核」板块顶部的工作台；
-   * 「待审核」只给有节点库维护权（canManageNodes = taskNodeManage，现仅系统管理员）的账号，可逐条改中英文名后通过 / 驳回；
+   * 「待审核」只给有公共节点审核权（canReviewNodes = taskNodeReview，管理员名单由权限页勾选）的账号，可逐条改中英文名后通过 / 驳回；
    * 「我的申请」任何登录账号都能看自己的申请与结果（pending 可撤销）。
    */
   const [nodeRequestsTab, setNodeRequestsTab] = useState<"pending" | "mine">("pending");
-  /** 审核视角的待审列表（需节点库维护权；无权限时保持空数组，不发请求）。 */
+  /** 审核视角的待审列表（需 `taskNodeReview`；无权限时保持空数组，不发请求）。 */
   const [pendingRequests, setPendingRequests] = useState<TaskNodeRequest[]>([]);
   /** 本人视角的申请（全部状态；任何登录账号都可看）。 */
   const [myRequests, setMyRequests] = useState<TaskNodeRequest[]>([]);
@@ -433,7 +435,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
 
   /**
    * 工作台数据：进入「入库审核」板块时才取完整列表（加载态 + 失败可重试；两个标签的计数也由这次响应回填）；「我的申请」任何账号都取，
-   * 「待审核」只在有节点库维护权时取 —— 无权限时不发这个请求，也就不会把 403 摆到界面上。
+   * 「待审核」只在有 `taskNodeReview` 时取 —— 无权限时不发这个请求，也就不会把 403 摆到界面上。
    */
   useEffect(() => {
     if (!nodeRequestsSectionActive) {
@@ -450,7 +452,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
         }
         setMyRequests(mine.items);
         setMyPendingCount(mine.pendingCount);
-        if (!canManageNodes) {
+        if (!canReviewNodes) {
           return;
         }
         const all = await listTaskNodeRequests({ status: "pending" });
@@ -479,7 +481,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
     return () => {
       alive = false;
     };
-  }, [nodeRequestsSectionActive, canManageNodes, nodeRequestsVersion]);
+  }, [nodeRequestsSectionActive, canReviewNodes, nodeRequestsVersion]);
 
   /** 进入「入库审核」= 当前通知已读：顶栏与标签红点同时熄灭；后续只有新申请 / 新驳回才重新亮。 */
   useEffect(() => {
@@ -494,9 +496,9 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
       return;
     }
     if (markTaskNodeNotificationsSeen(notificationKeys)) {
-      void refreshTaskNodePending(canManageNodes);
+      void refreshTaskNodePending(canReviewNodes);
     }
-  }, [nodeRequestsSectionActive, pendingRequests, myRequests, canManageNodes]);
+  }, [nodeRequestsSectionActive, pendingRequests, myRequests, canReviewNodes]);
 
   useEffect(() => {
     prefetchLocalizedText(Object.values(templatesByStage).flat().map((item) => item.name));
@@ -1016,7 +1018,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
         setTemplatesVersion((version) => version + 1);
         setNodeRequestsVersion((version) => version + 1);
         // 待处理条数变了：让「任务模板」导航红点跟着重算
-        void refreshTaskNodePending(canManageNodes);
+        void refreshTaskNodePending(canReviewNodes);
       } catch (error) {
         setNodeRequestNotice({
           kind: "error",
@@ -1045,7 +1047,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
         clearRequestLocalState(request.id);
         setNodeRequestsVersion((version) => version + 1);
         // 待处理条数变了：让「任务模板」导航红点跟着重算
-        void refreshTaskNodePending(canManageNodes);
+        void refreshTaskNodePending(canReviewNodes);
       } catch (error) {
         setNodeRequestNotice({
           kind: "error",
@@ -1070,7 +1072,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
         clearRequestLocalState(request.id);
         setNodeRequestsVersion((version) => version + 1);
         // 待处理条数变了：让「任务模板」导航红点跟着重算
-        void refreshTaskNodePending(canManageNodes);
+        void refreshTaskNodePending(canReviewNodes);
       } catch (error) {
         setNodeRequestNotice({
           kind: "error",
@@ -1082,8 +1084,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
     })();
   };
 
-  /** 实际展示的标签：没有节点库维护权时「待审核」这个标签不存在，一律回落到「我的申请」。 */
-  const shownRequestsTab: "pending" | "mine" = canManageNodes ? nodeRequestsTab : "mine";
+  /** 实际展示的标签：没有 `taskNodeReview` 时「待审核」这个标签不存在，一律回落到「我的申请」。 */
+  const shownRequestsTab: "pending" | "mine" = canReviewNodes ? nodeRequestsTab : "mine";
 
   /**
    * 鼠标底下是「哪块面板的第几格」（Push 116）：`data-template-panel` 认面板、卡片中线认格 ——
@@ -1361,7 +1363,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
           {/* 入库审核工作台（2026-11-13 用户口径「远端仓库已经有审核的页面，我们用他的；本地的不用」
               「我们的清单和他的审核页正好互补」）：本地左列列头的入口按钮 + 申请浮层已删除，
               申请清单（待审核 / 我的申请）整体迁到「入库审核」板块；该板块只保留审核工作台，
-              节点库 / 模板面板与「新建模板」入口不在本板块渲染。「待审核」只给 canManageNodes（现仅系统管理员）的账号。 */}
+              节点库 / 模板面板与「新建模板」入口不在本板块渲染。「待审核」只给 canReviewNodes（权限页勾选的审核管理员）的账号。 */}
           {nodeRequestsSectionActive ? (
             <section
               data-node-requests-workbench=""
@@ -1382,7 +1384,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                 </button>
               </div>
               <div role="tablist" aria-label={t("nodeRequests.entry")} className="flex shrink-0 flex-wrap items-center gap-1 border-b border-zinc-100 px-4 text-sm">
-                {canManageNodes ? (
+                {canReviewNodes ? (
                   <button
                     type="button"
                     role="tab"
@@ -1443,7 +1445,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                   <p className="py-10 text-center text-xs text-zinc-500">{t("common.loading")}</p>
                 ) : null}
 
-                {!nodeRequestsLoading && nodeRequestsError === null && canManageNodes && shownRequestsTab === "pending" ? (
+                {!nodeRequestsLoading && nodeRequestsError === null && canReviewNodes && shownRequestsTab === "pending" ? (
                   pendingRequests.length === 0 ? (
                     <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyPending")}</p>
                   ) : (

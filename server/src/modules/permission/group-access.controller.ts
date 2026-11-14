@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, Post, Put, Query, UseGuards } from "@nestjs/common";
-import { GroupAccessAdminInputSchema, GroupAccessMemberRuleDeleteInputSchema, GroupAccessMemberRuleInputSchema, GroupAccessRuleInputSchema, UuidSchema, z } from "@libiaolink/contracts";
-import type { GroupAccessAdminInput, GroupAccessAdminResponse, GroupAccessMemberRuleDeleteInput, GroupAccessMemberRuleInput, GroupAccessMemberRuleResponse, GroupAccessOverview, GroupAccessRuleInput, GroupAccessRuleResponse } from "@libiaolink/contracts";
+import { GroupAccessAdminInputSchema, GroupAccessMemberRuleDeleteInputSchema, GroupAccessMemberRuleInputSchema, GroupAccessRuleInputSchema, GroupAccessTaskNodeReviewersInputSchema, UuidSchema, z } from "@libiaolink/contracts";
+import type { GroupAccessAdminInput, GroupAccessAdminResponse, GroupAccessMemberRuleDeleteInput, GroupAccessMemberRuleInput, GroupAccessMemberRuleResponse, GroupAccessOverview, GroupAccessRuleInput, GroupAccessRuleResponse, GroupAccessTaskNodeReviewersInput, GroupAccessTaskNodeReviewersResponse } from "@libiaolink/contracts";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { GroupAccessAdminGuard } from "./group-access.guard.js";
@@ -52,6 +52,14 @@ export class GroupAccessController {
     @CurrentActorId() actorId: string,
   ): Promise<void> {
     await this.access.remove(actorId, query.groupKey);
+  }
+
+  @Put("task-node-reviewers")
+  saveTaskNodeReviewers(
+    @Body(new ZodValidationPipe(GroupAccessTaskNodeReviewersInputSchema)) body: GroupAccessTaskNodeReviewersInput,
+    @CurrentActorId() actorId: string,
+  ): Promise<GroupAccessTaskNodeReviewersResponse> {
+    return this.access.saveTaskNodeReviewers(actorId, body);
   }
 
   @Post("admins")

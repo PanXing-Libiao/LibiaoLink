@@ -433,6 +433,7 @@ describe("GroupAccessService 部门通讯录", () => {
       }] : [],
       listGroupAdminUsersByGroupKeys: async () => [],
       listManualGroupAccessAdmins: async () => [],
+      listTaskNodeReviewerUserIds: async () => [],
     };
     const permission = {
       canManageGroupAccess: async () => true,
@@ -465,6 +466,7 @@ describe("GroupAccessService 部门通讯录", () => {
       } as Env),
     );
     const overview = await service.overview(PROJECT_A);
+    expect(overview.taskNodeReviewerUserIds).toEqual([]);
     expect(overview.automaticRoles).toEqual([
       { userId: PROJECT_A, projectManagerProjectIds: [PROJECT_B], projectMemberProjectIds: [], taskOwnerProjectIds: [PROJECT_C], taskOwnerTaskCount: 2 },
       { userId: PROJECT_B, projectManagerProjectIds: [], projectMemberProjectIds: [PROJECT_B], taskOwnerProjectIds: [], taskOwnerTaskCount: 0 },
@@ -857,6 +859,69 @@ describe("GroupAccessService 部门通讯录", () => {
     expect(invalidations).toBe(2);
     expect(manual).toEqual([]);
   });
+
+  it("保存公共节点审核人：只能选当前生效管理员，至少一名，并写审计 / 失效缓存", async () => {
+    const configuredAdmin = {
+      userId: PROJECT_A,
+      username: "1001",
+      displayName: "Alice",
+      email: "alice@libiaorobot.com",
+      status: "active" as const,
+    };
+    const managedAdmin = {
+      userId: PROJECT_B,
+      username: "1002",
+      displayName: "Bob",
+      email: null,
+      status: "active" as const,
+    };
+    let savedIds: string[] = [];
+    const audits: Array<{ summary: string; changes?: unknown; metadata?: Record<string, unknown> }> = [];
+    let invalidations = 0;
+    const repository = {
+      listActiveUsersByIds: async (userIds: readonly string[]) => userIds.includes(PROJECT_A) ? [configuredAdmin] : [],
+      listGroupAdminUsersByGroupKeys: async () => [],
+      listManualGroupAccessAdmins: async () => [{ ...managedAdmin, grantedAt: new Date("2026-11-14T00:00:00Z") }],
+      listTaskNodeReviewerUserIds: async () => [...savedIds],
+      replaceTaskNodeReviewers: async (userIds: readonly string[]) => { savedIds = [...userIds]; },
+    };
+    const permission = {
+      canManageGroupAccess: async () => true,
+      invalidate: () => { invalidations += 1; },
+    };
+    const service = new GroupAccessService(
+      permission as never,
+      repository as never,
+      { recordStandalone: async (entry: { summary: string; changes?: unknown; metadata?: Record<string, unknown> }) => { audits.push(entry); } } as never,
+      { listDepartments: async () => [] } as never,
+      new AppConfig({
+        CASDOOR_ORG_NAME: "libiaorobot.com",
+        GROUP_ACCESS_ADMIN_USER_IDS: PROJECT_A,
+      } as Env),
+    );
+
+    const result = await service.saveTaskNodeReviewers(PROJECT_A, { userIds: [PROJECT_B, PROJECT_B] });
+    expect(result.userIds).toEqual([PROJECT_B]);
+    expect(result.reviewers).toMatchObject([{ userId: PROJECT_B, displayName: "Bob", status: "active" }]);
+    expect(savedIds).toEqual([PROJECT_B]);
+    expect(invalidations).toBe(1);
+    expect(audits[0]).toMatchObject({
+      summary: "保存公共节点审核管理员：共 1 人",
+      metadata: { userIds: [PROJECT_B], previousUserIds: [] },
+    });
+
+    await expect(service.saveTaskNodeReviewers(PROJECT_A, { userIds: [] })).rejects.toThrow("至少选择一名");
+    await expect(service.saveTaskNodeReviewers(PROJECT_A, { userIds: [PROJECT_C] })).rejects.toThrow("当前生效的系统管理员");
+
+    const readOnly = new GroupAccessService(
+      { canManageGroupAccess: async () => false, invalidate: () => undefined } as never,
+      repository as never,
+      { recordStandalone: async () => undefined } as never,
+      { listDepartments: async () => [] } as never,
+      new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
+    );
+    await expect(readOnly.saveTaskNodeReviewers(PROJECT_A, { userIds: [PROJECT_A] })).rejects.toThrow("权限管理员");
+  });
 });
 
 class FakeRoleService {
@@ -874,6 +939,7 @@ class FakeGroupRepository {
   memberships = new Map<string, string>();
   taskOwnerProjectIds = new Set<string>();
   manualAdminUserIds: string[] = [];
+  taskNodeReviewerUserIds: string[] = [];
 
   async listUserGroupKeys(): Promise<string[]> {
     return [...this.groupKeys];
@@ -891,6 +957,9 @@ class FakeGroupRepository {
   }
   async isManualGroupAccessAdmin(userId: string): Promise<boolean> {
     return this.manualAdminUserIds.includes(userId);
+  }
+  async listTaskNodeReviewerUserIds(): Promise<string[]> {
+    return [...this.taskNodeReviewerUserIds];
   }
   async listOwnedProjectIds(actorId: string): Promise<string[]> {
     return [...this.refs.entries()].filter(([, ref]) => ref.managerIds.includes(actorId)).map(([projectId]) => projectId);
@@ -1058,6 +1127,29 @@ describe("PermissionService 群组接入", () => {
     );
     const profile = await service.groupAccessOf(PROJECT_A);
     expect(profile.groupKeys).toEqual(["libiaorobot.com/QA"]);
+  });
+
+  it("公共节点审核：管理员 + 严格白名单；未配置无人可审，配置后只认勾选者", async () => {
+    const adminService = serviceWith({
+      groupKeys: [],
+      rules: [],
+      adminUserIds: PROJECT_A,
+    });
+    adminService.repository.taskNodeReviewerUserIds = [];
+    expect(await adminService.service.canReviewTaskNodeRequests(PROJECT_A)).toBe(false);
+    expect((await adminService.service.permissionsOf(PROJECT_A)).taskNodeReview).toBe(false);
+    await expect(adminService.service.assertCanReviewTaskNodeRequests(PROJECT_A)).rejects.toThrow("已授权");
+
+    adminService.repository.taskNodeReviewerUserIds = [PROJECT_A];
+    expect(await adminService.service.canReviewTaskNodeRequests(PROJECT_A)).toBe(true);
+    expect((await adminService.service.permissionsOf(PROJECT_A)).taskNodeReview).toBe(true);
+
+    adminService.repository.taskNodeReviewerUserIds = [PROJECT_B];
+    expect(await adminService.service.canReviewTaskNodeRequests(PROJECT_A)).toBe(false);
+
+    const regularService = serviceWith({ groupKeys: [], rules: [] });
+    regularService.repository.taskNodeReviewerUserIds = [PROJECT_A];
+    expect(await regularService.service.canReviewTaskNodeRequests(PROJECT_A)).toBe(false);
   });
 
   it("多范围能力分界：自己的项目可编辑可建项目，但全局字典仍只认全部项目编辑", async () => {
