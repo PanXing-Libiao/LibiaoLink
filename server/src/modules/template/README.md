@@ -43,7 +43,7 @@
   - `POST /api/v1/task-node-requests/{id}/withdraw`：仅申请人本人、仅 pending（他人 403、已处理 400），落 withdrawn，写审计。
   - `createFromImport`（供导入模块在**导入事务内**调用，不对外暴露）：批内同阶段同名去重；该阶段已有同名公共节点 → 跳过并回报；已有同名 pending → 复用不重复插行（`onConflictDoNothing` + 回查兜底并发）；名称 trim、英文空串 → null。
 - **读**：`GET /api/v1/task-node-requests?stage=&status=&mine=` —— `mine=true` 只看本人（任何登录账号，含本人待审数）；缺省 = 审核人视角全部（服务层 `assertCanReviewTaskNodeRequests`，无权限 403），响应带全局 `pendingCount`；排序 = pending 优先 → 提交时间倒序。
-- **企微通知 / 回复（2026-11-14）**：申请创建（含导入事务）后，按当前仍生效的公共节点审核人逐人写 `notify.message` outbox（`channel=wecom_aibot`、模板码 `TASK_NODE_REQUEST_REVIEW`、去重键 `task-node-request-review:<requestId>:<reviewerId>`）；一条申请一条横向 Markdown 表，第一列为字段名，含具体阶段名对应的现有公共节点、申请节点、申请号、申请人、来源项目、提交时间、平台链接与回复示例。企微单聊仅识别 `同意{申请人}的{n}号申请` / `驳回{申请人}的{n}号申请 [理由]`，先经绑定态解析本地账号，再复核 `taskNodeReview`；省略驳回理由记「无」，结果在会话内回执（例如「已同意：潘兴的1号申请，第四批空箱上架」）。未绑定、无权限、已处理、不存在均回可读中文。审批成功后，同一事务再给除操作人外的当前有效审核人逐人写一条结果通知（模板码 `TASK_NODE_REQUEST_REVIEW_RESULT`、去重键 `task-node-request-review-result:<requestId>:<reviewerId>`），正文只含阶段 / 任务 / 申请人 / 审核人 / 审核通过或审核驳回五行。并发审批由申请行锁 + `status = pending` 条件更新串行化：只有先落定的人进入结果通知写入，后到的人返回「该申请已处理」，不会重复建节点或重复发通知。
+- **企微通知 / 回复（2026-11-15 · 0100 个人设置）**：待审核申请通知按当前仍生效的公共节点审核人各自的个人设置发送：及时通知在申请创建（含导入事务）时写，固定时间由 worker 到本人时刻写；均写 `notify.message` outbox（`channel=wecom_aibot`、模板码 `TASK_NODE_REQUEST_REVIEW`、去重键 `task-node-request-review:<requestId>:<reviewerId>`）。一条申请一条横向 Markdown 表，第一列为字段名，含具体阶段名对应的现有公共节点、申请节点、申请号、申请人、来源项目、提交时间、平台链接与回复示例。企微单聊仅识别 `同意{申请人}的{n}号申请` / `驳回{申请人}的{n}号申请 [理由]`，先经绑定态解析本地账号，再复核 `taskNodeReview`；省略驳回理由记「无」，结果在会话内回执（例如「已同意：潘兴的1号申请，第四批空箱上架」）。未绑定、无权限、已处理、不存在均回可读中文。审批成功后，同一事务再给除操作人外的当前有效审核人逐人写一条结果通知（模板码 `TASK_NODE_REQUEST_REVIEW_RESULT`、去重键 `task-node-request-review-result:<requestId>:<reviewerId>`），正文只含阶段 / 任务 / 申请人 / 审核人 / 审核通过或审核驳回五行。并发审批由申请行锁 + `status = pending` 条件更新串行化：只有先落定的人进入结果通知写入，后到的人返回「该申请已处理」，不会重复建节点或重复发通知。
 - **留痕**：通过 / 驳回 / 撤销各一条审计（`objectType = task_node_request`，`changes` 记状态 / 名称 / 审核意见 / 最终节点）；通过时新建节点另写一条 `task_node` create 审计（`metadata.source = task_node_request` + `requestId`）。**导入内提交申请不单独留痕**（已由导入的 project create 审计覆盖上下文）；通知 outbox 与申请写入同事务，不额外写审计。
 - **边界**：申请**不写** `task_nodes`；只通过审核通过这一条路径落公共节点（与直接 `POST /task-nodes` 并存）。审核资格由 0097 白名单单独配置，公共节点库维护权与审核权互不替代。企微审核通知与回复已接入；申请号只用于沟通与通知，未加入 HTTP 契约。
 - **并发口径（真机复验修正）**：审核 / 撤销前的行锁用 `lockById`（只查 `task_node_requests` 本表 + `FOR UPDATE`）；**不能**在读面带 `LEFT JOIN` 的查询上加 `FOR UPDATE` —— PostgreSQL 直接报 `FOR UPDATE cannot be applied to the nullable side of an outer join`（2026-11-13 本地真库 + 浏览器全链路实测暴露，单测替身无法覆盖）。读面字段在行锁之后另取 `findById`。
@@ -66,12 +66,14 @@
 - 本次复核：`npm run typecheck` / `npm run build` / `npm test` / `npm run check:boundaries` 全过；`shared` 的 `generate` / `typecheck` / `build` / `check` 全过。
 - 真机回放：第一段 `frontend/scripts/m3-05-task-nodes-e2e.mjs` 48 项全过，证据 `docs/m3-05-回放证据(节点库增删改·前端).md`；第二段 `frontend/scripts/m3-05-task-templates-e2e.mjs` **60 项全过**（含硬刷新后仍在 / 未保存改动必须消失 / 面板顺序 = 接口顺序），证据 `docs/m3-05-回放证据(模板落库·前端).md`。
 
-## 企微审核通知设置（2026-11-15 · 0099）
+## 企微审核通知个人设置（2026-11-15 · 0100）
 
-- 契约：`TaskNodeReviewNotificationSettingsSchema` / `TaskNodeReviewNotificationSettingsBodySchema`；`GET / PUT /api/v1/task-node-requests/notification-settings`，仅当前 `taskNodeReview` 审核管理员可读写，保存写 `task_node_review_notification_settings` 审计。
-- 数据：`task_node_review_notification_settings` 单例（开关 / 每日 HH:mm / last_dispatched_on）；迁移 `0099` 建默认行（开启 · 09:00）。
-- 派发：申请创建不再即时写审核通知；worker 每分钟调用 `TaskNodeReviewNotificationService.flushScheduledNotifications()`，到点后锁单例行，给每条 pending 申请的每位当前有效审核人写一条 `TASK_NODE_REQUEST_REVIEW` outbox，`last_dispatched_on` 防同日重复，`dedupe_key` 防同一申请同一审核人重复。审批结果通知仍在审核事务内即时发送。
-- 测试：`test/task-node-review-notification.test.ts` 覆盖权限 / 审计 / 关闭 / 未到点 / 到点派发 / 同日不重复 / 次日新申请 / 无审核人；`test/task-node-requests.test.ts` 断言申请创建不再即时通知。
+- 契约：`TaskNodeReviewNotificationSettingsSchema` / `TaskNodeReviewNotificationSettingsBodySchema` 增加 `notificationMode`（immediate / scheduled）；`GET / PUT /api/v1/task-node-requests/notification-settings` 只读写当前 `taskNodeReview` 审核管理员自己的设置，审计 `objectId = 审核人 users.id`。
+- 数据：`task_node_reviewer_notification_settings` 以 `reviewer_id` 为主键（开关 / 固定时间 HH:mm / 按人独立的 last_dispatched_on / updated_*）；迁移 `0100` 从 0099 全局设置复制给当前审核人，默认 `scheduled`；缺行按开启 · 固定时间 · 09:00 处理。0099 旧表保留作历史与回滚依据，应用不再读写。
+- 及时通知：`createFromImport()` 只对本次真正新建的申请，给本人开启且选择 `immediate` 的当前有效审核人即时写 outbox；复用既有 pending 申请不重复通知。固定时间审核人不会即时收到。
+- 固定时间：worker 每分钟调用 `flushScheduledNotifications()`，按 `reviewer_id` 顺序锁本次到点的审核人行，按本人的 Asia/Shanghai HH:mm 派发本轮 pending 申请；关闭 / 及时通知 / 同日已派发均跳过，`last_dispatched_on` 按人独立。
+- 审批结果通知不经过个人设置，仍在审核事务内即时发给除操作人外的其他有效审核人。
+- 测试：`test/task-node-review-notification.test.ts` 覆盖个人权限 / 审计 / 各自时间 / 关闭隔离 / 11 点前已审批不补发 / 及时通知跳过 / 同日与次日去重 / 无审核人；`test/task-node-requests.test.ts` 覆盖申请创建时仅及时通知审核人即时收到。
 
 ## 待办（后续）
 

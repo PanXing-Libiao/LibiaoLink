@@ -20,7 +20,9 @@ import { TaskNodeRepository } from "./task-node.repository.js";
 import type { TaskNodeRow } from "./task-node.repository.js";
 import { TaskNodeRequestRepository } from "./task-node-request.repository.js";
 import type { TaskNodeRequestRow } from "./task-node-request.repository.js";
+import { TaskNodeReviewNotificationSettingsRepository } from "./task-node-review-notification.repository.js";
 import {
+  buildTaskNodeReviewMessage,
   buildTaskNodeReviewResultMessage,
   looksLikeTaskNodeReviewReply,
   parseTaskNodeReviewReply,
@@ -85,6 +87,7 @@ export class TaskNodeRequestService {
     private readonly permission: PermissionService,
     private readonly audit: AuditService,
     private readonly database: DatabaseService,
+    private readonly reviewNotifications: TaskNodeReviewNotificationSettingsRepository,
     private readonly config: AppConfig,
   ) {}
 
@@ -120,6 +123,7 @@ export class TaskNodeRequestService {
     tx: DbClient,
   ): Promise<ImportNodeRequestResult> {
     const requests: TaskNodeRequestRow[] = [];
+    const createdRequests: TaskNodeRequestRow[] = [];
     const existingNodes: Array<{ stageKey: string; title: string }> = [];
     let reusedPending = 0;
     const seen = new Set<string>();
@@ -159,6 +163,7 @@ export class TaskNodeRequestService {
       );
       if (inserted !== null) {
         requests.push(inserted);
+        createdRequests.push(inserted);
         continue;
       }
       // 并发下另一条同阶段同名申请抢先落库：复用既有 pending。
@@ -168,7 +173,52 @@ export class TaskNodeRequestService {
         reusedPending += 1;
       }
     }
+    await this.enqueueImmediateReviewNotifications(createdRequests, tx);
     return { requests, existingNodes, reusedPending };
+  }
+
+  /**
+   * 及时通知：新申请落库后，只给本人开启且选择 immediate 的当前有效审核人即时写 outbox。
+   * 固定时间审核人留给 worker 到点派发；复用既有 pending 申请不算新申请，不重复通知。
+   */
+  private async enqueueImmediateReviewNotifications(
+    createdRequests: readonly TaskNodeRequestRow[],
+    tx: DbClient,
+  ): Promise<void> {
+    if (createdRequests.length === 0) return;
+    const reviewerIds = await this.permission.listEffectiveTaskNodeReviewers();
+    if (reviewerIds.length === 0) return;
+    const immediateReviewerIds = await this.reviewNotifications.listImmediateEnabledReviewerIds(reviewerIds, tx);
+    if (immediateReviewerIds.length === 0) return;
+    const nodesByStage = new Map<string, TaskNodeRow[]>();
+    const baseUrl = this.config.env.PUBLIC_APP_BASE_URL;
+    for (const request of createdRequests) {
+      let existingNodes = nodesByStage.get(request.stageKey);
+      if (existingNodes === undefined) {
+        existingNodes = await this.nodes.list(request.stageKey, tx);
+        nodesByStage.set(request.stageKey, existingNodes);
+      }
+      const stageName = STAGE_NAME_BY_KEY[request.stageKey] ?? request.stageKey;
+      const title = "公共节点入库审核｜" + stageName;
+      const body = buildTaskNodeReviewMessage({ stageName, request, existingNodes, publicBaseUrl: baseUrl });
+      for (const reviewerId of immediateReviewerIds) {
+        await appendOutboxIfAbsent(tx, {
+          topic: "notify.message",
+          dedupeKey: "task-node-request-review:" + request.id + ":" + reviewerId,
+          payload: {
+            recipientId: reviewerId,
+            type: "approval",
+            channel: "wecom_aibot",
+            title,
+            body,
+            refType: "task_node_request",
+            refId: request.id,
+            templateCode: "TASK_NODE_REQUEST_REVIEW",
+            mergeKey: "task-node-request:" + request.id,
+          },
+        });
+      }
+    }
   }
 
   /**
