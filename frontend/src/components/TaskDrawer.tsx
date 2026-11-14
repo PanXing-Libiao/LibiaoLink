@@ -158,6 +158,24 @@ const FIELD_CLASS =
 
 const CAPTION_CLASS = "mt-1 block text-[11px] leading-4 text-zinc-400";
 
+function FinalizeHoverTip({ ready, title, body }: { ready: boolean; title: string; body: string }) {
+  return (
+    <span
+      role="tooltip"
+      data-task-finalize-tip={ready ? "ready" : "blocked"}
+      className="pointer-events-none invisible absolute left-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-3rem)] translate-y-1 rounded-[10px] border border-zinc-200/80 bg-white px-3 py-2 text-left opacity-0 shadow-[0_1px_2px_rgba(15,23,42,0.08),0_12px_28px_-14px_rgba(15,23,42,0.35)] transition-[opacity,transform,visibility] duration-200 ease-out group-hover/finalize:visible group-hover/finalize:translate-y-0 group-hover/finalize:opacity-100 group-focus-within/finalize:visible group-focus-within/finalize:translate-y-0 group-focus-within/finalize:opacity-100"
+    >
+      <span className="flex items-start gap-2">
+        <span className={"mt-1 h-1.5 w-1.5 shrink-0 rounded-full " + (ready ? "bg-emerald-500" : "bg-amber-400")} aria-hidden="true" />
+        <span className="min-w-0">
+          <span className="block text-[11px] font-semibold text-zinc-800">{title}</span>
+          <span className="mt-0.5 block text-[11px] leading-4 text-zinc-500">{body}</span>
+        </span>
+      </span>
+    </span>
+  );
+}
+
 /**
  * 「项目进展描述」整格一个框（业务口径 2026-10-13：「抽屉里面加英文的翻译」→ 追订「加在框里面好吗」）：
  * 中文编辑区 + 英文译文同框显示；焦点样式从内部 textarea 移到框上（focus-within），观感与 FIELD_CLASS 一致。
@@ -1181,8 +1199,6 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
             placeholder={t("drawer.manager.placeholder")}
             ariaLabel={t("drawer.manager.aria")}
           />
-          <span className={CAPTION_CLASS}>{t("drawer.manager.caption")}</span>
-          <span className={CAPTION_CLASS}>{t("manager.candidateHint")}</span>
         </>
       ) : (
         <>
@@ -1228,7 +1244,6 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
             }}
             ariaLabel={t("drawer.status.aria")}
           />
-          <span className={CAPTION_CLASS}>{t("drawer.status.caption")}</span>
         </>
       ) : (
         <span className="inline-flex items-center gap-1.5">
@@ -1647,34 +1662,38 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
               ) : !canFinalize || onFinalize === undefined ? null : !finalizeReadiness.ready ? (
                 <span className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-zinc-400">{t("drawer.finalize.label")}</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked="false"
-                    aria-label={finalizeBlockedText ?? t("drawer.finalize.blockedAria")}
-                    data-task-finalize="blocked"
-                    title={finalizeBlockedText ?? t("drawer.finalize.blockedAria")}
-                    disabled
-                    className="relative inline-flex h-6 w-11 shrink-0 cursor-not-allowed items-center rounded-full bg-zinc-100 opacity-70"
-                  >
-                    <span className="pointer-events-none absolute left-[3px] top-[3px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white text-[9px] font-semibold text-zinc-400 shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all duration-200">{t("drawer.toggle.off")}</span>
-                  </button>
+                  <span className="group/finalize relative inline-flex">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked="false"
+                      aria-label={finalizeBlockedText ?? t("drawer.finalize.blockedAria")}
+                      data-task-finalize="blocked"
+                      disabled
+                      className="relative inline-flex h-6 w-11 shrink-0 cursor-not-allowed items-center rounded-full bg-zinc-100 opacity-70"
+                    >
+                      <span className="pointer-events-none absolute left-[3px] top-[3px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white text-[9px] font-semibold text-zinc-400 shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all duration-200">{t("drawer.toggle.off")}</span>
+                    </button>
+                    <FinalizeHoverTip ready={false} title={t("drawer.finalize.hoverBlockedTitle")} body={finalizeBlockedText ?? t("drawer.finalize.blockedAria")} />
+                  </span>
                 </span>
               ) : (
                 <span className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-zinc-400">{t("drawer.finalize.label")}</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked="false"
-                    aria-label={t("drawer.finalize.idleAria")}
-                    data-task-finalize="off"
-                    title={t("drawer.finalize.idleTitle")}
-                    onClick={() => { setFinalizeConfirm(true); }}
-                    className="relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full bg-zinc-200 transition-colors duration-200 hover:bg-zinc-300"
-                  >
-                    <span className="pointer-events-none absolute left-[3px] top-[3px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white text-[9px] font-semibold text-zinc-400 shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all duration-200">{t("drawer.toggle.off")}</span>
-                  </button>
+                  <span className="group/finalize relative inline-flex">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked="false"
+                      aria-label={t("drawer.finalize.idleAria")}
+                      data-task-finalize="off"
+                      onClick={() => { setFinalizeConfirm(true); }}
+                      className="relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full bg-zinc-200 transition-colors duration-200 hover:bg-zinc-300"
+                    >
+                      <span className="pointer-events-none absolute left-[3px] top-[3px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white text-[9px] font-semibold text-zinc-400 shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all duration-200">{t("drawer.toggle.off")}</span>
+                    </button>
+                    <FinalizeHoverTip ready={true} title={t("drawer.finalize.hoverReadyTitle")} body={t("drawer.finalize.hoverReadyBody")} />
+                  </span>
                 </span>
               )}
             </div>
@@ -1689,11 +1708,6 @@ export function TaskDrawer({ task, canFinalize: canFinalizeProp = false, canEdit
               </svg>
             </button>
           </div>
-          {canFinalize && task.finalizedAt === null && finalizeBlockedText !== null ? (
-            <p data-task-finalize-blocked-hint="true" className="mt-2 text-[11px] leading-4 text-amber-600">
-              {finalizeBlockedText}
-            </p>
-          ) : null}
           {canFinalize && finalizeReadiness.ready && finalizeConfirm && task.finalizedAt === null ? (
             <div data-task-finalize-confirm="true" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
               <p className="text-xs leading-5 text-amber-800">{t("drawer.finalize.confirm")}</p>

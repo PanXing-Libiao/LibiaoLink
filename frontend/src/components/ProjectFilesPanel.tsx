@@ -1031,6 +1031,9 @@ export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { proje
                   <th className="border-b border-zinc-200 px-4 py-3 font-medium">
                     <span className="inline-flex items-center gap-2 whitespace-nowrap">
                       {t("lib.col.file")}
+                      <span data-project-files-preview-hint="" className="text-[11px] font-normal text-zinc-400">
+                        {t("pd.files.previewHint")}
+                      </span>
                     </span>
                   </th>
                   <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("pd.files.col.stage")}</th>

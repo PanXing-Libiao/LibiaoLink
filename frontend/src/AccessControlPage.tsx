@@ -817,16 +817,18 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                               );
                             })}
                           </div>
-                          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-100 px-4 py-2.5 text-[10px] text-zinc-400">
-                            <span>{t("access.memberTableFoot")}</span>
-                            {selectedMembers.length > 8 ? <button type="button" onClick={() => { setShowAllMembers((value) => !value); }} className="font-medium text-blue-600 hover:text-blue-800">{showAllMembers ? t("access.showFewerMembers") : t("access.viewAllMembers", { n: selectedMembers.length })}</button> : null}
-                          </div>
+                          {selectedMembers.length > 8 ? (
+                            <div className="flex justify-end border-t border-zinc-100 px-4 py-2.5">
+                              <button type="button" onClick={() => { setShowAllMembers((value) => !value); }} className="text-[10px] font-medium text-blue-600 hover:text-blue-800">{showAllMembers ? t("access.showFewerMembers") : t("access.viewAllMembers", { n: selectedMembers.length })}</button>
+                            </div>
+                          ) : null}
                         </div>
                       )}
                     </div>
 
 
                     <div className="sticky bottom-3 z-20 flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-white/95 p-3 shadow-[0_12px_32px_rgba(15,23,42,0.12)] backdrop-blur sm:flex-row sm:items-center">
+                    <p className="flex min-w-0 items-start gap-1.5 text-[10px] leading-4 text-zinc-400"><svg viewBox="0 0 20 20" aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-500"><path d="m10 2 1.5 4.3L16 8l-4.5 1.7L10 14l-1.5-4.3L4 8l4.5-1.7L10 2Z" fill="currentColor" /></svg><span>{t("access.saveBarDepartment")}</span></p>
                         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                         {selectedRule === null ? null : <button type="button" onClick={() => { void handleDeleteDepartment(); }} disabled={deletingDepartment || savingDepartment} className="rounded-lg px-2.5 py-2 text-[11px] font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-40">{deletingDepartment ? t("access.deleting") : t("access.deleteDepartmentDefault")}</button>}
                         <button type="button" onClick={resetDepartmentDraft} className="rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50">{t("access.reset")}</button>
