@@ -32,6 +32,7 @@ export function shanghaiWallClockOf(now: Date): { date: string; time: string } {
 
 export type TaskNodeReviewNotificationDispatchState =
   | "disabled"
+  | "immediate"
   | "not_due"
   | "already_dispatched"
   | "no_reviewers"
@@ -42,19 +43,38 @@ export interface TaskNodeReviewNotificationDispatchResult {
   produced: number;
 }
 
+type ReviewerScheduleState = Exclude<
+  TaskNodeReviewNotificationDispatchState,
+  "dispatched" | "no_reviewers"
+>;
+
 function toContract(row: TaskNodeReviewNotificationSettingsRow): TaskNodeReviewNotificationSettings {
-  return { enabled: row.enabled, dailyTime: row.dailyTime };
+  return {
+    enabled: row.enabled,
+    notificationMode: row.notificationMode,
+    dailyTime: row.dailyTime,
+  };
 }
 
 function settingsSnapshot(row: TaskNodeReviewNotificationSettingsRow): Record<string, unknown> {
-  return { enabled: row.enabled, dailyTime: row.dailyTime };
+  return {
+    enabled: row.enabled,
+    notificationMode: row.notificationMode,
+    dailyTime: row.dailyTime,
+  };
+}
+
+function settingsLabel(row: TaskNodeReviewNotificationSettingsRow): string {
+  if (!row.enabled) return "关闭";
+  if (row.notificationMode === "immediate") return "开启 · 及时通知";
+  return "开启 · 固定时间 " + row.dailyTime + "（北京时间）";
 }
 
 /**
- * 公共节点审核企微通知（0099 · 2026-11-15）：
- * - 全局单例设置：开关 + 每日通知时间（Asia/Shanghai），仅当前公共节点审核管理员可读 / 改；
- * - 关闭 = 不生成待审核申请通知 outbox；开启 = worker 每分钟看一次，到点后把当日尚未通知的 pending 申请
- *   逐条写给当前有效审核人；last_dispatched_on 保证同一上海业务日只跑一次；
+ * 公共节点审核企微通知（0100 · 2026-11-15）：
+ * - 每位公共节点审核管理员各自保存开关、通知方式（及时 / 固定时间）与固定时间（Asia/Shanghai）；
+ * - 及时 = 新申请随导入事务即时写通知；固定时间 = worker 每分钟逐人判断，到本人时刻才派发 pending；
+ * - last_dispatched_on 按审核人独立，同一审核人同一上海业务日只跑一次；
  * - 审批结果通知不在这里，仍由审核动作即时发送，避免两位审核人并发时另一位收不到结论。
  */
 @Injectable()
@@ -70,13 +90,13 @@ export class TaskNodeReviewNotificationService {
     private readonly config: AppConfig,
   ) {}
 
-  /** GET /api/v1/task-node-requests/notification-settings。 */
+  /** GET /api/v1/task-node-requests/notification-settings：只读当前审核人自己的设置。 */
   async getSettings(actorId: string): Promise<TaskNodeReviewNotificationSettings> {
     await this.permission.assertCanReviewTaskNodeRequests(actorId, "查看公共节点审核通知设置需要已授权的管理员权限");
-    return toContract(await this.settings.getSettings());
+    return toContract(await this.settings.getSettings(actorId));
   }
 
-  /** PUT /api/v1/task-node-requests/notification-settings（整份保存，避免半更新竞态）。 */
+  /** PUT /api/v1/task-node-requests/notification-settings（整份保存；只影响当前审核人）。 */
   async updateSettings(
     body: TaskNodeReviewNotificationSettingsBody,
     actorId: string,
@@ -87,16 +107,25 @@ export class TaskNodeReviewNotificationService {
     }
     const at = this.clock.now();
     return await this.database.db.transaction(async (tx) => {
-      const before = await this.settings.lockSettings(tx);
-      const saved = await this.settings.updateSettings(body, actorId, at, tx);
+      const before = await this.settings.lockSettings(actorId, tx);
+      const saved = await this.settings.updateSettings(
+        actorId,
+        {
+          enabled: body.enabled,
+          notificationMode: body.notificationMode,
+          dailyTime: body.dailyTime,
+        },
+        actorId,
+        at,
+        tx,
+      );
       const changes = diffRecords(settingsSnapshot(before), settingsSnapshot(saved));
       await this.audit.record(tx, {
         actorId,
         action: "update",
         objectType: "task_node_review_notification_settings",
-        objectId: "default",
-        summary:
-          "更新公共节点审核企微通知：" + (saved.enabled ? "开" : "关") + " · 每天 " + saved.dailyTime,
+        objectId: actorId,
+        summary: "更新本人公共节点审核企微通知：" + settingsLabel(saved),
         changes: changes.length > 0 ? changes : null,
         metadata: {},
       });
@@ -105,25 +134,35 @@ export class TaskNodeReviewNotificationService {
   }
 
   /**
-   * worker 每分钟调用：只有开启且到达每日时刻才派发；审批结果通知不经过本方法。
-   * 先做一次无锁预读避免非到点时的写事务；真正派发前在事务内再次锁行复核，保证多实例不重复。
+   * worker 每分钟调用：只处理选择固定时间且到点的审核人。
+   * 先无锁批量预读，非到点时不写事务；真正派发前按 reviewer_id 顺序锁行复核，保证多实例不重复。
    */
   async flushScheduledNotifications(now: Date = this.clock.now()): Promise<TaskNodeReviewNotificationDispatchResult> {
     const wall = shanghaiWallClockOf(now);
-    const preview = await this.settings.getSettings();
-    const previewState = evaluateDispatchState(preview, wall.date, wall.time);
-    if (previewState !== null) {
-      return { state: previewState, produced: 0 };
-    }
     const reviewerIds = await this.permission.listEffectiveTaskNodeReviewers();
     if (reviewerIds.length === 0) {
       return { state: "no_reviewers", produced: 0 };
     }
+    const orderedIds = [...reviewerIds].sort();
+    const previewRows = await this.settings.listSettings(orderedIds);
+    const previewStates = previewRows.map((row) => evaluateReviewerSchedule(row, wall.date, wall.time));
+    const dueIds = previewRows
+      .filter((_row, index) => previewStates[index] === null)
+      .map((row) => row.reviewerId);
+    if (dueIds.length === 0) {
+      return { state: summarizeStates(previewStates.filter((state): state is ReviewerScheduleState => state !== null)), produced: 0 };
+    }
     return await this.database.db.transaction(async (tx) => {
-      const locked = await this.settings.lockSettings(tx);
-      const state = evaluateDispatchState(locked, wall.date, wall.time);
-      if (state !== null) {
-        return { state, produced: 0 };
+      const dueRows: TaskNodeReviewNotificationSettingsRow[] = [];
+      const racedStates: ReviewerScheduleState[] = [];
+      for (const reviewerId of dueIds) {
+        const locked = await this.settings.lockSettings(reviewerId, tx);
+        const state = evaluateReviewerSchedule(locked, wall.date, wall.time);
+        if (state === null) dueRows.push(locked);
+        else racedStates.push(state);
+      }
+      if (dueRows.length === 0) {
+        return { state: summarizeStates(racedStates), produced: 0 };
       }
       const pending = await this.requests.list(
         { stageKey: null, status: "pending", requestedBy: null },
@@ -141,12 +180,12 @@ export class TaskNodeReviewNotificationService {
         const stageName = STAGE_NAME_BY_KEY[request.stageKey] ?? request.stageKey;
         const title = "公共节点入库审核｜" + stageName;
         const body = buildTaskNodeReviewMessage({ stageName, request, existingNodes, publicBaseUrl: baseUrl });
-        for (const reviewerId of reviewerIds) {
+        for (const reviewer of dueRows) {
           await appendOutboxIfAbsent(tx, {
             topic: "notify.message",
-            dedupeKey: "task-node-request-review:" + request.id + ":" + reviewerId,
+            dedupeKey: "task-node-request-review:" + request.id + ":" + reviewer.reviewerId,
             payload: {
-              recipientId: reviewerId,
+              recipientId: reviewer.reviewerId,
               type: "approval",
               channel: "wecom_aibot",
               title,
@@ -160,20 +199,31 @@ export class TaskNodeReviewNotificationService {
           produced += 1;
         }
       }
-      await this.settings.markDispatched(wall.date, tx);
+      for (const reviewer of dueRows) {
+        await this.settings.markDispatched(reviewer.reviewerId, wall.date, tx);
+      }
       return { state: "dispatched" as const, produced };
     });
   }
 }
 
-/** 返回 null = 可以派发；非 null = 本次跳过原因。 */
-function evaluateDispatchState(
-  settings: Pick<TaskNodeReviewNotificationSettingsRow, "enabled" | "dailyTime" | "lastDispatchedOn">,
+/** 返回 null = 固定时间到点且可派发；非 null = 该审核人本次跳过原因。 */
+function evaluateReviewerSchedule(
+  settings: Pick<TaskNodeReviewNotificationSettingsRow, "enabled" | "notificationMode" | "dailyTime" | "lastDispatchedOn">,
   date: string,
   time: string,
-): Exclude<TaskNodeReviewNotificationDispatchState, "dispatched" | "no_reviewers"> | null {
+): ReviewerScheduleState | null {
   if (!settings.enabled) return "disabled";
+  if (settings.notificationMode === "immediate") return "immediate";
   if (settings.lastDispatchedOn === date) return "already_dispatched";
   if (time < settings.dailyTime) return "not_due";
   return null;
+}
+
+function summarizeStates(states: readonly ReviewerScheduleState[]): TaskNodeReviewNotificationDispatchState {
+  if (states.length === 0) return "no_reviewers";
+  if (states.some((state) => state === "not_due")) return "not_due";
+  if (states.some((state) => state === "already_dispatched")) return "already_dispatched";
+  if (states.some((state) => state === "immediate")) return "immediate";
+  return "disabled";
 }

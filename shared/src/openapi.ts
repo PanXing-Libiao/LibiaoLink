@@ -891,9 +891,9 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "get",
     path: "/api/v1/task-node-requests/notification-settings",
     tags: ["templates"],
-    summary: "读取公共节点审核企微通知设置（仅公共节点审核管理员）",
+    summary: "读取当前审核人的公共节点审核企微通知设置（仅公共节点审核管理员）",
     responses: {
-      200: { description: "全局通知开关与每日通知时间", ...json(TaskNodeReviewNotificationSettingsSchema) },
+      200: { description: "当前审核人的通知开关、通知方式与固定时间", ...json(TaskNodeReviewNotificationSettingsSchema) },
       403: commonErrors[403],
     },
   });
@@ -902,10 +902,10 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31["generate
     method: "put",
     path: "/api/v1/task-node-requests/notification-settings",
     tags: ["templates"],
-    summary: "保存公共节点审核企微通知设置（仅公共节点审核管理员）",
+    summary: "保存当前审核人的公共节点审核企微通知设置（仅公共节点审核管理员）",
     request: { body: json(TaskNodeReviewNotificationSettingsBodySchema) },
     responses: {
-      200: { description: "保存后的全局通知设置", ...json(TaskNodeReviewNotificationSettingsSchema) },
+      200: { description: "保存后的本人通知设置", ...json(TaskNodeReviewNotificationSettingsSchema) },
       400: commonErrors[400],
       403: commonErrors[403],
     },

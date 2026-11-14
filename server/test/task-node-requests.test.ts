@@ -20,6 +20,10 @@ import type {
   TaskNodeRequestRepository,
   TaskNodeRequestRow,
 } from "../src/modules/template/index.js";
+import type {
+  TaskNodeReviewNotificationSettingsRepository,
+  TaskNodeReviewNotificationSettingsUpdate,
+} from "../src/modules/template/index.js";
 import { TaskNodeRequestService } from "../src/modules/template/index.js";
 
 const ACTOR = "11111111-1111-4111-8111-111111111111";
@@ -222,6 +226,28 @@ class FakePermission {
   }
 }
 
+class FakeNotificationSettingsRepository {
+  rows = new Map<string, { enabled: boolean; notificationMode: "immediate" | "scheduled"; dailyTime: string }>();
+  updates: Array<{ reviewerId: string; input: TaskNodeReviewNotificationSettingsUpdate; actorId: string }> = [];
+
+  async listImmediateEnabledReviewerIds(reviewerIds: readonly string[]): Promise<string[]> {
+    return reviewerIds.filter((reviewerId) => {
+      const row = this.rows.get(reviewerId);
+      return row !== undefined && row.enabled && row.notificationMode === "immediate";
+    });
+  }
+
+  async updateSettings(
+    reviewerId: string,
+    input: TaskNodeReviewNotificationSettingsUpdate,
+    actorId: string,
+  ): Promise<unknown> {
+    this.updates.push({ reviewerId, input: { ...input }, actorId });
+    this.rows.set(reviewerId, { ...input });
+    return { reviewerId, ...input };
+  }
+}
+
 class FakeAudit {
   records: AuditRecordInput[] = [];
   async record(_tx: unknown, input: AuditRecordInput): Promise<void> {
@@ -233,7 +259,7 @@ type OutboxRecord = { topic: string; dedupeKey: string; payload: Record<string, 
 
 class FakeDatabase {
   readonly outbox: OutboxRecord[] = [];
-  private readonly tx = {
+  readonly tx = {
     insert: () => ({
       values: (value: OutboxRecord) => {
         this.outbox.push(value);
@@ -251,21 +277,24 @@ function createHarness(): {
   permission: FakePermission;
   audit: FakeAudit;
   database: FakeDatabase;
+  reviewNotifications: FakeNotificationSettingsRepository;
 } {
   const requests = new FakeRequestRepository();
   const nodes = new FakeNodeRepository();
   const permission = new FakePermission();
   const audit = new FakeAudit();
   const database = new FakeDatabase();
+  const reviewNotifications = new FakeNotificationSettingsRepository();
   const service = new TaskNodeRequestService(
     requests as unknown as TaskNodeRequestRepository,
     nodes as unknown as TaskNodeRepository,
     permission as unknown as PermissionService,
     audit as unknown as AuditService,
     database as unknown as DatabaseService,
+    reviewNotifications as unknown as TaskNodeReviewNotificationSettingsRepository,
     { env: { PUBLIC_APP_BASE_URL: "https://test.example" } } as never,
   );
-  return { service, requests, nodes, permission, audit, database };
+  return { service, requests, nodes, permission, audit, database, reviewNotifications };
 }
 
 async function expectCode(fn: () => Promise<unknown>, code: string): Promise<void> {
@@ -345,7 +374,7 @@ describe("TaskNodeRequestService.createFromImport（导入内提交）", () => {
     expect(h.nodes.inserts).toEqual([]);
   });
 
-  it("申请创建不再即时写企微通知，等待每日计划派发", async () => {
+  it("未配置个人及时通知时，申请创建不即时写企微通知，等待固定时间派发", async () => {
     const h = createHarness();
     h.permission.reviewers = [REVIEWER];
     await h.service.createFromImport(
@@ -358,6 +387,33 @@ describe("TaskNodeRequestService.createFromImport（导入内提交）", () => {
       {} as never,
     );
     expect(h.database.outbox).toEqual([]);
+  });
+
+  it("及时通知的审核人在申请创建时立即收到一条，固定时间审核人不即时收到", async () => {
+    const h = createHarness();
+    h.permission.reviewers = [REVIEWER, REVIEWER_B];
+    h.reviewNotifications.rows.set(REVIEWER, { enabled: true, notificationMode: "immediate", dailyTime: "09:00" });
+    h.reviewNotifications.rows.set(REVIEWER_B, { enabled: true, notificationMode: "scheduled", dailyTime: "11:00" });
+    const outcome = await h.service.createFromImport(
+      {
+        actorId: ACTOR,
+        projectId: PROJECT_ID,
+        previewId: PREVIEW_ID,
+        items: [{ stageKey: "install", title: "及时通知节点", titleEn: null }],
+      },
+      h.database.tx as never,
+    );
+    expect(h.database.outbox).toHaveLength(1);
+    const event = h.database.outbox[0];
+    if (event === undefined) throw new Error("缺少及时通知");
+    expect(event.dedupeKey).toBe("task-node-request-review:" + outcome.requests[0]!.id + ":" + REVIEWER);
+    expect(event.payload).toMatchObject({
+      recipientId: REVIEWER,
+      templateCode: "TASK_NODE_REQUEST_REVIEW",
+      refType: "task_node_request",
+      refId: outcome.requests[0]!.id,
+    });
+    expect(String(event.payload.body ?? "")).toContain("及时通知节点");
   });
 
   it("并发下插入撞唯一索引（返回 null）时复用既有待审申请", async () => {

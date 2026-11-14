@@ -150,18 +150,28 @@ export const TaskNodeRequestDecisionResponseSchema = z
   .openapi("TaskNodeRequestDecisionResponse", { description: "申请审核 / 撤销结果" });
 
 /**
- * 公共节点审核企微通知设置（全局单例）：开关关闭 = 不发送待审核申请通知；开启后每天到 dailyTime
- * 统一发送尚未通知的 pending 申请。时刻按 Asia/Shanghai（北京时间）解释。
+ * 公共节点审核企微通知个人设置：当前审核人的开关、通知方式与固定时间。
+ * immediate = 新申请创建即通知；scheduled = 到本人 dailyTime 派发尚未通知的 pending 申请；关闭 = 不发送待审核申请通知。
+ * 时刻按 Asia/Shanghai（北京时间）解释；审批结果通知不走本设置，仍即时发送。
  */
+export const TaskNodeReviewNotificationModeSchema = z
+  .enum(["immediate", "scheduled"])
+  .openapi("TaskNodeReviewNotificationMode", {
+    description: "通知方式：immediate = 新申请即时通知；scheduled = 固定时间通知",
+  });
+
 export const TaskNodeReviewNotificationSettingsSchema = z
   .object({
-    enabled: z.boolean().openapi({ description: "是否发送企微审核通知" }),
+    enabled: z.boolean().openapi({ description: "是否向本人发送待审核申请企微通知" }),
+    notificationMode: TaskNodeReviewNotificationModeSchema,
     dailyTime: z
       .string()
       .regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)
-      .openapi({ example: "09:00", description: "每日通知时刻（Asia/Shanghai，HH:mm）" }),
+      .openapi({ example: "09:00", description: "固定时间模式的本人每日通知时刻（Asia/Shanghai，HH:mm）；及时通知模式保留上次值" }),
   })
-  .openapi("TaskNodeReviewNotificationSettings", { description: "公共节点审核企微通知设置（全局单例）" });
+  .openapi("TaskNodeReviewNotificationSettings", {
+    description: "公共节点审核企微通知个人设置（当前审核人；审批结果通知仍即时）",
+  });
 
 export const TaskNodeReviewNotificationSettingsBodySchema = TaskNodeReviewNotificationSettingsSchema;
 

@@ -2940,7 +2940,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取公共节点审核企微通知设置（仅公共节点审核管理员） */
+        /** 读取当前审核人的公共节点审核企微通知设置（仅公共节点审核管理员） */
         get: {
             parameters: {
                 query?: never;
@@ -2950,7 +2950,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description 全局通知开关与每日通知时间 */
+                /** @description 当前审核人的通知开关、通知方式与固定时间 */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -2970,7 +2970,7 @@ export interface paths {
                 };
             };
         };
-        /** 保存公共节点审核企微通知设置（仅公共节点审核管理员） */
+        /** 保存当前审核人的公共节点审核企微通知设置（仅公共节点审核管理员） */
         put: {
             parameters: {
                 query?: never;
@@ -2984,7 +2984,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description 保存后的全局通知设置 */
+                /** @description 保存后的本人通知设置 */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -11451,7 +11451,7 @@ export interface components {
             windowId: number | null;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_node_request 公共任务节点申请（对象 id = 申请 id；导入侧提交不单独留痕，审核通过 / 驳回 / 申请人撤销写审计） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24） / task_node_reviewer_roster 公共节点审核人名单（对象 id = task_node_reviewer_roster；保存名单写审计，2026-11-14） / task_node_review_notification_settings 公共节点审核企微通知设置（对象 id = default；开关或每日时间变更写审计，2026-11-15） / ai_model_provider 模型服务（对象 id = 服务 id；不记录密钥）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_node_request 公共任务节点申请（对象 id = 申请 id；导入侧提交不单独留痕，审核通过 / 驳回 / 申请人撤销写审计） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24） / task_node_reviewer_roster 公共节点审核人名单（对象 id = task_node_reviewer_roster；保存名单写审计，2026-11-14） / task_node_review_notification_settings 公共节点审核企微通知个人设置（对象 id = 审核人 users.id；开关 / 通知方式 / 固定时间变更写审计，2026-11-15） / ai_model_provider 模型服务（对象 id = 服务 id；不记录密钥）
          * @enum {string}
          */
         AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_node_request" | "task_template" | "user" | "wecom_dm_binding" | "automation_rule" | "notify_delivery" | "group_access_rule" | "group_access_admin" | "task_node_reviewer_roster" | "task_node_review_notification_settings" | "ai_model_provider";
@@ -14702,12 +14702,18 @@ export interface components {
          * @enum {string}
          */
         TaskNodeRequestStatus: "pending" | "approved" | "rejected" | "withdrawn";
-        /** @description 公共节点审核企微通知设置（全局单例） */
+        /**
+         * @description 通知方式：immediate = 新申请即时通知；scheduled = 固定时间通知
+         * @enum {string}
+         */
+        TaskNodeReviewNotificationMode: "immediate" | "scheduled";
+        /** @description 公共节点审核企微通知个人设置（当前审核人；审批结果通知仍即时） */
         TaskNodeReviewNotificationSettings: {
-            /** @description 是否发送企微审核通知 */
+            /** @description 是否向本人发送待审核申请企微通知 */
             enabled: boolean;
+            notificationMode: components["schemas"]["TaskNodeReviewNotificationMode"];
             /**
-             * @description 每日通知时刻（Asia/Shanghai，HH:mm）
+             * @description 固定时间模式的本人每日通知时刻（Asia/Shanghai，HH:mm）；及时通知模式保留上次值
              * @example 09:00
              */
             dailyTime: string;

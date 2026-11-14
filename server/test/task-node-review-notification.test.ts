@@ -1,9 +1,10 @@
 /**
- * 公共节点审核企微通知设置与每日派发回归（0099 · 2026-11-15）：
- * 1) 设置仅公共节点审核管理员可读 / 写，保存写审计；
- * 2) 关闭 / 未到点 / 当日已派发不写 outbox；到点后一条申请给每位当前审核人一条 Markdown；
- * 3) 同一申请同一审核人永久只通知一次，次日不重复；新申请进入下一个通知日；
- * 4) 上海业务日与 HH:mm 换算固定 UTC+8。
+ * 公共节点审核企微通知个人设置与派发回归（0100 · 2026-11-15）：
+ * 1) 每位审核人独立读写自己的开关 / 通知方式 / 固定时间，保存写审计；
+ * 2) 及时通知不进入 worker；固定时间按各自的北京时间到点派发；
+ * 3) 关闭只影响本人，last_dispatched_on 也按审核人独立；
+ * 4) 同一申请同一审核人永久只通知一次；到点前已被处理则不再补发待审通知；
+ * 5) 上海业务日与 HH:mm 换算固定 UTC+8。
  */
 import { describe, expect, it } from "vitest";
 import { AppError } from "../src/common/errors/app-error.js";
@@ -20,6 +21,7 @@ import type {
 import type {
   TaskNodeReviewNotificationSettingsRepository,
   TaskNodeReviewNotificationSettingsRow,
+  TaskNodeReviewNotificationSettingsUpdate,
 } from "../src/modules/template/index.js";
 import {
   shanghaiWallClockOf,
@@ -34,6 +36,8 @@ const REQUEST_ID_B = "77777777-7777-4777-8777-777777777777";
 const PROJECT_ID = "44444444-4444-4444-8444-444444444444";
 const AT = new Date("2026-11-15T01:00:00Z");
 const DUE_AT = new Date("2026-11-15T01:00:00Z");
+const TEN_AT = new Date("2026-11-15T02:00:00Z");
+const ELEVEN_AT = new Date("2026-11-15T03:00:00Z");
 const BEFORE_DUE_AT = new Date("2026-11-15T00:59:00Z");
 const NEXT_DAY_AT = new Date("2026-11-16T01:00:00Z");
 
@@ -76,34 +80,64 @@ function makeNode(): TaskNodeRow {
   };
 }
 
-class FakeSettingsRepository {
-  row: TaskNodeReviewNotificationSettingsRow = {
+function defaultRow(reviewerId: string): TaskNodeReviewNotificationSettingsRow {
+  return {
+    reviewerId,
     enabled: true,
+    notificationMode: "scheduled",
     dailyTime: "09:00",
     lastDispatchedOn: null,
-    updatedAt: AT,
+    updatedAt: new Date(0),
     updatedBy: null,
   };
-  marks: string[] = [];
-  updates: Array<{ enabled: boolean; dailyTime: string; actorId: string }> = [];
+}
 
-  async getSettings(): Promise<TaskNodeReviewNotificationSettingsRow> {
-    return { ...this.row };
+class FakeSettingsRepository {
+  rows = new Map<string, TaskNodeReviewNotificationSettingsRow>();
+  marks: Array<{ reviewerId: string; on: string }> = [];
+  updates: Array<{ reviewerId: string; input: TaskNodeReviewNotificationSettingsUpdate; actorId: string }> = [];
+
+  async getSettings(reviewerId: string): Promise<TaskNodeReviewNotificationSettingsRow> {
+    return { ...(this.rows.get(reviewerId) ?? defaultRow(reviewerId)) };
   }
 
-  async lockSettings(): Promise<TaskNodeReviewNotificationSettingsRow> {
-    return { ...this.row };
+  async listSettings(reviewerIds: readonly string[]): Promise<TaskNodeReviewNotificationSettingsRow[]> {
+    return reviewerIds.map((reviewerId) => ({ ...(this.rows.get(reviewerId) ?? defaultRow(reviewerId)) }));
   }
 
-  async updateSettings(input: { enabled: boolean; dailyTime: string }, actorId: string): Promise<TaskNodeReviewNotificationSettingsRow> {
-    this.updates.push({ ...input, actorId });
-    this.row = { ...this.row, enabled: input.enabled, dailyTime: input.dailyTime, updatedAt: AT, updatedBy: actorId };
-    return { ...this.row };
+  async listImmediateEnabledReviewerIds(reviewerIds: readonly string[]): Promise<string[]> {
+    return reviewerIds.filter((reviewerId) => {
+      const row = this.rows.get(reviewerId);
+      return row !== undefined && row.enabled && row.notificationMode === "immediate";
+    });
   }
 
-  async markDispatched(on: string): Promise<void> {
-    this.marks.push(on);
-    this.row = { ...this.row, lastDispatchedOn: on };
+  async lockSettings(reviewerId: string): Promise<TaskNodeReviewNotificationSettingsRow> {
+    const row = this.rows.get(reviewerId) ?? defaultRow(reviewerId);
+    this.rows.set(reviewerId, row);
+    return { ...row };
+  }
+
+  async updateSettings(
+    reviewerId: string,
+    input: TaskNodeReviewNotificationSettingsUpdate,
+    actorId: string,
+  ): Promise<TaskNodeReviewNotificationSettingsRow> {
+    this.updates.push({ reviewerId, input: { ...input }, actorId });
+    const row: TaskNodeReviewNotificationSettingsRow = {
+      ...(this.rows.get(reviewerId) ?? defaultRow(reviewerId)),
+      ...input,
+      updatedAt: AT,
+      updatedBy: actorId,
+    };
+    this.rows.set(reviewerId, row);
+    return { ...row };
+  }
+
+  async markDispatched(reviewerId: string, on: string): Promise<void> {
+    this.marks.push({ reviewerId, on });
+    const row = this.rows.get(reviewerId) ?? defaultRow(reviewerId);
+    this.rows.set(reviewerId, { ...row, lastDispatchedOn: on });
   }
 }
 
@@ -213,55 +247,95 @@ describe("上海业务时间", () => {
   });
 });
 
-describe("TaskNodeReviewNotificationService 设置", () => {
-  it("读取与保存都要求公共节点审核权限；保存整份开关与时间并写审计", async () => {
+describe("TaskNodeReviewNotificationService 个人设置", () => {
+  it("读取与保存都要求审核权限；只读写当前审核人的设置并写个人审计", async () => {
     const h = createHarness();
     h.permission.allowed = false;
     await expectCode(() => h.service.getSettings(ACTOR), "FORBIDDEN");
-    await expectCode(() => h.service.updateSettings({ enabled: false, dailyTime: "18:30" }, ACTOR), "FORBIDDEN");
+    await expectCode(
+      () => h.service.updateSettings({ enabled: false, notificationMode: "scheduled", dailyTime: "18:30" }, ACTOR),
+      "FORBIDDEN",
+    );
 
     h.permission.allowed = true;
-    expect(await h.service.getSettings(REVIEWER)).toEqual({ enabled: true, dailyTime: "09:00" });
-    const saved = await h.service.updateSettings({ enabled: false, dailyTime: "18:30" }, REVIEWER);
-    expect(saved).toEqual({ enabled: false, dailyTime: "18:30" });
-    expect(h.settings.updates).toEqual([{ enabled: false, dailyTime: "18:30", actorId: REVIEWER }]);
+    expect(await h.service.getSettings(REVIEWER)).toEqual({
+      enabled: true,
+      notificationMode: "scheduled",
+      dailyTime: "09:00",
+    });
+    const saved = await h.service.updateSettings(
+      { enabled: true, notificationMode: "immediate", dailyTime: "11:00" },
+      REVIEWER_B,
+    );
+    expect(saved).toEqual({ enabled: true, notificationMode: "immediate", dailyTime: "11:00" });
+    expect(h.settings.updates).toEqual([{
+      reviewerId: REVIEWER_B,
+      input: { enabled: true, notificationMode: "immediate", dailyTime: "11:00" },
+      actorId: REVIEWER_B,
+    }]);
     expect(h.audit.records).toHaveLength(1);
     expect(h.audit.records[0]).toMatchObject({
-      actorId: REVIEWER,
+      actorId: REVIEWER_B,
       action: "update",
       objectType: "task_node_review_notification_settings",
-      objectId: "default",
+      objectId: REVIEWER_B,
+    });
+    expect(await h.service.getSettings(REVIEWER)).toEqual({
+      enabled: true,
+      notificationMode: "scheduled",
+      dailyTime: "09:00",
     });
   });
 
   it("非法时间格式由服务层兜底为 400", async () => {
     const h = createHarness();
-    await expectCode(() => h.service.updateSettings({ enabled: true, dailyTime: "9:00" }, REVIEWER), "VALIDATION_FAILED");
+    await expectCode(
+      () => h.service.updateSettings({ enabled: true, notificationMode: "scheduled", dailyTime: "9:00" }, REVIEWER),
+      "VALIDATION_FAILED",
+    );
   });
 });
 
-describe("TaskNodeReviewNotificationService 每日派发", () => {
-  it("关闭时完全不写企微 outbox", async () => {
+describe("TaskNodeReviewNotificationService 固定时间派发", () => {
+  it("关闭只影响本人，另一位审核人仍按自己的时间收到", async () => {
     const h = createHarness();
-    h.settings.row.enabled = false;
     h.requests.rows = [makeRequest()];
-    expect(await h.service.flushScheduledNotifications(DUE_AT)).toEqual({ state: "disabled", produced: 0 });
-    expect(h.database.outbox).toEqual([]);
-    expect(h.settings.marks).toEqual([]);
+    h.settings.rows.set(REVIEWER, { ...defaultRow(REVIEWER), enabled: false });
+    expect(await h.service.flushScheduledNotifications(DUE_AT)).toEqual({ state: "dispatched", produced: 1 });
+    expect(h.database.outbox.map((row) => row.dedupeKey)).toEqual([
+      "task-node-request-review:" + REQUEST_ID + ":" + REVIEWER_B,
+    ]);
+    expect(h.settings.marks).toEqual([{ reviewerId: REVIEWER_B, on: "2026-11-15" }]);
   });
 
-  it("未到每日时间不派发", async () => {
+  it("两位审核人各自 09:00 / 11:00，前一位 10:00 审批后后一位不再补发待审通知", async () => {
     const h = createHarness();
     h.requests.rows = [makeRequest()];
-    expect(await h.service.flushScheduledNotifications(BEFORE_DUE_AT)).toEqual({ state: "not_due", produced: 0 });
-    expect(h.database.outbox).toEqual([]);
+    h.settings.rows.set(REVIEWER, { ...defaultRow(REVIEWER), dailyTime: "09:00" });
+    h.settings.rows.set(REVIEWER_B, { ...defaultRow(REVIEWER_B), dailyTime: "11:00" });
+
+    expect(await h.service.flushScheduledNotifications(TEN_AT)).toEqual({ state: "dispatched", produced: 1 });
+    expect(h.database.outbox.map((row) => row.dedupeKey)).toEqual([
+      "task-node-request-review:" + REQUEST_ID + ":" + REVIEWER,
+    ]);
+
+    h.requests.rows[0] = { ...h.requests.rows[0]!, status: "approved" };
+    expect(await h.service.flushScheduledNotifications(ELEVEN_AT)).toEqual({ state: "dispatched", produced: 0 });
+    expect(h.database.outbox).toHaveLength(1);
+    expect(h.settings.marks).toEqual([
+      { reviewerId: REVIEWER, on: "2026-11-15" },
+      { reviewerId: REVIEWER_B, on: "2026-11-15" },
+    ]);
   });
 
-  it("到点后一条申请给每位审核人一条 Markdown，并标记当日已派发", async () => {
+  it("两位审核人都按各自时间收到同一条 pending 申请，且 same-day 不重复", async () => {
     const h = createHarness();
     h.requests.rows = [makeRequest()];
-    expect(await h.service.flushScheduledNotifications(DUE_AT)).toEqual({ state: "dispatched", produced: 2 });
-    expect(h.database.outbox).toHaveLength(2);
+    h.settings.rows.set(REVIEWER, { ...defaultRow(REVIEWER), dailyTime: "09:00" });
+    h.settings.rows.set(REVIEWER_B, { ...defaultRow(REVIEWER_B), dailyTime: "11:00" });
+    expect(await h.service.flushScheduledNotifications(TEN_AT)).toEqual({ state: "dispatched", produced: 1 });
+    expect(await h.service.flushScheduledNotifications(TEN_AT)).toEqual({ state: "not_due", produced: 0 });
+    expect(await h.service.flushScheduledNotifications(ELEVEN_AT)).toEqual({ state: "dispatched", produced: 1 });
     expect(h.database.outbox.map((row) => row.dedupeKey)).toEqual([
       "task-node-request-review:" + REQUEST_ID + ":" + REVIEWER,
       "task-node-request-review:" + REQUEST_ID + ":" + REVIEWER_B,
@@ -282,9 +356,38 @@ describe("TaskNodeReviewNotificationService 每日派发", () => {
     const body = String(first.payload.body ?? "");
     expect(body).toContain("| 审核信息 | 潘兴的1号申请 |");
     expect(body).toContain("同意潘兴的1号申请");
-    expect(h.settings.marks).toEqual(["2026-11-15"]);
-    expect(await h.service.flushScheduledNotifications(DUE_AT)).toEqual({ state: "already_dispatched", produced: 0 });
+    expect(await h.service.flushScheduledNotifications(ELEVEN_AT)).toEqual({ state: "already_dispatched", produced: 0 });
     expect(h.database.outbox).toHaveLength(2);
+  });
+
+  it("及时通知的审核人不参与固定时间派发，另一位固定时间审核人照常收到", async () => {
+    const h = createHarness();
+    h.requests.rows = [makeRequest()];
+    h.settings.rows.set(REVIEWER_B, { ...defaultRow(REVIEWER_B), notificationMode: "immediate" });
+    expect(await h.service.flushScheduledNotifications(DUE_AT)).toEqual({ state: "dispatched", produced: 1 });
+    expect(h.database.outbox.map((row) => row.dedupeKey)).toEqual([
+      "task-node-request-review:" + REQUEST_ID + ":" + REVIEWER,
+    ]);
+    expect(h.settings.marks).toEqual([{ reviewerId: REVIEWER, on: "2026-11-15" }]);
+  });
+
+  it("未到自己的固定时间不派发", async () => {
+    const h = createHarness();
+    h.requests.rows = [makeRequest()];
+    h.settings.rows.set(REVIEWER, { ...defaultRow(REVIEWER), dailyTime: "09:00" });
+    h.settings.rows.set(REVIEWER_B, { ...defaultRow(REVIEWER_B), dailyTime: "11:00" });
+    expect(await h.service.flushScheduledNotifications(BEFORE_DUE_AT)).toEqual({ state: "not_due", produced: 0 });
+    expect(h.database.outbox).toEqual([]);
+  });
+
+  it("全部关闭时完全不写企微 outbox", async () => {
+    const h = createHarness();
+    h.requests.rows = [makeRequest()];
+    h.settings.rows.set(REVIEWER, { ...defaultRow(REVIEWER), enabled: false });
+    h.settings.rows.set(REVIEWER_B, { ...defaultRow(REVIEWER_B), enabled: false });
+    expect(await h.service.flushScheduledNotifications(DUE_AT)).toEqual({ state: "disabled", produced: 0 });
+    expect(h.database.outbox).toEqual([]);
+    expect(h.settings.marks).toEqual([]);
   });
 
   it("次日不重复提醒同一申请；次日新申请只发新申请", async () => {
@@ -299,7 +402,7 @@ describe("TaskNodeReviewNotificationService 每日派发", () => {
       "task-node-request-review:" + REQUEST_ID_B + ":" + REVIEWER,
       "task-node-request-review:" + REQUEST_ID_B + ":" + REVIEWER_B,
     ]);
-    expect(h.settings.marks).toEqual(["2026-11-15", "2026-11-16"]);
+    expect(h.settings.marks.map((mark) => mark.on)).toEqual(["2026-11-15", "2026-11-15", "2026-11-16", "2026-11-16"]);
   });
 
   it("没有当前有效审核人时不派发也不推进日期，配置审核人后下一轮可补发", async () => {

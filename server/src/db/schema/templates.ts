@@ -148,6 +148,38 @@ export const taskNodeReviewNotificationSettings = pgTable(
 );
 
 /**
+ * task_node_reviewer_notification_settings（0100 · 2026-11-15）：公共节点审核企微通知个人设置。
+ * reviewer_id = users.id（删用户级联清设置）；enabled = 是否发送待审核申请通知；
+ * notification_mode = immediate（申请创建即通知） / scheduled（到本人 daily_time 派发）；
+ * daily_time = 固定时间 HH:mm（Asia/Shanghai）；last_dispatched_on = 最近一次固定时间派发的业务日。
+ * 审批结果通知不走本设置，仍由审核动作即时发送。
+ */
+export const taskNodeReviewerNotificationSettings = pgTable(
+  "task_node_reviewer_notification_settings",
+  {
+    reviewerId: uuid("reviewer_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(true),
+    notificationMode: text("notification_mode").notNull().default("scheduled"),
+    dailyTime: text("daily_time").notNull().default("09:00"),
+    lastDispatchedOn: date("last_dispatched_on"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: uuid("updated_by").references(() => users.id),
+  },
+  () => [
+    check(
+      "ck_task_node_reviewer_notification_settings_mode",
+      sql.raw("notification_mode in ('immediate', 'scheduled')"),
+    ),
+    check(
+      "ck_task_node_reviewer_notification_settings_daily_time",
+      sql.raw("daily_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'"),
+    ),
+  ],
+);
+
+/**
  * task_template_nodes（0033）：模板内节点引用 —— 主键 (template_id, node_id) = 同一模板内按 id 去重；seq = 模板内顺序。
  * 两个外键都是 on delete cascade：删模板连带清引用；删节点（公共节点物理删行 / 模板私有节点清理）连带从各模板移除该条。
  */
