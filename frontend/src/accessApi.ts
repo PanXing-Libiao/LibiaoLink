@@ -78,6 +78,8 @@ export type GroupAccessOverview = {
   admin: boolean;
   currentGroupKeys: string[];
   admins: GroupAccessAdmin[];
+  /** 已保存的公共任务节点审核管理员；空数组表示尚未配置审核人。 */
+  taskNodeReviewerUserIds: string[];
   groups: GroupAccessGroup[];
   projects: GroupAccessProject[];
   automaticRoles: GroupAccessAutomaticRole[];
@@ -132,4 +134,22 @@ export function assignGroupAccessAdmin(userId: string): Promise<{ admin: GroupAc
 
 export function revokeGroupAccessAdmin(userId: string): Promise<void> {
   return apiSend<void>("/api/v1/access/admins?userId=" + encodeURIComponent(userId), "DELETE");
+}
+
+export type GroupAccessTaskNodeReviewersInput = { userIds: string[] };
+
+export type GroupAccessTaskNodeReviewersResponse = {
+  userIds: string[];
+  reviewers: GroupAccessAdmin[];
+};
+
+/** 保存公共任务节点审核人：仅权限管理员；只能选当前生效系统管理员，至少一名。 */
+export function saveTaskNodeReviewers(
+  input: GroupAccessTaskNodeReviewersInput,
+): Promise<GroupAccessTaskNodeReviewersResponse> {
+  return apiSend<GroupAccessTaskNodeReviewersResponse>(
+    "/api/v1/access/task-node-reviewers",
+    "PUT",
+    input,
+  );
 }

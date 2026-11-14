@@ -5,7 +5,7 @@
  * - 编辑 PATCH /api/v1/task-nodes/{id}（写 = 公共节点库维护权（仅系统管理员）；乐观锁 version 必传：过期 409 VERSION_CONFLICT）
  * - 删除 DELETE /api/v1/task-nodes/{id}（写 = blueprint.manage；物理删行 + 审计留痕；已生成的项目任务不受影响）
  * - 模板内新增 POST /api/v1/task-templates/{id}/nodes（只写当前模板私有节点，不进入公共节点库）
- * - 公共节点申请：GET /api/v1/task-node-requests（mine = true 看本人申请，任何账号可用；缺省 = 审核人看全部，需节点库维护权）
+ * - 公共节点申请：GET /api/v1/task-node-requests（mine = true 看本人申请，任何账号可用；缺省 = 审核人看全部，需 `taskNodeReview`）
  *   + POST .../{id}/approve（通过时按同阶段同名判重：已存在则关联、否则建节点）/ .../{id}/reject（原因必填）/ .../{id}/withdraw
  *   —— 导入面板里「保留 Excel 原名」的节点可顺带申请；申请本身不改节点库，审核通过才落 task_nodes。
  * 任务模板（第二段 · Push 182）：GET/POST /api/v1/task-templates、PATCH/DELETE /api/v1/task-templates/{id}
@@ -169,7 +169,7 @@ export type TaskNodeRequestDecision = {
 
 /**
  * 列出公共节点申请：mine = true 只看本人申请（任何登录账号可用）；
- * mine 缺省 = 审核人视角看全部（需节点库维护权，否则 403 FORBIDDEN）。
+ * mine 缺省 = 审核人视角看全部（需系统管理员且命中公共节点审核人白名单，否则 403 FORBIDDEN）。
  * 查询串只带真正用到的筛选项（mine 只在 true 时带，避免把 false 当成「也看全部」的歧义写法传上去）。
  */
 export async function listTaskNodeRequests(
@@ -221,7 +221,7 @@ export function withdrawTaskNodeRequest(id: string): Promise<TaskNodeRequestDeci
 /** 申请写入失败的统一文案（403 无审核权 / 409 并发 / VALIDATION_FAILED 已处理等；服务端仍是最终裁决）。 */
 export function nodeRequestWriteMessage(error: { code: string; message: string }): string {
   if (error.code === "FORBIDDEN") {
-    return "审核公共节点申请需要节点库维护权限（项目经理或管理员）";
+    return "审核公共节点申请需要已授权的系统管理员权限";
   }
   if (error.code === "VALIDATION_FAILED") {
     return "申请状态已变化：" + error.message;

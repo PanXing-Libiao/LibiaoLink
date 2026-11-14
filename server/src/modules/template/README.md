@@ -34,17 +34,17 @@
 
 ## 本切片交付（第三段 · 2026-11-13：公共任务节点申请）
 
-- **背景 / 口径**：导入表导入不再向公共节点库补节点；导入人（多数没有节点库维护权）需要一个申请渠道，管理员审核通过后才落公共节点。
+- **背景 / 口径**：导入表导入不再向公共节点库补节点；导入人（多数没有节点库维护权）需要一个申请渠道，已被权限页勾选为「公共节点审核」的系统管理员审核通过后才落公共节点。
 - **契约**：`shared/src/modules/templates.ts` 增 `TaskNodeRequestStatus` / `TaskNodeRequest` / `TaskNodeRequestListQuery` / `TaskNodeRequestListResponse` / `TaskNodeRequestApproveBody` / `TaskNodeRequestRejectBody` / `TaskNodeRequestDecisionResponse`；`shared/src/openapi.ts` 新增 4 条路径；`AUDIT_OBJECT_TYPES` 增 `task_node_request`。导入侧契约见 `shared/src/modules/imports.ts`（commit `nodeRequests` / 结果 `nodeRequests`）。
 - **数据**：迁移 `database/migrations/0096_task_node_requests.sql`（阶段 / 中英文名 / 状态 / 申请人 + 时间 / 来源项目 + 预览票据 / 审核人 + 时间 + 意见 / 最终节点 id；同阶段同名只允许一条 pending 的部分唯一索引；状态迁移的 CHECK 兜底）。
 - **写**：
-  - `POST /api/v1/task-node-requests/{id}/approve`（与节点库维护权同口径复核）：可先改中英文名 → 同阶段同名判重 → 无同名则追加到该阶段末尾建公共节点（写 `task_node` create 审计）→ 有同名则**直接关联**（`linkedExisting=true`，不建行也不写节点审计）→ 申请行落 approved + `node_id`（写 `task_node_request` update 审计）。已处理 400、不存在 404、无权限 403。
+  - `POST /api/v1/task-node-requests/{id}/approve`（复核当前管理员身份 + 公共节点审核人白名单）：可先改中英文名 → 同阶段同名判重 → 无同名则追加到该阶段末尾建公共节点（写 `task_node` create 审计）→ 有同名则**直接关联**（`linkedExisting=true`，不建行也不写节点审计）→ 申请行落 approved + `node_id`（写 `task_node_request` update 审计）。已处理 400、不存在 404、无权限 403。
   - `POST /api/v1/task-node-requests/{id}/reject`：原因必填（trim 后非空，≤200），落 rejected + `review_note`，写审计。
   - `POST /api/v1/task-node-requests/{id}/withdraw`：仅申请人本人、仅 pending（他人 403、已处理 400），落 withdrawn，写审计。
   - `createFromImport`（供导入模块在**导入事务内**调用，不对外暴露）：批内同阶段同名去重；该阶段已有同名公共节点 → 跳过并回报；已有同名 pending → 复用不重复插行（`onConflictDoNothing` + 回查兜底并发）；名称 trim、英文空串 → null。
-- **读**：`GET /api/v1/task-node-requests?stage=&status=&mine=` —— `mine=true` 只看本人（任何登录账号，含本人待审数）；缺省 = 审核人视角全部（服务层 `assertCanManageTaskNodes`，无权限 403），响应带全局 `pendingCount`；排序 = pending 优先 → 提交时间倒序。
+- **读**：`GET /api/v1/task-node-requests?stage=&status=&mine=` —— `mine=true` 只看本人（任何登录账号，含本人待审数）；缺省 = 审核人视角全部（服务层 `assertCanReviewTaskNodeRequests`，无权限 403），响应带全局 `pendingCount`；排序 = pending 优先 → 提交时间倒序。
 - **留痕**：通过 / 驳回 / 撤销各一条审计（`objectType = task_node_request`，`changes` 记状态 / 名称 / 审核意见 / 最终节点）；通过时新建节点另写一条 `task_node` create 审计（`metadata.source = task_node_request` + `requestId`）。**导入内提交申请不单独留痕**（已由导入的 project create 审计覆盖上下文）。不写 outbox。
-- **边界**：申请**不写** `task_nodes`；只通过审核通过这一条路径落公共节点（与直接 `POST /task-nodes` 并存）。不接消息推送（一期只有待审列表与数量角标）。
+- **边界**：申请**不写** `task_nodes`；只通过审核通过这一条路径落公共节点（与直接 `POST /task-nodes` 并存）。审核资格由 0097 白名单单独配置，公共节点库维护权与审核权互不替代。不接消息推送（一期只有待审列表与数量角标）。
 - **并发口径（真机复验修正）**：审核 / 撤销前的行锁用 `lockById`（只查 `task_node_requests` 本表 + `FOR UPDATE`）；**不能**在读面带 `LEFT JOIN` 的查询上加 `FOR UPDATE` —— PostgreSQL 直接报 `FOR UPDATE cannot be applied to the nullable side of an outer join`（2026-11-13 本地真库 + 浏览器全链路实测暴露，单测替身无法覆盖）。读面字段在行锁之后另取 `findById`。
 
 ## 本切片交付（2026-11-13 · 「入库审核」模板独立板块）

@@ -157,7 +157,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const bgTierLabel = t(BG_TIER_TEXT_KEYS[bgTier]);
   /**
    * 「任务模板」导航红点（PM 反馈 2026-11-13「任务模板 这里加红点提醒吧」）：模块级 store
-   * （../taskNodePending），取数 = 有节点库维护权看全局待审、其他账号看本人 pending；
+   * （../taskNodePending），取数 = 有公共节点审核权看全局待审、其他账号看本人 pending；
    * 刷新时机由 App.tsx（登录 / 切页 / 60 秒）与任务模板页审核动作负责，这里只订阅，不自己发请求。
    */
   const templatesPending = useTaskNodePendingBadge();

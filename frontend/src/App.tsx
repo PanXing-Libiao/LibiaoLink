@@ -24,7 +24,7 @@ import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
-import { canChangeTaskTemplateVisibility, canEditTaskNodes, canEditTaskTemplate, canEditTaskTemplates, hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
+import { canChangeTaskTemplateVisibility, canEditTaskNodes, canEditTaskTemplate, canEditTaskTemplates, canReviewTaskNodes, hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
 import { firstAllowedHref } from "./accessRoutes";
 import {
   createDictItem,
@@ -282,7 +282,7 @@ export default function App() {
   }, [signedIn]);
   /**
    * 「任务模板」导航红点（PM 反馈 2026-11-13「任务模板 这里加红点提醒吧」）：登录后 / 切页（地址变化）/
-   * 每 60 秒各刷新一次 —— 有节点库维护权（taskNodeManage）看全局待审，其他账号看本人 pending / rejected 的未读通知。
+   * 每 60 秒各刷新一次 —— 有公共节点审核权（taskNodeReview）看全局待审，其他账号看本人 pending / rejected 的未读通知。
    * 权限画像未就绪先不请求（视角拿不准时宁可不亮，也别先按本人视角闪一下）；失败静默不亮。
    * 审核动作成功后的刷新由任务模板页（PlaceholderPage）负责，见 ../taskNodePending。
    */
@@ -290,9 +290,9 @@ export default function App() {
     if (!signedIn || permissions === null) {
       return undefined;
     }
-    void refreshTaskNodePending(canEditTaskNodes(permissions));
+    void refreshTaskNodePending(canReviewTaskNodes(permissions));
     const timer = window.setInterval(() => {
-      void refreshTaskNodePending(canEditTaskNodes(permissions));
+      void refreshTaskNodePending(canReviewTaskNodes(permissions));
     }, 60_000);
     return () => {
       window.clearInterval(timer);
@@ -819,6 +819,7 @@ export default function App() {
    * 任务负责人 / 普通成员只读；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN。
    */
   const canManageNodes = canEditTaskNodes(permissions);
+  const canReviewNodes = canReviewTaskNodes(permissions);
   const canManageTemplates = canEditTaskTemplates(permissions);
   const canManageTemplate = (createdBy: string | null): boolean => canEditTaskTemplate(permissions, createdBy);
   const canChangeTemplateVisibility = (createdBy: string | null): boolean => canChangeTaskTemplateVisibility(permissions, createdBy);
@@ -1006,6 +1007,7 @@ export default function App() {
           page={route.page}
           section={route.section}
           canManageNodes={canManageNodes}
+          canReviewNodes={canReviewNodes}
           canManageTemplates={canManageTemplates}
           canManageTemplate={canManageTemplate}
           canChangeTemplateVisibility={canChangeTemplateVisibility}

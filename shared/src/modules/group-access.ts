@@ -261,12 +261,31 @@ export const GroupAccessAdminResponseSchema = z
 
 export type GroupAccessAdminResponse = z.infer<typeof GroupAccessAdminResponseSchema>;
 
+/** 公共任务节点审核人名单：只能从当前生效的系统管理员中选择；至少保留一名，避免入库审核无人可处理。 */
+export const GroupAccessTaskNodeReviewersInputSchema = z
+  .object({
+    userIds: z.array(UuidSchema).min(1).max(2000).openapi({ description: "有公共任务节点审核权的系统管理员 users.id；去重后保存，至少一名" }),
+  })
+  .openapi("GroupAccessTaskNodeReviewersInput", { description: "保存公共任务节点审核人名单（仅权限管理员）" });
+
+export type GroupAccessTaskNodeReviewersInput = z.infer<typeof GroupAccessTaskNodeReviewersInputSchema>;
+
+export const GroupAccessTaskNodeReviewersResponseSchema = z
+  .object({
+    userIds: z.array(UuidSchema).openapi({ description: "保存后的审核人 users.id" }),
+    reviewers: z.array(GroupAccessAdminSchema).openapi({ description: "保存后的审核管理员完整名单" }),
+  })
+  .openapi("GroupAccessTaskNodeReviewersResponse", { description: "保存后的公共任务节点审核人名单" });
+
+export type GroupAccessTaskNodeReviewersResponse = z.infer<typeof GroupAccessTaskNodeReviewersResponseSchema>;
+
 export const GroupAccessOverviewSchema = z
   .object({
     enforced: z.boolean(),
     admin: z.boolean(),
     currentGroupKeys: z.array(z.string()),
     admins: z.array(GroupAccessAdminSchema).openapi({ description: "当前生效的系统管理员名单（环境配置 / 手工添加）" }),
+    taskNodeReviewerUserIds: z.array(UuidSchema).openapi({ description: "已保存的公共任务节点审核管理员 users.id；空数组表示尚未配置，任何管理员都不可审核" }),
     groups: z.array(GroupAccessGroupSchema),
     projects: z.array(GroupAccessProjectSchema),
     automaticRoles: z.array(GroupAccessAutomaticRoleSchema).openapi({ description: "自动项目角色（项目经理 / 项目成员 / 任务负责人）；按用户聚合，项目或任务关系变化后随接口实时更新" }),
