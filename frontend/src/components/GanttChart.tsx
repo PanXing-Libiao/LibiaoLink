@@ -1468,7 +1468,20 @@ export function GanttChart({ tasks, members, tierTint = false, onPatchTask, onSe
           </>
         ) : null}
       </div>
-      <div className="mt-2 flex items-center justify-end gap-2 border-t border-zinc-100 pt-2">
+      <div className="mt-2 flex items-start justify-between gap-3 border-t border-zinc-100 pt-2">
+        <div data-gantt-help="" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[10px] leading-4 text-zinc-500">
+          <span className="inline-flex shrink-0 items-center gap-1 font-medium text-zinc-600">
+            <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5 shrink-0"><circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="M10 8.4v5M10 5.8v.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+            <span>{t("gantt.help.title")}</span>
+          </span>
+          <span className="hidden h-3 w-px shrink-0 bg-zinc-200 sm:inline-block" aria-hidden="true" />
+          <span className="whitespace-nowrap">{t("gantt.help.move")}</span>
+          <span className="whitespace-nowrap">{t("gantt.help.resize")}</span>
+          <span className="whitespace-nowrap">{t("gantt.help.progress")}</span>
+          <span className="whitespace-nowrap">{t("gantt.help.pan")}</span>
+          <span className="whitespace-nowrap">{t("gantt.help.pick")}</span>
+          <span className="whitespace-nowrap">{t("gantt.help.splitter")}</span>
+        </div>
         <button
           type="button"
           data-gantt-lock={barsLocked ? "locked" : "unlocked"}

@@ -473,18 +473,18 @@ check("③c 抽屉上传入口在位（＋ 上传文件 + 隐藏输入框）", d
 // ③d 抽屉头部「定档」开关门禁（2026-11-12 收紧）：任务未完成 / 输出成果文件未上传时开关必须 disabled（blocked），
 //   不出二次确认、不落库；本任务保持未完成到 ④s 前，完整定档路径由 ④s 的“先补成果 + 完成任务”覆盖。
 const finalizeProbe = await ev("(function(){var d=document.querySelector(" + j(DRAWER) + ");if(d===null){return null;}"
-  + "var sw=d.querySelector(" + j("[data-task-finalize]") + ");var hint=d.querySelector(" + j("[data-task-finalize-blocked-hint]") + ");"
+  + "var sw=d.querySelector(" + j("[data-task-finalize]") + ");var tip=d.querySelector(" + j("[data-task-finalize-tip]") + ");"
   + "var chip=d.querySelector(" + j("[data-task-status-chip]") + ");if(sw===null||chip===null){return {sw:false,chip:false};}"
   + "var rs=sw.getBoundingClientRect();var rc=chip.getBoundingClientRect();"
   + "return {sw:true,state:sw.getAttribute(" + Q + "data-task-finalize" + Q + "),knob:sw.textContent.trim(),disabled:sw.disabled===true,"
-  + "title:String(sw.getAttribute(" + Q + "title" + Q + ")),hint:hint===null?null:hint.textContent.trim(),"
+  + "tip:tip===null?null:tip.textContent.trim(),staticHint:document.querySelector(" + j("[data-task-finalize-blocked-hint]") + ")!==null,"
   + "sameRow:Math.abs(Math.round(rs.top+rs.height/2)-Math.round(rc.top+rc.height/2))<=6,rightOf:rs.left>=rc.right-2,"
   + "confirm:document.querySelector(" + j("[data-task-finalize-confirm]") + ")!==null};})()");
 const finalizeDbBefore = (await db.query("select finalized_at from tasks where id = $1", [taskId])).rows[0];
-check("③d 任务未完成：状态签旁定档开关 = blocked 且禁用（同一行、状态签右侧；提示先完成任务；无确认条、不落库）",
+check("③d 任务未完成：状态签旁定档开关 = blocked 且禁用（同一行、状态签右侧；悬停提示说明未完成；无常显提示、无确认条、不落库）",
   finalizeProbe !== null && finalizeProbe !== undefined && finalizeProbe.sw === true && finalizeProbe.state === "blocked"
-  && finalizeProbe.knob === "未" && finalizeProbe.disabled === true && String(finalizeProbe.title).indexOf("任务完成后才可定档") >= 0
-  && String(finalizeProbe.hint).indexOf("任务完成后才可定档") >= 0 && finalizeProbe.confirm === false
+  && finalizeProbe.knob === "未" && finalizeProbe.disabled === true && String(finalizeProbe.tip).indexOf("暂不能定档") >= 0
+  && String(finalizeProbe.tip).indexOf("任务尚未完成") >= 0 && finalizeProbe.staticHint === false && finalizeProbe.confirm === false
   && finalizeProbe.sameRow === true && finalizeProbe.rightOf === true && finalizeDbBefore.finalized_at === null,
   JSON.stringify({ probe: finalizeProbe, finalizedAt: finalizeDbBefore.finalized_at }));
 // ④ 抽屉内再传一份
@@ -875,6 +875,8 @@ await clickAt(row2Point);
 const drawer2Open = await waitFor("document.querySelector(" + j(DRAWER) + ")!==null", 8000);
 const sw2Off = drawer2Open === true ? await ev("(function(){var s=document.querySelector(" + j("[data-task-finalize]") + ");return s===null?null:s.getAttribute(" + Q + "data-task-finalize" + Q + ");})()") : null;
 check("④t2 第二条任务抽屉打开、开关 = off（未定档）", drawer2Open === true && sw2Off === "off", JSON.stringify({ open: drawer2Open, state: sw2Off }));
+const readyTip = drawer2Open === true ? await ev("(function(){var t=document.querySelector(" + j("[data-task-finalize-tip]") + ");return t===null?null:{tone:t.getAttribute(" + Q + "data-task-finalize-tip" + Q + "),text:t.textContent.trim()};})()") : null;
+check("④t2a 任务完成且成果文件齐全：定档按钮悬停提示 = 可定档", readyTip !== null && readyTip !== undefined && readyTip.tone === "ready" && String(readyTip.text).indexOf("可定档") >= 0 && String(readyTip.text).indexOf("任务已完成") >= 0 && String(readyTip.text).indexOf("输出成果文件齐全") >= 0, JSON.stringify(readyTip));
 const sw2Clicked = await clickSelector("[data-task-finalize]");
 const confirm2Shown = await waitFor("document.querySelector(" + j("[data-task-finalize-confirm]") + ")!==null", 6000);
 const task2BeforeConfirm = (await db.query("select finalized_at from tasks where id = $1", [task2Id])).rows[0];
