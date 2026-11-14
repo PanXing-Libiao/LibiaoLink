@@ -192,7 +192,7 @@ export class TaskNodeRequestService {
       }
       const stageName = STAGE_NAME_BY_KEY[request.stageKey] ?? request.stageKey;
       const title = "公共节点入库审核｜" + stageName;
-      const body = buildTaskNodeReviewMessage({ request, existingNodes, publicBaseUrl: baseUrl });
+      const body = buildTaskNodeReviewMessage({ stageName, request, existingNodes, publicBaseUrl: baseUrl });
       for (const reviewerId of reviewerIds) {
         await appendOutboxIfAbsent(tx, {
           topic: "notify.message",
