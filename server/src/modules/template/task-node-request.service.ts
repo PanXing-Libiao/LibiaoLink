@@ -21,7 +21,6 @@ import type { TaskNodeRow } from "./task-node.repository.js";
 import { TaskNodeRequestRepository } from "./task-node-request.repository.js";
 import type { TaskNodeRequestRow } from "./task-node-request.repository.js";
 import {
-  buildTaskNodeReviewMessage,
   buildTaskNodeReviewResultMessage,
   looksLikeTaskNodeReviewReply,
   parseTaskNodeReviewReply,
@@ -121,7 +120,6 @@ export class TaskNodeRequestService {
     tx: DbClient,
   ): Promise<ImportNodeRequestResult> {
     const requests: TaskNodeRequestRow[] = [];
-    const created: TaskNodeRequestRow[] = [];
     const existingNodes: Array<{ stageKey: string; title: string }> = [];
     let reusedPending = 0;
     const seen = new Set<string>();
@@ -161,7 +159,6 @@ export class TaskNodeRequestService {
       );
       if (inserted !== null) {
         requests.push(inserted);
-        created.push(inserted);
         continue;
       }
       // 并发下另一条同阶段同名申请抢先落库：复用既有 pending。
@@ -171,47 +168,7 @@ export class TaskNodeRequestService {
         reusedPending += 1;
       }
     }
-    await this.enqueueReviewNotifications(created, tx);
     return { requests, existingNodes, reusedPending };
-  }
-
-  /**
-   * 一条申请一条企微 Markdown，发给当前仍有效的公共节点审核人。
-   * 通知与申请 / 导入同事务落 outbox：回滚时通知一起回滚；已复用的 pending 申请不重复通知。
-   */
-  private async enqueueReviewNotifications(created: readonly TaskNodeRequestRow[], tx: DbClient): Promise<void> {
-    if (created.length === 0) return;
-    const reviewerIds = await this.permission.listEffectiveTaskNodeReviewers();
-    if (reviewerIds.length === 0) return;
-    const nodesByStage = new Map<string, TaskNodeRow[]>();
-    const baseUrl = this.config.env.PUBLIC_APP_BASE_URL;
-    for (const request of created) {
-      let existingNodes = nodesByStage.get(request.stageKey);
-      if (existingNodes === undefined) {
-        existingNodes = await this.nodes.list(request.stageKey, tx);
-        nodesByStage.set(request.stageKey, existingNodes);
-      }
-      const stageName = STAGE_NAME_BY_KEY[request.stageKey] ?? request.stageKey;
-      const title = "公共节点入库审核｜" + stageName;
-      const body = buildTaskNodeReviewMessage({ stageName, request, existingNodes, publicBaseUrl: baseUrl });
-      for (const reviewerId of reviewerIds) {
-        await appendOutboxIfAbsent(tx, {
-          topic: "notify.message",
-          dedupeKey: "task-node-request-review:" + request.id + ":" + reviewerId,
-          payload: {
-            recipientId: reviewerId,
-            type: "approval",
-            channel: "wecom_aibot",
-            title,
-            body,
-            refType: "task_node_request",
-            refId: request.id,
-            templateCode: "TASK_NODE_REQUEST_REVIEW",
-            mergeKey: "task-node-request:" + request.id,
-          },
-        });
-      }
-    }
   }
 
   /**
