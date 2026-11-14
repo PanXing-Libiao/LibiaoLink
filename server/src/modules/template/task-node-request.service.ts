@@ -22,6 +22,7 @@ import { TaskNodeRequestRepository } from "./task-node-request.repository.js";
 import type { TaskNodeRequestRow } from "./task-node-request.repository.js";
 import {
   buildTaskNodeReviewMessage,
+  buildTaskNodeReviewResultMessage,
   looksLikeTaskNodeReviewReply,
   parseTaskNodeReviewReply,
 } from "./task-node-review-wecom.js";
@@ -213,6 +214,39 @@ export class TaskNodeRequestService {
     }
   }
 
+  /**
+   * 审批落定后给其他当前有效审核人各发一条结果通知。
+   * 与申请状态变更同事务写 outbox；同一申请的行锁保证只有一个审核人能进入这里。
+   */
+  private async enqueueReviewResultNotifications(
+    request: TaskNodeRequestRow,
+    decision: "approved" | "rejected",
+    actorId: string,
+    reviewerIds: readonly string[],
+    tx: DbClient,
+  ): Promise<void> {
+    const stageName = STAGE_NAME_BY_KEY[request.stageKey] ?? request.stageKey;
+    const body = buildTaskNodeReviewResultMessage({ stageName, request, decision });
+    for (const reviewerId of reviewerIds) {
+      if (reviewerId === actorId) continue;
+      await appendOutboxIfAbsent(tx, {
+        topic: "notify.message",
+        dedupeKey: "task-node-request-review-result:" + request.id + ":" + reviewerId,
+        payload: {
+          recipientId: reviewerId,
+          type: "approval",
+          channel: "wecom_aibot",
+          title: "公共节点审核结果｜" + stageName,
+          body,
+          refType: "task_node_request",
+          refId: request.id,
+          templateCode: "TASK_NODE_REQUEST_REVIEW_RESULT",
+          mergeKey: "task-node-request-result:" + request.id,
+        },
+      });
+    }
+  }
+
   /** 企微审核回复是否为完整可执行命令；格式错误但意图明显时另走 help 回执。 */
   acceptsWecomReview(text: string): boolean {
     return parseTaskNodeReviewReply(text) !== null;
@@ -266,6 +300,7 @@ export class TaskNodeRequestService {
   /** POST /api/v1/task-node-requests/{id}/approve：可先改中英文名；同阶段同名已存在则直接关联。 */
   async approve(id: string, body: TaskNodeRequestApproveBody, actorId: string): Promise<TaskNodeRequestDecisionResponse> {
     await this.permission.assertCanReviewTaskNodeRequests(actorId, "审核公共节点申请需要已授权的管理员权限");
+    const reviewerIds = await this.permission.listEffectiveTaskNodeReviewers();
     const at = new Date();
     const outcome = await this.database.db.transaction(async (tx) => {
       const before = await this.requests.lockById(id, tx);
@@ -307,6 +342,7 @@ export class TaskNodeRequestService {
         tx,
       );
       if (after === null) throw new AppError("VALIDATION_FAILED", "该申请已处理，请刷新后重试");
+      await this.enqueueReviewResultNotifications(after, "approved", actorId, reviewerIds, tx);
       await this.audit.record(tx, {
         actorId,
         action: "update",
@@ -331,6 +367,7 @@ export class TaskNodeRequestService {
     await this.permission.assertCanReviewTaskNodeRequests(actorId, "审核公共节点申请需要已授权的管理员权限");
     const reason = body.reason.trim();
     if (reason === "") throw new AppError("VALIDATION_FAILED", "驳回原因不能为空");
+    const reviewerIds = await this.permission.listEffectiveTaskNodeReviewers();
     const at = new Date();
     const after = await this.database.db.transaction(async (tx) => {
       const before = await this.requests.lockById(id, tx);
@@ -344,6 +381,7 @@ export class TaskNodeRequestService {
         tx,
       );
       if (decided === null) throw new AppError("VALIDATION_FAILED", "该申请已处理，请刷新后重试");
+      await this.enqueueReviewResultNotifications(decided, "rejected", actorId, reviewerIds, tx);
       await this.audit.record(tx, {
         actorId,
         action: "update",

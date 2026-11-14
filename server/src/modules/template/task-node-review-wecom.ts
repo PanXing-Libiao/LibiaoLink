@@ -79,6 +79,23 @@ function nodeSummary(nodes: readonly Pick<TaskNodeRow, "title">[]): string {
 }
 
 /**
+ * 审核结果通知（发给未操作的另一位审核人）：只保留阶段 / 任务 / 申请人 / 结果四行。
+ * 状态唯一性由申请行锁与条件更新保证；本函数只负责展示，不承载并发判断。
+ */
+export function buildTaskNodeReviewResultMessage(input: {
+  stageName: string;
+  request: Pick<TaskNodeRequestRow, "title" | "requestedByName">;
+  decision: "approved" | "rejected";
+}): string {
+  return [
+    "**阶段**：" + cell(input.stageName),
+    "**任务**：" + cell(input.request.title),
+    "**申请人**：" + cell(input.request.requestedByName),
+    "**审核结果**：" + (input.decision === "approved" ? "审核通过" : "审核驳回"),
+  ].join("\n");
+}
+
+/**
  * 一条申请一条企微消息：横向表格第一列是字段名，第二列只放当前申请。
  * 不把多条申请并排，手机端只需上下滑动；当前节点过长时保留可读摘要并标出总数。
  */

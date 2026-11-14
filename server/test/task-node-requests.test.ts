@@ -5,6 +5,7 @@
  * 3) 通过：可先改中英文名，按同阶段同名判重建公共节点并写节点 / 申请两条审计；已有同名节点时直接关联（linkedExisting）；
  * 4) 驳回：原因必填；已处理申请再审核 / 撤销一律 400；撤销仅本人且仅 pending；
  * 5) 权限：通过 / 驳回 / 审核人列表都走公共节点审核人白名单判定。
+ * 6) 结果通知：审批成功后只给另一位当前有效审核人写一条四行 Markdown；并发后到者只回已处理，不重复建节点 / 发通知。
  * 契约见 shared/src/modules/templates.ts；真机口径见 server/src/modules/template/README.md。
  */
 import { describe, expect, it } from "vitest";
@@ -23,6 +24,7 @@ import { TaskNodeRequestService } from "../src/modules/template/index.js";
 
 const ACTOR = "11111111-1111-4111-8111-111111111111";
 const REVIEWER = "22222222-2222-4222-8222-222222222222";
+const REVIEWER_B = "88888888-8888-4888-8888-888888888888";
 const REQUEST_ID = "33333333-3333-4333-8333-333333333333";
 const PROJECT_ID = "44444444-4444-4444-8444-444444444444";
 const PREVIEW_ID = "55555555-5555-4555-8555-555555555555";
@@ -226,18 +228,34 @@ class FakeAudit {
   }
 }
 
+type OutboxRecord = { topic: string; dedupeKey: string; payload: Record<string, unknown> };
+
+class FakeDatabase {
+  readonly outbox: OutboxRecord[] = [];
+  private readonly tx = {
+    insert: () => ({
+      values: (value: OutboxRecord) => {
+        this.outbox.push(value);
+        return { onConflictDoUpdate: async () => {} };
+      },
+    }),
+  };
+  db = { transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(this.tx) };
+}
+
 function createHarness(): {
   service: TaskNodeRequestService;
   requests: FakeRequestRepository;
   nodes: FakeNodeRepository;
   permission: FakePermission;
   audit: FakeAudit;
+  database: FakeDatabase;
 } {
   const requests = new FakeRequestRepository();
   const nodes = new FakeNodeRepository();
   const permission = new FakePermission();
   const audit = new FakeAudit();
-  const database = { db: { transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({}) } };
+  const database = new FakeDatabase();
   const service = new TaskNodeRequestService(
     requests as unknown as TaskNodeRequestRepository,
     nodes as unknown as TaskNodeRepository,
@@ -246,7 +264,7 @@ function createHarness(): {
     database as unknown as DatabaseService,
     { env: { PUBLIC_APP_BASE_URL: "https://test.example" } } as never,
   );
-  return { service, requests, nodes, permission, audit };
+  return { service, requests, nodes, permission, audit, database };
 }
 
 async function expectCode(fn: () => Promise<unknown>, code: string): Promise<void> {
@@ -435,6 +453,42 @@ describe("TaskNodeRequestService.approve / reject / withdraw", () => {
     expect(h.audit.records[1]?.action).toBe("update");
   });
 
+  it("通过：只给另一位审核人补发四行结果通知，并绑定申请去重键", async () => {
+    const h = createHarness();
+    h.requests.rows = [makeRequest()];
+    h.permission.reviewers = [REVIEWER, REVIEWER_B];
+    await h.service.approve(REQUEST_ID, {}, REVIEWER);
+    expect(h.database.outbox).toHaveLength(1);
+    const event = h.database.outbox[0];
+    if (event === undefined) throw new Error("缺少结果通知");
+    expect(event).toMatchObject({
+      topic: "notify.message",
+      dedupeKey: "task-node-request-review-result:" + REQUEST_ID + ":" + REVIEWER_B,
+      payload: {
+        recipientId: REVIEWER_B,
+        type: "approval",
+        channel: "wecom_aibot",
+        title: "公共节点审核结果｜硬件实施",
+        refType: "task_node_request",
+        refId: REQUEST_ID,
+        templateCode: "TASK_NODE_REQUEST_REVIEW_RESULT",
+        mergeKey: "task-node-request-result:" + REQUEST_ID,
+      },
+    });
+    expect(event.payload.body).toBe("**阶段**：硬件实施\n**任务**：货架复检\n**申请人**：潘兴\n**审核结果**：审核通过");
+  });
+
+  it("并发只有一个赢家：后到审核返回已处理，不重复建节点或发结果", async () => {
+    const h = createHarness();
+    h.requests.rows = [makeRequest()];
+    h.permission.reviewers = [REVIEWER, REVIEWER_B];
+    await h.service.approve(REQUEST_ID, {}, REVIEWER);
+    await expectCode(() => h.service.approve(REQUEST_ID, {}, REVIEWER_B), "VALIDATION_FAILED");
+    expect(h.nodes.inserts).toHaveLength(1);
+    expect(h.database.outbox).toHaveLength(1);
+    expect(h.requests.rows[0]?.reviewedBy).toBe(REVIEWER);
+  });
+
   it("通过：该阶段已有同名节点时直接关联，不新建节点", async () => {
     const h = createHarness();
     h.requests.rows = [makeRequest()];
@@ -455,6 +509,19 @@ describe("TaskNodeRequestService.approve / reject / withdraw", () => {
     h.permission.allowed = false;
     await expectCode(() => h.service.approve(REQUEST_ID, {}, REVIEWER), "FORBIDDEN");
     expect(h.nodes.inserts).toEqual([]);
+  });
+
+  it("驳回：只给另一位审核人发一条简洁结果通知", async () => {
+    const h = createHarness();
+    h.requests.rows = [makeRequest()];
+    h.permission.reviewers = [REVIEWER, REVIEWER_B];
+    await h.service.reject(REQUEST_ID, { reason: "与现有节点重复" }, REVIEWER);
+    expect(h.database.outbox).toHaveLength(1);
+    const event = h.database.outbox[0];
+    if (event === undefined) throw new Error("缺少结果通知");
+    expect(event.dedupeKey).toBe("task-node-request-review-result:" + REQUEST_ID + ":" + REVIEWER_B);
+    expect(event.payload).toMatchObject({ recipientId: REVIEWER_B, templateCode: "TASK_NODE_REQUEST_REVIEW_RESULT" });
+    expect(event.payload.body).toBe("**阶段**：硬件实施\n**任务**：货架复检\n**申请人**：潘兴\n**审核结果**：审核驳回");
   });
 
   it("驳回：原因必填；驳回后不再建节点", async () => {
