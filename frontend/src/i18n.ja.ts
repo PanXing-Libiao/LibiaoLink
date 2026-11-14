@@ -103,8 +103,6 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "access.personalSaveFailed": "個人権限を保存できませんでした：{message}",
   "access.tabTaskNodeReview": "公共ノード審査",
   "access.reviewers.title": "公共ノード審査",
-  "access.reviewers.adminOnly": "システム管理者のみ変更可能",
-  "access.reviewers.hint": "タスクテンプレート「入庫審査」の公共ノード申請を処理できるのは、選択された管理者のみです。この名簿は公共ノードライブラリの保守権限を変更しません。",
   "access.reviewers.selectedLabel": "選択した審査担当",
   "access.reviewers.adminPool": "有効な管理者",
   "access.reviewers.search": "管理者名・ユーザー名・メールを検索",

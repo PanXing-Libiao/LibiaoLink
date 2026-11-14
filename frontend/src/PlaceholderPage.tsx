@@ -366,7 +366,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const [myPendingCount, setMyPendingCount] = useState(0);
   const [nodeRequestsLoading, setNodeRequestsLoading] = useState(false);
   const [nodeRequestsError, setNodeRequestsError] = useState<string | null>(null);
-  /** 申请取数版本号：进入「入库审核」板块 / 审核动作成功 / 点「重新加载」后 +1（计数与列表一起重取）。 */
+  /** 申请取数版本号：进入「入库审核」板块 / 审核动作成功后 +1（计数与列表一起重取）。 */
   const [nodeRequestsVersion, setNodeRequestsVersion] = useState(0);
   /** 审核行里就地编辑的中英文名（键 = 申请 id；缺省 = 申请原值）。 */
   const [requestDrafts, setRequestDrafts] = useState<Record<string, { title: string; titleEn: string }>>({});
@@ -1372,16 +1372,6 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
             >
               <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-zinc-200 px-4 py-2.5">
                 <h2 className="text-base font-semibold text-zinc-900">{t("nodeRequests.entry")}</h2>
-                {/* 列表只在进入板块时取一次：停在板块里等新申请时，用它手动重取（复用「重新加载」键） */}
-                <button
-                  type="button"
-                  onClick={() => { setNodeRequestsVersion((version) => version + 1); }}
-                  disabled={nodeRequestsLoading}
-                  data-node-requests-refresh=""
-                  className="ml-auto shrink-0 rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {t("common.reload")}
-                </button>
               </div>
               <div role="tablist" aria-label={t("nodeRequests.entry")} className="flex shrink-0 flex-wrap items-center gap-1 border-b border-zinc-100 px-4 text-sm">
                 {canReviewNodes ? (

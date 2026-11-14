@@ -65,13 +65,7 @@ export function AccessTaskNodeReviewers({
                 </svg>
               </span>
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-lg font-semibold tracking-tight text-zinc-950">{t("access.reviewers.title")}</h2>
-                  <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-semibold text-blue-700">
-                    {t("access.reviewers.adminOnly")}
-                  </span>
-                </div>
-                <p className="mt-1.5 max-w-3xl text-xs leading-5 text-zinc-600">{t("access.reviewers.hint")}</p>
+                <h2 className="text-lg font-semibold tracking-tight text-zinc-950">{t("access.reviewers.title")}</h2>
               </div>
             </div>
             <div className="grid shrink-0 grid-cols-2 gap-2">
