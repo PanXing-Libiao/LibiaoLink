@@ -354,6 +354,7 @@ class FakePermissionRepository {
   groupKeys: string[] = [];
   groupRules: GroupAccessRuleData[] = [];
   manualAdmin = false;
+  taskNodeReviewerUserIds: string[] = [];
   visibleCalls = 0;
 
   async listMemberProjectIds(): Promise<string[]> {
@@ -424,6 +425,10 @@ class FakePermissionRepository {
 
   async isManualGroupAccessAdmin(): Promise<boolean> {
     return this.manualAdmin;
+  }
+
+  async listTaskNodeReviewerUserIds(): Promise<string[]> {
+    return [...this.taskNodeReviewerUserIds];
   }
 }
 

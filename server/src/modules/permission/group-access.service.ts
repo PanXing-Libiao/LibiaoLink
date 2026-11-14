@@ -16,6 +16,8 @@ import {
   type GroupAccessRuleInput,
   type GroupAccessRuleResponse,
   type GroupAccessScopePermission,
+  type GroupAccessTaskNodeReviewersInput,
+  type GroupAccessTaskNodeReviewersResponse,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
@@ -46,7 +48,7 @@ export class GroupAccessService {
   async overview(actorId: string): Promise<GroupAccessOverview> {
     await this.assertAdmin(actorId);
     const { directory, activeGroupKeys } = await this.activeDirectory();
-    const [memberships, ungroupedUsers, rules, memberRules, projects, automaticRoles, groupAccess, admins] = await Promise.all([
+    const [memberships, ungroupedUsers, rules, memberRules, projects, automaticRoles, groupAccess, admins, reviewerUserIds] = await Promise.all([
       this.repository.listGroupMembers(),
       this.repository.listUngroupedUsers([...activeGroupKeys]),
       this.repository.listAccessRules(),
@@ -55,7 +57,12 @@ export class GroupAccessService {
       this.repository.listAutomaticProjectRoles(),
       this.permission.groupAccessOf(actorId),
       this.listAdmins(),
+      this.repository.listTaskNodeReviewerUserIds(),
     ]);
+    const activeAdminIdSet = new Set(
+      admins.filter((admin) => admin.status === "active").map((admin) => admin.userId),
+    );
+    const effectiveReviewerUserIds = reviewerUserIds.filter((userId) => activeAdminIdSet.has(userId));
     const effectiveRules = rules.filter(
       (rule) => activeGroupKeys.has(rule.groupKey) || rule.groupKey === GROUP_ACCESS_UNGROUPED_KEY,
     );
@@ -151,6 +158,7 @@ export class GroupAccessService {
       admin: groupAccess.admin,
       currentGroupKeys: groupAccess.groupKeys,
       admins,
+      taskNodeReviewerUserIds: effectiveReviewerUserIds,
       groups: Array.from(groups.values()).sort((left, right) => left.groupKey.localeCompare(right.groupKey)),
       projects,
       automaticRoles,
@@ -203,6 +211,56 @@ export class GroupAccessService {
       metadata: { userId, source: "manual" },
     });
     this.permission.invalidate();
+  }
+
+  /** 保存公共任务节点审核人：仅权限管理员；候选与结果都必须是当前生效的系统管理员，至少一名。 */
+  async saveTaskNodeReviewers(
+    actorId: string,
+    input: GroupAccessTaskNodeReviewersInput,
+  ): Promise<GroupAccessTaskNodeReviewersResponse> {
+    await this.assertAdmin(actorId);
+    const admins = await this.listAdmins();
+    const activeAdmins = admins.filter((admin) => admin.status === "active");
+    const activeAdminById = new Map(activeAdmins.map((admin) => [admin.userId, admin] as const));
+    const selectedIds = Array.from(new Set(input.userIds));
+    if (selectedIds.length === 0) {
+      throw new AppError("VALIDATION_FAILED", "至少选择一名公共节点审核管理员");
+    }
+    const invalid = selectedIds.filter((userId) => !activeAdminById.has(userId));
+    if (invalid.length > 0) {
+      throw new AppError("VALIDATION_FAILED", "审核人必须从当前生效的系统管理员中选择，请刷新后重试");
+    }
+    const selectedSet = new Set(selectedIds);
+    const reviewers = activeAdmins.filter((admin) => selectedSet.has(admin.userId));
+    const previousIds = await this.repository.listTaskNodeReviewerUserIds();
+    const previousNames = previousIds
+      .map((userId) => activeAdminById.get(userId)?.displayName ?? userId);
+    await this.repository.replaceTaskNodeReviewers(
+      reviewers.map((admin) => admin.userId),
+      actorId,
+      new Date(),
+    );
+    await this.audit.recordStandalone({
+      actorId,
+      action: "update",
+      objectType: "task_node_reviewer_roster",
+      objectId: "task_node_reviewer_roster",
+      summary: "保存公共节点审核管理员：共 " + reviewers.length + " 人",
+      changes: [{
+        field: "reviewerUserIds",
+        from: previousNames,
+        to: reviewers.map((admin) => admin.displayName),
+      }],
+      metadata: {
+        userIds: reviewers.map((admin) => admin.userId),
+        previousUserIds: previousIds.filter((userId) => activeAdminById.has(userId)),
+      },
+    });
+    this.permission.invalidate();
+    return {
+      userIds: reviewers.map((admin) => admin.userId),
+      reviewers,
+    };
   }
 
   private async activeDirectory(): Promise<{

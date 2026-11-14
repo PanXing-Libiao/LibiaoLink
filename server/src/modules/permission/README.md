@@ -1,5 +1,7 @@
 # permission 模块（h6 · S6·PoC-6：权限矩阵与脱敏五出口）
 
+> **2026-11-14 公共节点审核人白名单（0097）**：新增 `task_node_reviewers`（`user_id` 主键 → `users.id` 级联；`assigned_by` / `created_at`）。权限管理页「公共节点审核」只允许当前权限管理员访问与保存，候选与结果都从 `listAdmins()` 的当前生效系统管理员中取，至少一名。权限画像新增 `taskNodeReview`：先要求 `taskNodeManage`（仍仅系统管理员），再命中白名单；表为空表示尚未配置，任何管理员都不可审核，保存至少一名后只认勾选者。公共节点库维护权 `taskNodeManage` 不变。`GET /api/v1/access` 新增 `taskNodeReviewerUserIds`（空数组 = 尚未配置）；新增 `PUT /api/v1/access/task-node-reviewers`，写 `task_node_reviewer_roster` 审计并失效权限缓存。
+
 > **2026-11-13 蓝图总览读取权**：新增 `canBrowseProjectOverview(actorId)`：系统管理员、`GROUP_ACCESS_ENFORCED=false`、任一项目数据范围（含当前选中为空）或至少一个有效项目关系放行；仅登录、`none`-only 或无有效项目关系拒绝。该判定只开放蓝图地图的全量项目最少概况，不授予任何项目详情或写权限；详情仍走 `resolveProjectAccess`。
 
 | 字段 | 内容 |

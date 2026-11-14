@@ -206,6 +206,21 @@ export const groupAccessAdmins = pgTable(
   () => [],
 );
 
+/** task_node_reviewers（0097 · 2026-11-14）：公共任务节点申请审核人白名单；空表 = 尚未配置（任何管理员都不可审核）。 */
+export const taskNodeReviewers = pgTable(
+  "task_node_reviewers",
+  {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    assignedBy: uuid("assigned_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [],
+);
+
 /** project_group_member_access（0074）：个人覆盖为 selected 时的项目白名单。 */
 export const projectGroupMemberAccess = pgTable(
   "project_group_member_access",

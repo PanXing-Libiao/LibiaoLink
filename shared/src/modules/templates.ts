@@ -76,7 +76,7 @@ export const TaskNodeListResponseSchema = z
 /**
  * 公共任务节点申请（2026-11-13 业务口径「给一个申请的渠道，那边能够申请加入公共，然后让管理员审核」）：
  * - 导入时未匹配 / 选择保留 Excel 原名的任务可申请加入公共节点库（入口只在导入面板，一期单一入口）；
- * - 申请本身不改节点库；审核人（与 taskNodeManage 同口径）逐条通过或驳回，通过时可按同阶段同名判重直接建公共节点，
+ * - 申请本身不改节点库；只有已被权限页勾选为「公共节点审核」的系统管理员可逐条通过或驳回，通过时可按同阶段同名判重直接建公共节点，
  *   若该阶段已出现同名公共节点则直接关联到它；驳回必须填原因；
  * - 申请不阻塞导入：导入与申请在同一事务提交，申请失败不影响项目写入（反之亦然，整批回滚）。
  */
@@ -115,7 +115,7 @@ export const TaskNodeRequestListQuerySchema = z.object({
   mine: z
     .enum(["true", "false"])
     .optional()
-    .openapi({ description: "true = 只看本人申请（任何登录账号可用）；false / 缺省 = 审核人视角看全部申请（需节点库维护权）" }),
+    .openapi({ description: "true = 只看本人申请（任何登录账号可用）；false / 缺省 = 审核人视角看全部申请（需系统管理员且命中公共节点审核人白名单；未配置时无人可审）" }),
 });
 
 export const TaskNodeRequestListResponseSchema = z

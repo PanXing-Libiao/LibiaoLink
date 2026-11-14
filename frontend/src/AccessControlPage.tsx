@@ -7,6 +7,7 @@ import {
   revokeGroupAccessAdmin,
   saveGroupAccessMemberRules,
   saveGroupAccessRule,
+  saveTaskNodeReviewers,
   type GroupAccessAdmin,
   type GroupAccessGroup,
   type GroupAccessMember,
@@ -14,6 +15,7 @@ import {
 } from "./accessApi";
 import { AccessDashboard, AccessDashboardSkeleton } from "./AccessDashboard";
 import { AccessPermissionMatrix } from "./AccessPermissionMatrix";
+import { AccessTaskNodeReviewers } from "./AccessTaskNodeReviewers";
 import { buildAccessDashboardModel } from "./accessDashboardModel";
 import {
   automaticCountsForMembers,
@@ -41,7 +43,7 @@ type LoadState =
   | { kind: "error"; message: string };
 
 type Notice = { kind: ToastKind; text: string };
-type AccessView = "departments" | "people" | "dashboard";
+type AccessView = "departments" | "people" | "reviewers" | "dashboard";
 type Translate = (key: TextKey, params?: Record<string, string | number>) => string;
 type DirectorySection = { key: string; label: string; items: Array<{ group: GroupAccessGroup; pathText: string }> };
 
@@ -59,6 +61,13 @@ function memberSearchText(member: GroupAccessMember): string {
 function memberInitial(member: Pick<GroupAccessMember, "displayName">): string {
   const chars = Array.from(member.displayName.trim());
   return chars.length === 0 ? "?" : chars[0] ?? "?";
+}
+
+function sameIdSelection(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const leftSorted = [...left].sort();
+  const rightSorted = [...right].sort();
+  return leftSorted.every((value, index) => value === rightSorted[index]);
 }
 
 function departmentPathOf(groupKey: string, groups: ReadonlyMap<string, GroupAccessGroup>): string[] {
@@ -321,6 +330,11 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const [savingPersonal, setSavingPersonal] = useState(false);
   const [restoringPersonal, setRestoringPersonal] = useState(false);
   const [adminBusyUserId, setAdminBusyUserId] = useState<string | null>(null);
+  const [reviewerUserIds, setReviewerUserIds] = useState<string[]>([]);
+  const [savedReviewerUserIds, setSavedReviewerUserIds] = useState<string[]>([]);
+  const [reviewerDirty, setReviewerDirty] = useState(false);
+  const reviewerDirtyRef = useRef(false);
+  const [savingReviewers, setSavingReviewers] = useState(false);
   const [matrixOpen, setMatrixOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -339,6 +353,11 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       if (requestId !== requestIdRef.current) return false;
       hasDataRef.current = true;
       setLastSyncedAt(new Date());
+      if (!reviewerDirtyRef.current) {
+        const nextReviewerIds = next.taskNodeReviewerUserIds ?? [];
+        setReviewerUserIds(nextReviewerIds);
+        setSavedReviewerUserIds(nextReviewerIds);
+      }
       const nextSignature = JSON.stringify(next);
       if (nextSignature !== dataSignatureRef.current) {
         dataSignatureRef.current = nextSignature;
@@ -642,6 +661,46 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     }
   }
 
+  function toggleReviewer(userId: string): void {
+    if (savingReviewers) return;
+    const next = reviewerUserIds.includes(userId)
+      ? reviewerUserIds.filter((value) => value !== userId)
+      : reviewerUserIds.concat(userId);
+    const dirty = !sameIdSelection(next, savedReviewerUserIds);
+    reviewerDirtyRef.current = dirty;
+    setReviewerUserIds(next);
+    setReviewerDirty(dirty);
+  }
+
+  function resetReviewers(): void {
+    if (savingReviewers) return;
+    reviewerDirtyRef.current = false;
+    setReviewerUserIds(savedReviewerUserIds);
+    setReviewerDirty(false);
+  }
+
+  async function handleSaveReviewers(): Promise<void> {
+    if (savingReviewers || reviewerUserIds.length === 0) return;
+    setSavingReviewers(true);
+    try {
+      const result = await saveTaskNodeReviewers({ userIds: reviewerUserIds });
+      reviewerDirtyRef.current = false;
+      setReviewerUserIds(result.userIds);
+      setSavedReviewerUserIds(result.userIds);
+      setReviewerDirty(false);
+      setNotice({ kind: "ok", text: t("access.reviewers.saved") });
+      void loadMyPermissions(true);
+      setReload((value) => value + 1);
+    } catch (error: unknown) {
+      setNotice({
+        kind: "error",
+        text: t("access.reviewers.saveFailed", { message: error instanceof Error ? error.message : String(error) }),
+      });
+    } finally {
+      setSavingReviewers(false);
+    }
+  }
+
   async function handleAccessChanged(): Promise<boolean> {
     const ok = await loadAccessData();
     if (ok) void loadMyPermissions(true);
@@ -651,6 +710,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const tabs: Array<{ value: AccessView; labelKey: TextKey }> = [
     { value: "departments", labelKey: "access.tabDepartment" },
     { value: "people", labelKey: "access.tabPeople" },
+    { value: "reviewers", labelKey: "access.tabTaskNodeReview" },
     { value: "dashboard", labelKey: "access.tabDashboard" },
   ];
 
@@ -699,7 +759,13 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
           </div>
 
           {state.kind === "loading" && accessView === "dashboard" ? <AccessDashboardSkeleton /> : null}
-          {state.kind === "loading" && accessView !== "dashboard" ? (
+          {state.kind === "loading" && accessView === "reviewers" ? (
+            <div className="mx-auto w-full max-w-6xl space-y-4">
+              <div className="h-40 animate-pulse rounded-2xl border border-zinc-200 bg-white" />
+              <div className="h-[420px] animate-pulse rounded-2xl border border-zinc-200 bg-white" />
+            </div>
+          ) : null}
+          {state.kind === "loading" && accessView !== "dashboard" && accessView !== "reviewers" ? (
             <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
               <div className="h-[520px] animate-pulse rounded-2xl border border-zinc-200 bg-white" />
               <div className="space-y-4"><div className="h-36 animate-pulse rounded-2xl border border-zinc-200 bg-white" /><div className="h-64 animate-pulse rounded-2xl border border-zinc-200 bg-white" /></div>
@@ -707,7 +773,18 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
           ) : null}
           {state.kind === "error" ? <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{t("access.loadFailed", { message: state.message })}</p> : null}
 
-          {data === null ? null : accessView === "dashboard" ? (
+          {data === null ? null : accessView === "reviewers" ? (
+            <AccessTaskNodeReviewers
+              admins={data.admins}
+              selectedIds={reviewerUserIds}
+              savedIds={savedReviewerUserIds}
+              dirty={reviewerDirty}
+              busy={savingReviewers}
+              onToggle={toggleReviewer}
+              onReset={resetReviewers}
+              onSave={() => { void handleSaveReviewers(); }}
+            />
+          ) : accessView === "dashboard" ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-4 py-3">
                 <span className="text-xs font-medium text-zinc-600">{t("access.dashboard.departmentScope")}</span>

@@ -59,6 +59,8 @@ export type MyPermissions = {
   groupSelectedEdit: boolean;
   /** 是否可新增 / 编辑 / 删除公共任务节点库；仅系统管理员，账号级且不随当前项目切换。 */
   taskNodeManage: boolean;
+  /** 是否可审核公共节点申请：当前管理员且被权限页勾选为公共节点审核人。 */
+  taskNodeReview: boolean;
   /** 是否可浏览公共任务模板。 */
   taskTemplateRead: boolean;
   /** 是否可新建公共任务模板；具体模板编辑 / 删除还要求创建人或管理员。 */
@@ -87,6 +89,7 @@ type PermissionMeResponse = {
     groupOwnEdit?: boolean;
     groupSelectedEdit?: boolean;
     taskNodeManage?: boolean;
+    taskNodeReview?: boolean;
     taskTemplateRead?: boolean;
     taskTemplateManage?: boolean;
     auditScope?: AuditScope;
@@ -138,6 +141,7 @@ export function loadMyPermissions(refresh = false): Promise<MyPermissions> {
         groupSelectedEdit: payload.permissions.groupSelectedEdit ??
           (groupAccessAdmin || groupScopePermissions.some((permission) => permission.projectScope === "selected" && permission.accessLevel === "edit")),
         taskNodeManage: payload.permissions.taskNodeManage ?? groupAccessAdmin,
+        taskNodeReview: payload.permissions.taskNodeReview ?? false,
         taskTemplateRead: payload.permissions.taskTemplateRead ??
           (groupAccessAdmin || !groupAccessEnforced || groupScopePermissions.length > 0),
         taskTemplateManage: payload.permissions.taskTemplateManage ?? groupAccessAdmin,
@@ -167,6 +171,11 @@ export function hasPageAccess(_permissions: MyPermissions | null, _page: GroupAc
 /** 公共节点库维护：仅系统管理员；模板私有节点按模板编辑权单独判定。 */
 export function canEditTaskNodes(permissions: MyPermissions | null): boolean {
   return permissions !== null && permissions.taskNodeManage;
+}
+
+/** 公共任务节点申请审核：管理员且被权限页勾选；与节点库维护权分开。 */
+export function canReviewTaskNodes(permissions: MyPermissions | null): boolean {
+  return permissions !== null && permissions.taskNodeReview;
 }
 
 /** 公共任务模板新建：管理员或至少管理一个有效项目的项目经理；与节点库写权限分开。 */

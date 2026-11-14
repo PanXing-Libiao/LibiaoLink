@@ -1,3 +1,5 @@
+> **2026-11-14 · 公共节点审核人白名单**：`0097_task_node_reviewers.sql` 新增 `task_node_reviewers`（`user_id uuid` 主键 → `users.id` 级联；`assigned_by uuid not null` → `users.id`；`created_at timestamptz`）。只存权限页「公共节点审核」勾选的系统管理员；表为空表示尚未配置，任何管理员都不可审核，保存至少一名后以本表为准。审核接口仍先校验当前管理员身份，因此撤销管理员后残留行不再生效。只追加 DDL，应用角色随 default privileges 自动授权；回滚语句入头注（`drop table if exists task_node_reviewers`）。
+
 > **2026-11-13 · 任务模板「入库审核」独立板块**：`0095_template_inbound_review_section.sql` 将 `task_templates.stage_key` 与 `task_nodes.stage_key` 的 CHECK 扩为九阶段 + `inbound_review`；该值只用于任务模板页独立板块，不属于项目阶段，不进入 `STAGE_KEYS`、项目任务、看板 / 甘特图 / 日报。入库审核不能生成项目任务；模板私有节点继续按 `owner_template_id` 隔离。迁移不新增表 / 列，回滚须先清该分组数据，语句见头注。
 
 > **模型管理（本机实现）**：迁移 0093 新增模型服务与当前模型选择；密钥只保存加密结果，需部署前准备独立密钥保护配置。

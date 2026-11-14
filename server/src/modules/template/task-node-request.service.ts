@@ -64,11 +64,11 @@ export interface ImportNodeRequestResult {
 /**
  * 公共任务节点申请域用例（0096 · 2026-11-13）。
  * 业务口径：导入表导入不再向公共节点库补节点；未匹配 / 保留 Excel 原名的任务改为「申请加入公共节点库」，
- * 由审核人（与 taskNodeManage 同口径：仅系统管理员）逐条通过或驳回。
+ * 由权限页勾选且当前仍为系统管理员的审核人逐条通过或驳回。
  * - 申请与导入同事务提交（createFromImport 接收外部事务），导入回滚则申请一起回滚；
  * - 通过时才写 task_nodes：同阶段同名已有公共节点则直接关联（不重复建），否则追加到该阶段末尾并写节点审计；
  * - 驳回原因必填，申请人可见；申请人可撤销本人 pending 申请；
- * - 待审列表是审核人视角（需要节点库维护权）；本人视角任何登录账号可看自己的申请。
+ * - 待审列表是审核人视角（需要公共节点审核权）；本人视角任何登录账号可看自己的申请。
  */
 @Injectable()
 export class TaskNodeRequestService {
@@ -92,7 +92,7 @@ export class TaskNodeRequestService {
         pendingCount: await this.requests.countPending(actorId),
       };
     }
-    await this.permission.assertCanManageTaskNodes(actorId, "查看公共节点申请需要项目经理或管理员权限");
+    await this.permission.assertCanReviewTaskNodeRequests(actorId, "查看公共节点申请需要已授权的管理员权限");
     const rows = await this.requests.list(
       { stageKey: query.stage ?? null, status: query.status ?? null, requestedBy: null },
     );
@@ -161,7 +161,7 @@ export class TaskNodeRequestService {
 
   /** POST /api/v1/task-node-requests/{id}/approve：可先改中英文名；同阶段同名已存在则直接关联。 */
   async approve(id: string, body: TaskNodeRequestApproveBody, actorId: string): Promise<TaskNodeRequestDecisionResponse> {
-    await this.permission.assertCanManageTaskNodes(actorId, "审核公共节点申请需要项目经理或管理员权限");
+    await this.permission.assertCanReviewTaskNodeRequests(actorId, "审核公共节点申请需要已授权的管理员权限");
     const at = new Date();
     const outcome = await this.database.db.transaction(async (tx) => {
       const before = await this.requests.lockById(id, tx);
@@ -224,7 +224,7 @@ export class TaskNodeRequestService {
 
   /** POST /api/v1/task-node-requests/{id}/reject：原因必填；申请人可见。 */
   async reject(id: string, body: TaskNodeRequestRejectBody, actorId: string): Promise<TaskNodeRequestDecisionResponse> {
-    await this.permission.assertCanManageTaskNodes(actorId, "审核公共节点申请需要项目经理或管理员权限");
+    await this.permission.assertCanReviewTaskNodeRequests(actorId, "审核公共节点申请需要已授权的管理员权限");
     const reason = body.reason.trim();
     if (reason === "") throw new AppError("VALIDATION_FAILED", "驳回原因不能为空");
     const at = new Date();

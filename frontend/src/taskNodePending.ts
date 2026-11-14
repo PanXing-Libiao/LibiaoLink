@@ -5,7 +5,7 @@ import { listTaskNodeRequests, type TaskNodeRequest } from "./templateApi";
  * 「任务模板」导航红点（PM 反馈 2026-11-13「任务模板 这里加红点提醒吧」）模块级 store。
  *
  * 显示条件 = 该账号有尚未查看的「入库审核」通知（非数字红点，不显示条数）：
- * - 有节点库维护权（permissions.taskNodeManage）= 存在尚未查看的 pending 申请 —— GET /api/v1/task-node-requests（审核人视角，缺省不带 mine）；
+ * - 有公共节点审核权（permissions.taskNodeReview）= 存在尚未查看的 pending 申请 —— GET /api/v1/task-node-requests（审核人视角，缺省不带 mine）；
  * - 其他账号 = 存在尚未查看的 pending 或 rejected 申请 —— GET /api/v1/task-node-requests?mine=true。
  * 点击进入「入库审核」后当前通知全部记为本机已读；只要没有新的申请 / 驳回，红点就不再因为待审仍然存在而重新亮。
  *
@@ -71,13 +71,13 @@ function persistSeenNotifications(seen: Set<string>): void {
 /** 当前申请对应的通知 key：审核人只关心 pending；申请人关心 pending 与 rejected。 */
 export function taskNodeNotificationKeys(
   requests: readonly TaskNodeRequest[],
-  hasManageNodes: boolean,
+  hasReviewAccess: boolean,
 ): string[] {
   return requests.flatMap((request) => {
     if (request.status === "pending") {
-      return [(hasManageNodes ? "review:pending:" : "mine:pending:") + request.id];
+      return [(hasReviewAccess ? "review:pending:" : "mine:pending:") + request.id];
     }
-    if (!hasManageNodes && request.status === "rejected") {
+    if (!hasReviewAccess && request.status === "rejected") {
       return [
         "mine:rejected:" + request.id + ":" + (request.reviewedAt ?? request.updatedAt),
       ];
@@ -134,16 +134,16 @@ function applyTaskNodePending(pending: boolean): void {
 }
 
 /**
- * 刷新「任务模板」红点：hasManageNodes = 当前账号有节点库维护权
+ * 刷新「任务模板」红点：hasReviewAccess = 当前账号有公共节点审核权
  * （true = 审核人视角看新 pending；false = 本人视角看未读 pending / rejected）。
  */
-export async function refreshTaskNodePending(hasManageNodes: boolean): Promise<void> {
+export async function refreshTaskNodePending(hasReviewAccess: boolean): Promise<void> {
   const seq = ++requestSeq;
   try {
-    const list = hasManageNodes ? await listTaskNodeRequests() : await listTaskNodeRequests({ mine: true });
+    const list = hasReviewAccess ? await listTaskNodeRequests() : await listTaskNodeRequests({ mine: true });
     if (seq === requestSeq) {
       const seen = readSeenNotifications();
-      const unseen = taskNodeNotificationKeys(list.items, hasManageNodes).some(
+      const unseen = taskNodeNotificationKeys(list.items, hasReviewAccess).some(
         (key) => !seen.has(key),
       );
       applyTaskNodePending(unseen);
