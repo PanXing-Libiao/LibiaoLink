@@ -141,7 +141,7 @@ export function loadMyPermissions(refresh = false): Promise<MyPermissions> {
         groupSelectedEdit: payload.permissions.groupSelectedEdit ??
           (groupAccessAdmin || groupScopePermissions.some((permission) => permission.projectScope === "selected" && permission.accessLevel === "edit")),
         taskNodeManage: payload.permissions.taskNodeManage ?? groupAccessAdmin,
-        taskNodeReview: payload.permissions.taskNodeReview ?? groupAccessAdmin,
+        taskNodeReview: payload.permissions.taskNodeReview ?? false,
         taskTemplateRead: payload.permissions.taskTemplateRead ??
           (groupAccessAdmin || !groupAccessEnforced || groupScopePermissions.length > 0),
         taskTemplateManage: payload.permissions.taskTemplateManage ?? groupAccessAdmin,
