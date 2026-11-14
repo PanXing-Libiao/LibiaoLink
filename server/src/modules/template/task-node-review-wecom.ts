@@ -79,18 +79,19 @@ function nodeSummary(nodes: readonly Pick<TaskNodeRow, "title">[]): string {
 }
 
 /**
- * 审核结果通知（发给未操作的另一位审核人）：只保留阶段 / 任务 / 申请人 / 结果四行。
+ * 审核结果通知（发给未操作的另一位审核人）：只保留阶段 / 任务 / 申请人 / 审核人 / 结果五行。
  * 状态唯一性由申请行锁与条件更新保证；本函数只负责展示，不承载并发判断。
  */
 export function buildTaskNodeReviewResultMessage(input: {
   stageName: string;
-  request: Pick<TaskNodeRequestRow, "title" | "requestedByName">;
+  request: Pick<TaskNodeRequestRow, "title" | "requestedByName" | "reviewedByName">;
   decision: "approved" | "rejected";
 }): string {
   return [
     "**阶段**：" + cell(input.stageName),
     "**任务**：" + cell(input.request.title),
     "**申请人**：" + cell(input.request.requestedByName),
+    "**审核人**：" + cell(input.request.reviewedByName),
     "**审核结果**：" + (input.decision === "approved" ? "审核通过" : "审核驳回"),
   ].join("\n");
 }
