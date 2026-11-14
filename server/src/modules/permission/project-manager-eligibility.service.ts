@@ -38,7 +38,7 @@ interface CandidateSnapshot {
  * - 新建项目只能选择资格名单内人员；
  * - 编辑项目保留历史项目经理，但新加入的人必须符合资格；
  * - 名册新增 / 升级为项目经理同样校验；
- * - Excel 导入最终落库前只保留资格名单人员，并在导入结果中给出提醒。
+ * - Excel 导入保留源表命中的项目经理账号，不受本资格规则约束；未命中仍回落导入人并提醒。
  */
 @Injectable()
 export class ProjectManagerEligibilityService {

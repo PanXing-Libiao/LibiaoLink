@@ -2,10 +2,11 @@
  * 任务模板仓库（M3-05 余 · 第二段 · 0033）：只读写 task_templates / task_template_nodes 两张表。
  * - 读面恒带 `deleted_at is null`（软删模板对列表 / 详情 / 写操作一律不可见 → 服务层转 404）；
  * - 模板内节点顺序 = task_template_nodes.seq 升序（全量替换时按 nodeIds 下标重排为 10/20/30…）；
- * - 标题 / 英文名不落模板表：读面 join task_nodes 实时取（节点改名后模板预览随即更新，不存快照）。
+ * - 标题 / 英文名不落模板表：读面 join task_nodes 实时取（节点改名后模板预览随即更新，不存快照）；
+ * - 模板只能引用公共节点，或 owner_template_id = 本模板的私有节点。
  */
 import { Injectable } from "@nestjs/common";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { users } from "../../db/schema/identity.js";
@@ -39,15 +40,15 @@ export interface TaskTemplateUpdatePatch {
   visibility?: "private" | "public";
 }
 
-/** 九阶段顺序（列表排序用）：与 shared/src/common/dicts.ts 的 STAGE_KEYS 同序；未知 key 排最后。 */
-const STAGE_RANK = sql`coalesce(array_position(array['presale', 'design', 'purchase', 'assembly', 'install', 'deploy', 'trial', 'production', 'acceptance']::text[], ${taskTemplates.stageKey}), 99)`;
+/** 模板板块顺序（九阶段 + 入库审核，列表排序用）：与 shared/src/common/dicts.ts 的 STAGE_KEYS 同序；未知 key 排最后。 */
+const STAGE_RANK = sql`coalesce(array_position(array['presale', 'design', 'purchase', 'assembly', 'install', 'deploy', 'trial', 'production', 'acceptance', 'inbound_review']::text[], ${taskTemplates.stageKey}), 99)`;
 
 @Injectable()
 export class TaskTemplateRepository {
   constructor(private readonly database: DatabaseService) {}
 
   /**
-   * 按阶段过滤（null = 全部阶段）；排序 = 九阶段顺序 → created_at 倒序 → id。
+   * 按模板板块过滤（null = 全部板块）；排序 = 板块顺序（九阶段 + 入库审核）→ created_at 倒序 → id。
    * 倒序的理由：面板顺序 = 「最新在最左」——「＋ 新建模板」在界面上就把新面板插在主列右侧（Push 58 业务口径），
    * 刷新后按库里的顺序重排，同样得让最新的排在最左，否则新建的模板会在刷新后从左端跳到右端。
    * 种子（#9）按清单顺序倒排 created_at，所以业务清单的第一套（如「硬件实施模板一」）仍在最左。
@@ -116,7 +117,13 @@ export class TaskTemplateRepository {
         titleEn: taskNodes.titleEn,
       })
       .from(taskTemplateNodes)
-      .innerJoin(taskNodes, eq(taskNodes.id, taskTemplateNodes.nodeId))
+      .innerJoin(
+        taskNodes,
+        and(
+          eq(taskNodes.id, taskTemplateNodes.nodeId),
+          or(isNull(taskNodes.ownerTemplateId), eq(taskNodes.ownerTemplateId, taskTemplateNodes.templateId)),
+        ),
+      )
       .where(inArray(taskTemplateNodes.templateId, templateIds))
       .orderBy(asc(taskTemplateNodes.templateId), asc(taskTemplateNodes.seq), asc(taskTemplateNodes.nodeId));
     return rows.map((row) => ({

@@ -40,6 +40,8 @@ describe("导入节点语义匹配", () => {
     expect(result.get(1)).toEqual({ kind: "new", nodeId: null });
     expect(result.get(2)).toEqual({ kind: "uncertain", nodeId: null });
     const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(body.messages[0].content).toContain("第一批空箱上架");
+    expect(body.messages[0].content).toContain("The user will choose");
     const prompt = JSON.parse(body.messages[1].content);
     expect(prompt.existing.map((node: { id: string }) => node.id)).toEqual(["node-1"]);
     expect(prompt.imported).toHaveLength(3);

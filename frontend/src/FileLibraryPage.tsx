@@ -547,7 +547,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
             <div>
               <h1 className="text-lg font-semibold text-zinc-900">{t("lib.title")}</h1>
               <p className="mt-0.5 text-xs text-zinc-500">
-                {t("lib.subtitle")}
+                {isProjectRecycle ? t("lib.subtitle.projectRecycled") : t("lib.subtitle.recycled")}
               </p>
             </div>
             {isProjectRecycle ? (

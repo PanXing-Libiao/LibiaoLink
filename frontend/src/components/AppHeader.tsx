@@ -6,6 +6,7 @@ import { clearHomePrefs } from "../homePrefs";
 import { clearLegacyPlanBoard } from "../myPlan";
 import { hasPageAccess, useMyPermissions } from "../permissions";
 import { useInboxBadge } from "../inbox";
+import { useTaskNodePendingBadge } from "../taskNodePending";
 import { resetWecomBindingStatus, useWecomBindingBound } from "../wecomBindingStatus";
 import { ACCESS_BASE_HASH, AUDIT_BASE_HASH, FILES_BASE_HASH, HUB_HASH, MODEL_SETTINGS_BASE_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
 import { firstAllowedHref } from "../accessRoutes";
@@ -154,6 +155,12 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const inboxMenuRef = useRef<HTMLDivElement | null>(null);
   const localeLabel = LOCALES.find((item) => item.key === locale)?.label ?? "中文";
   const bgTierLabel = t(BG_TIER_TEXT_KEYS[bgTier]);
+  /**
+   * 「任务模板」导航红点（PM 反馈 2026-11-13「任务模板 这里加红点提醒吧」）：模块级 store
+   * （../taskNodePending），取数 = 有节点库维护权看全局待审、其他账号看本人 pending；
+   * 刷新时机由 App.tsx（登录 / 切页 / 60 秒）与任务模板页审核动作负责，这里只订阅，不自己发请求。
+   */
+  const templatesPending = useTaskNodePendingBadge();
   /** 顶栏站内信提示：../inbox 给未读数，../wecomBindingStatus 给未绑定态；切页不丢。 */
   const inboxBadge = useInboxBadge();
   const wecomBound = useWecomBindingBound();
@@ -313,7 +320,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
         {/* 顶部导航栏（业务口径 2026-09-30「我要做顶部导航栏 分别是首页 项目空间 任务模版 我的任务」）：
             四个纯文字导航项常驻（同日续口径「去除这个液态效果 只保留文字」）；原来的大页名（项目空间 / 任务模板 / 我的任务）
             由导航的当前项接管，不再重复显示。 */}
-        <TopNav />
+        <TopNav templatesPending={templatesPending} />
         {project ? (
           <div className="mx-1 hidden min-w-0 border-l border-zinc-200 pl-4 lg:block">
             <p className="truncate text-xs text-zinc-500">

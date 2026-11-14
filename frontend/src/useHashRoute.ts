@@ -422,6 +422,7 @@ const TEMPLATE_SECTION_SLUGS: ReadonlyArray<readonly [string, string]> = [
   ["试运行", "trial"],
   ["投产阶段", "production"],
   ["验收", "acceptance"],
+  ["入库审核", "inbound-review"],
 ];
 
 /** 旧中文板块名 → 当前板块名：只做旧链接兼容，页面与写回地址均使用当前名。 */

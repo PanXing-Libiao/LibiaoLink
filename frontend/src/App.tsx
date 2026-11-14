@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { startLiveSync } from "./liveSync";
 import { applyInboxUnread, noteInboxNotification, refreshInboxUnread } from "./inbox";
 import { refreshWecomDmBindingStatus } from "./bindingApi";
+import { refreshTaskNodePending } from "./taskNodePending";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { AccessControlPage } from "./AccessControlPage";
 import { AuditLogPage } from "./AuditLogPage";
@@ -279,6 +280,24 @@ export default function App() {
       onOpen: () => { void refreshInboxUnread(); },
     });
   }, [signedIn]);
+  /**
+   * 「任务模板」导航红点（PM 反馈 2026-11-13「任务模板 这里加红点提醒吧」）：登录后 / 切页（地址变化）/
+   * 每 60 秒各刷新一次 —— 有节点库维护权（taskNodeManage）看全局待审，其他账号看本人 pending / rejected 的未读通知。
+   * 权限画像未就绪先不请求（视角拿不准时宁可不亮，也别先按本人视角闪一下）；失败静默不亮。
+   * 审核动作成功后的刷新由任务模板页（PlaceholderPage）负责，见 ../taskNodePending。
+   */
+  useEffect(() => {
+    if (!signedIn || permissions === null) {
+      return undefined;
+    }
+    void refreshTaskNodePending(canEditTaskNodes(permissions));
+    const timer = window.setInterval(() => {
+      void refreshTaskNodePending(canEditTaskNodes(permissions));
+    }, 60_000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [signedIn, permissions, route]);
   useLiveRefresh(["dicts", "projects"], async () => {
     const next = await loadDicts();
     return () => setDicts(next);
@@ -796,7 +815,7 @@ export default function App() {
   /** 归档权（Push 262 · M7-04 前端接线一部分）：决定编辑弹窗「已归档」选项是否可选（服务端逐请求仍是最终裁决）。 */
   const canArchiveProject = permissions === null || hasPermission(permissions, "project.archive");
   /**
-   * 任务模板页拆成两档写权限：节点库 = 系统管理员或有效项目经理；公共模板新建同左，单份模板维护仅创建人或管理员。
+   * 任务模板页拆成两档写权限：公共节点库 = 仅系统管理员；公共模板新建 = 管理员或有效项目经理，单份模板维护仅创建人或管理员。
    * 任务负责人 / 普通成员只读；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN。
    */
   const canManageNodes = canEditTaskNodes(permissions);

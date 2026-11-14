@@ -11,27 +11,49 @@ import { SelectMenu } from "./components/SelectMenu";
 import { PROJECT_STAGES } from "./data/projects";
 import { ApiError } from "./api";
 import {
+  approveTaskNodeRequest,
   createStageNode,
   createTaskTemplate,
+  createTemplateStageNode,
   deleteTaskNode,
   deleteTaskTemplate,
   fetchStageNodes,
   fetchStageTemplates,
+  listTaskNodeRequests,
+  nodeRequestWriteMessage,
   nodeWriteMessage,
+  rejectTaskNodeRequest,
   templateWriteMessage,
   updateStageNode,
   updateTaskTemplate,
+  withdrawTaskNodeRequest,
   type TaskNodeItem,
+  type TaskNodeRequest,
   type TemplateItem,
   type TemplateVisibility,
 } from "./templateApi";
+import { formatDateTime } from "./projectApi";
+import { stageNameOf } from "./taskApi";
 import { replaceTemplateSection, templateSectionFromParam, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import { isLocalizedLocale, stageText, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT } from "./i18n";
 import { lockBodyScroll } from "./scrollLock";
+import { markTaskNodeNotificationsSeen, refreshTaskNodePending, taskNodeNotificationKeys, useTaskNodePendingBadge } from "./taskNodePending";
 import type { MeResponse } from "./types";
 
-/** 任务模板的阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
-const TEMPLATE_SECTIONS: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
+/** 任务模板的九阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
+const TEMPLATE_STAGE_SECTIONS: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
+
+/** 模板库专属分组：不属于项目阶段，固定排在阶段标签之后、「＋ 新建模板」左侧。 */
+const TEMPLATE_SPECIAL_SECTION = "入库审核";
+const TEMPLATE_SECTIONS: readonly string[] = [...TEMPLATE_STAGE_SECTIONS, TEMPLATE_SPECIAL_SECTION];
+
+/** 板块标签的共用样式（九阶段与入库审核保持同一套选中下划线 / 悬停态）。 */
+function templateTabClass(active: boolean): string {
+  return (
+    "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
+    (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
+  );
+}
 
 /** 左列节点池的兜底空数组（取不到该板块那份时用，避免每次渲染都新建一个）。 */
 const EMPTY_NODE_LIST: readonly TaskNodeItem[] = [];
@@ -152,6 +174,31 @@ function unsavedHintTitle(template: TemplateDraft, t: ReturnType<typeof useT>): 
 /** 空阶段兜底用的空数组（避免每次渲染都新建一个）。 */
 const EMPTY_TEMPLATE_LIST: TemplateDraft[] = [];
 
+/** 公共节点申请的状态徽标文案（four locales 同一套键；顺序 = 申请生命周期）。 */
+const NODE_REQUEST_STATUS_KEY: Record<
+  TaskNodeRequest["status"],
+  "nodeRequests.statusPending" | "nodeRequests.statusApproved" | "nodeRequests.statusRejected" | "nodeRequests.statusWithdrawn"
+> = {
+  pending: "nodeRequests.statusPending",
+  approved: "nodeRequests.statusApproved",
+  rejected: "nodeRequests.statusRejected",
+  withdrawn: "nodeRequests.statusWithdrawn",
+};
+
+/** 状态徽标配色：待审 = 琥珀（等审核）、通过 = 绿、驳回 = 玫瑰、撤销 = 灰。 */
+const NODE_REQUEST_STATUS_STYLE: Record<TaskNodeRequest["status"], string> = {
+  pending: "border-amber-200 bg-amber-50 text-amber-700",
+  approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  rejected: "border-rose-200 bg-rose-50 text-rose-700",
+  withdrawn: "border-zinc-200 bg-zinc-100 text-zinc-500",
+};
+
+/** 来源项目展示（编号 · 名称；两个都空 = 「—」，老数据 / 非导入来源可能没有）。 */
+function sourceProjectLabel(request: TaskNodeRequest): string {
+  const parts = [request.projectCode, request.projectName].filter((part): part is string => part !== null && part !== "");
+  return parts.length === 0 ? "—" : parts.join(" · ");
+}
+
 /** 按住卡片后位移超过这个数才算「拖动」（没过阈值就是点一下，什么都不改）。 */
 const DRAG_THRESHOLD = 4;
 
@@ -203,7 +250,7 @@ type PlaceholderPageProps = {
   page: PlaceholderPageKey;
   /** 任务模板页当前板块（来自 URL 的 `?section=`；缺省 / 不认识的值回落到第一个板块） */
   section: string | null;
-  /** 是否可维护公共任务节点库（系统管理员，或至少管理一个有效项目的项目经理）。 */
+  /** 是否可维护公共任务节点库（仅系统管理员；模板私有节点按单份模板维护权判定）。 */
   canManageNodes: boolean;
   /** 是否可新建公共任务模板（管理员，或至少管理一个有效项目的项目经理）。 */
   canManageTemplates: boolean;
@@ -288,9 +335,46 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const [nodesByStage, setNodesByStage] = useState<Record<string, readonly TaskNodeItem[]>>({});
   const [nodesLoading, setNodesLoading] = useState(false);
   const [nodesError, setNodesError] = useState<string | null>(null);
-  /** 取数版本号：新增 / 删除成功后 +1 重取，保证左列与节点库一致。 */
+  /** 公共节点库取数版本号：左侧新增 / 删除成功后 +1；模板内新增私有节点不触发这里。 */
   const [nodesVersion, setNodesVersion] = useState(0);
   const activeNodes = nodesByStage[activeSection] ?? EMPTY_NODE_LIST;
+
+  /**
+   * 「入库审核」独立板块是否正在展示（远端 b66ffd88 新增的板块）：审核工作台挂在这个板块内容上方。
+   * 只有这个板块是开的才取申请列表，免得每个阶段板块都去打一次申请接口。
+   */
+  const nodeRequestsSectionActive = page === "templates" && activeSection === TEMPLATE_SPECIAL_SECTION;
+  /** 顶栏「任务模板」的待处理红点：进入「入库审核」前同步亮在本板块标签上。 */
+  const navTemplatesPending = useTaskNodePendingBadge();
+
+  /**
+   * 公共节点申请（业务口径 2026-11-13「给一个申请的渠道，让管理员审核」）：
+   * 2026-11-13 追订（用户口径「远端已经有审核的页面，用他的；我们的清单和他的审核页互补」）——
+   * 本地左列列头的入口按钮 + 申请浮层已删除，申请清单整体迁进「入库审核」板块顶部的工作台；
+   * 「待审核」只给有节点库维护权（canManageNodes = taskNodeManage，现仅系统管理员）的账号，可逐条改中英文名后通过 / 驳回；
+   * 「我的申请」任何登录账号都能看自己的申请与结果（pending 可撤销）。
+   */
+  const [nodeRequestsTab, setNodeRequestsTab] = useState<"pending" | "mine">("pending");
+  /** 审核视角的待审列表（需节点库维护权；无权限时保持空数组，不发请求）。 */
+  const [pendingRequests, setPendingRequests] = useState<TaskNodeRequest[]>([]);
+  /** 本人视角的申请（全部状态；任何登录账号都可看）。 */
+  const [myRequests, setMyRequests] = useState<TaskNodeRequest[]>([]);
+  /** 两个视角各自的待审条数（审核视角 = 全局待审；本人视角 = 本人待审）。 */
+  const [reviewPendingCount, setReviewPendingCount] = useState(0);
+  const [myPendingCount, setMyPendingCount] = useState(0);
+  const [nodeRequestsLoading, setNodeRequestsLoading] = useState(false);
+  const [nodeRequestsError, setNodeRequestsError] = useState<string | null>(null);
+  /** 申请取数版本号：进入「入库审核」板块 / 审核动作成功 / 点「重新加载」后 +1（计数与列表一起重取）。 */
+  const [nodeRequestsVersion, setNodeRequestsVersion] = useState(0);
+  /** 审核行里就地编辑的中英文名（键 = 申请 id；缺省 = 申请原值）。 */
+  const [requestDrafts, setRequestDrafts] = useState<Record<string, { title: string; titleEn: string }>>({});
+  /** 正在填驳回原因的那一条（一次只展开一条，避免多行输入框同时抢占高度）。 */
+  const [rejectingRequestId, setRejectingRequestId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  /** 正在提交审核动作的申请 id（按钮置灰，防重复点击）。 */
+  const [actingRequestId, setActingRequestId] = useState<string | null>(null);
+  /** 审核动作的结果提示（顶部 Toast，成功 / 失败同一位置）。 */
+  const [nodeRequestNotice, setNodeRequestNotice] = useState<{ kind: "ok" | "error" | "info"; text: string } | null>(null);
 
   useEffect(() => subscribeLiveHints((resources) => {
     if (!resources.includes("templates")) return;
@@ -346,6 +430,73 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
       alive = false;
     };
   }, [page, activeSection, nodesVersion]);
+
+  /**
+   * 工作台数据：进入「入库审核」板块时才取完整列表（加载态 + 失败可重试；两个标签的计数也由这次响应回填）；「我的申请」任何账号都取，
+   * 「待审核」只在有节点库维护权时取 —— 无权限时不发这个请求，也就不会把 403 摆到界面上。
+   */
+  useEffect(() => {
+    if (!nodeRequestsSectionActive) {
+      return;
+    }
+    let alive = true;
+    setNodeRequestsLoading(true);
+    setNodeRequestsError(null);
+    void (async () => {
+      try {
+        const mine = await listTaskNodeRequests({ mine: true });
+        if (!alive) {
+          return;
+        }
+        setMyRequests(mine.items);
+        setMyPendingCount(mine.pendingCount);
+        if (!canManageNodes) {
+          return;
+        }
+        const all = await listTaskNodeRequests({ status: "pending" });
+        if (!alive) {
+          return;
+        }
+        setPendingRequests(all.items);
+        setReviewPendingCount(all.pendingCount);
+      } catch (error) {
+        if (alive) {
+          // 403 = 审核视角没权限（比如刚被撤销项目经理）：给一句人话，别把裸错误码摆出来
+          setNodeRequestsError(
+            error instanceof ApiError && error.code === "FORBIDDEN"
+              ? t("nodeRequests.noPermission")
+              : error instanceof Error
+                ? error.message
+                : t("tpl.err.retryLater"),
+          );
+        }
+      } finally {
+        if (alive) {
+          setNodeRequestsLoading(false);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [nodeRequestsSectionActive, canManageNodes, nodeRequestsVersion]);
+
+  /** 进入「入库审核」= 当前通知已读：顶栏与标签红点同时熄灭；后续只有新申请 / 新驳回才重新亮。 */
+  useEffect(() => {
+    if (!nodeRequestsSectionActive) {
+      return;
+    }
+    const notificationKeys = [
+      ...taskNodeNotificationKeys(pendingRequests, true),
+      ...taskNodeNotificationKeys(myRequests, false),
+    ];
+    if (notificationKeys.length === 0) {
+      return;
+    }
+    if (markTaskNodeNotificationsSeen(notificationKeys)) {
+      void refreshTaskNodePending(canManageNodes);
+    }
+  }, [nodeRequestsSectionActive, pendingRequests, myRequests, canManageNodes]);
 
   useEffect(() => {
     prefetchLocalizedText(Object.values(templatesByStage).flat().map((item) => item.name));
@@ -434,7 +585,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   };
 
   /**
-   * 新建模板 = `POST /api/v1/task-templates`（默认名「未命名模板」、空节点，回来再拖节点进去）：
+   * 新建模板 = `POST /api/v1/task-templates`（默认名「未命名模板」、空节点，回来可拖入节点或在模板内直接添加）：
    * 成功 = 新面板插到最前（原来的往右挪）并把焦点 / 全选落到它的名字上；失败 = 底部提示条。
    */
   const startNewTemplate = (visibility: TemplateVisibility): void => {
@@ -572,7 +723,9 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
    * 节点表单状态（面板内联，不弹窗）：新增与编辑**共用一套表单**（Push 181 后半 —— 业务口径「任务节点编辑也要」）。
    * `mode === "edit"` 时带着被编辑的那一行（含乐观锁 version），保存走 PATCH；`"create"` 走 POST。
    */
-  const [nodeForm, setNodeForm] = useState<{ mode: "create" } | { mode: "edit"; node: TaskNodeItem } | null>(null);
+  const [nodeForm, setNodeForm] = useState<
+    { mode: "create"; templateId: string | null } | { mode: "edit"; node: TaskNodeItem } | null
+  >(null);
   const [formTitle, setFormTitle] = useState("");
   const [formTitleEn, setFormTitleEn] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -593,6 +746,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const deleteTemplateConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteTemplate !== null);
   const newTemplateTrapRef = useFocusTrap<HTMLDivElement>(newTemplateVisibilityOpen);
 
+  // 新建模板的可见范围弹窗开着时锁背景滚动（入库审核已改成板块内工作台，不再有浮层）
   useEffect(() => {
     if (!newTemplateVisibilityOpen) {
       return;
@@ -636,16 +790,16 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
   const templateErrorMessage = (error: unknown, fallback: string): string =>
     error instanceof ApiError ? templateWriteMessage(error) : fallback;
 
-  /** 打开「新增节点」表单（清空旧输入；已开着就收起）。 */
-  const openCreateForm = (): void => {
+  /** 打开「新增节点」表单（清空旧输入；同一入口再点一次就收起）。`templateId` = 新建该模板私有节点，null = 新建公共节点库节点。 */
+  const openCreateForm = (templateId: string | null = null): void => {
     setFormError(null);
-    if (nodeForm?.mode === "create") {
+    if (nodeForm?.mode === "create" && nodeForm.templateId === templateId) {
       setNodeForm(null);
       return;
     }
     setFormTitle("");
     setFormTitleEn("");
-    setNodeForm({ mode: "create" });
+    setNodeForm({ mode: "create", templateId });
   };
 
   /** 打开「编辑节点」表单（预填当前中 / 英文名；再点一次同一个节点 = 收起）。 */
@@ -681,7 +835,17 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
     setFormError(null);
     void (async () => {
       try {
-        if (form.mode === "create") {
+        if (form.mode === "create" && form.templateId !== null) {
+          // 模板内新增 = 模板私有节点：只追加到当前模板草稿，不重取公共节点库。
+          const created = await createTemplateStageNode(form.templateId, title, formTitleEn.trim());
+          updateTemplates((previous) =>
+            previous.map((entry) =>
+              entry.id === form.templateId && !entry.nodes.some((node) => node.id === created.id)
+                ? { ...entry, nodes: [...entry.nodes, created] }
+                : entry,
+            ),
+          );
+        } else if (form.mode === "create") {
           await createStageNode(activeSection, title, formTitleEn.trim());
         } else {
           await updateStageNode(form.node.id, { title, titleEn: formTitleEn.trim(), version: form.node.version });
@@ -689,9 +853,11 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
         setNodeForm(null);
         setFormTitle("");
         setFormTitleEn("");
-        setNodesVersion((version) => version + 1);
-        // 节点名变了：模板面板里的节点摘要跟着刷新（本地没有未保存改动时才会被覆盖）
-        setTemplatesVersion((version) => version + 1);
+        if (form.mode === "edit" || (form.mode === "create" && form.templateId === null)) {
+          setNodesVersion((version) => version + 1);
+          // 节点名变了：模板面板里的节点摘要跟着刷新（本地没有未保存改动时才会被覆盖）
+          setTemplatesVersion((version) => version + 1);
+        }
       } catch (error) {
         setFormError(nodeErrorMessage(error, form.mode === "create" ? t("tpl.err.nodeCreate") : t("tpl.err.nodeSave")));
       } finally {
@@ -705,7 +871,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
    * 编辑 = **就地插在被编辑的那张卡片下面** —— 业务口径「任务模板里面点编辑，应该就近就可以修改，不是像当前一样在最上方才行」：
    * 长列表里点靠后的卡片，表单就在这张卡片底下出现，不用再滚回列头找（打开后焦点直接落在中文名输入框）。
    */
-  const renderNodeForm = (form: { mode: "create" | "edit" }): ReactNode => (
+  const renderNodeForm = (form: { mode: "create" | "edit" }, templateName?: string): ReactNode => (
     <form
       onSubmit={(event) => {
         event.preventDefault();
@@ -716,8 +882,15 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
       }
     >
       <p className="mb-2 text-xs font-medium text-zinc-700">
-        {form.mode === "create" ? t("tpl.node.create") : t("tpl.node.edit")} · {stageText(locale, activeSection)}
+        {(form.mode === "create"
+          ? templateName === undefined
+            ? t("tpl.node.create")
+            : t("tpl.node.createInTemplate", { name: templateName })
+          : t("tpl.node.edit")) + " · " + stageText(locale, activeSection)}
       </p>
+      {form.mode === "create" && templateName !== undefined ? (
+        <p className="mb-2 text-xs leading-5 text-zinc-500">{t("tpl.node.createInTemplateHint")}</p>
+      ) : null}
       <input
         type="text"
         value={formTitle}
@@ -785,6 +958,132 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
       }
     })();
   };
+
+  /** 申请 / 审核失败的统一文案（403 无审核权、409 并发、VALIDATION_FAILED 已处理都转人话；其它给兜底）。 */
+  const nodeRequestErrorMessage = (error: unknown, fallback: string): string =>
+    error instanceof ApiError ? nodeRequestWriteMessage(error) : fallback;
+
+  /** 审核行当前的中英文名（没编辑过 = 申请原值；英文名空串 = 无英文，提交时传 null）。 */
+  const requestDraftOf = (request: TaskNodeRequest): { title: string; titleEn: string } =>
+    requestDrafts[request.id] ?? { title: request.title, titleEn: request.titleEn ?? "" };
+
+  /** 就地改名：先把缺省值固化再打补丁，避免输入框中途「回跳」到申请原值。 */
+  const patchRequestDraft = (request: TaskNodeRequest, patch: Partial<{ title: string; titleEn: string }>): void => {
+    setRequestDrafts((current) => ({
+      ...current,
+      [request.id]: { ...(current[request.id] ?? { title: request.title, titleEn: request.titleEn ?? "" }), ...patch },
+    }));
+  };
+
+  /** 动作成功后清掉该条的本地编辑态（列表会按服务端最新值重画）。 */
+  const clearRequestLocalState = (requestId: string): void => {
+    setRequestDrafts((current) => {
+      const next = { ...current };
+      delete next[requestId];
+      return next;
+    });
+    setRejectingRequestId((current) => (current === requestId ? null : current));
+    setRejectReason("");
+  };
+
+  /**
+   * 通过：直接提交审核行里的中英文名（没改过 = 申请原值，与申请值相同也没关系 —— 服务端按同阶段同名判重，
+   * 已有同名节点则只关联不新建，故 linkedExisting 的提示文案分开）。
+   * 通过后节点库可能多出一条：复用节点库重取版本号让左列立刻看到，模板里的节点名也顺手刷新。
+   */
+  const approveRequest = (request: TaskNodeRequest): void => {
+    if (actingRequestId !== null) {
+      return;
+    }
+    const draft = requestDraftOf(request);
+    const title = draft.title.trim();
+    if (title === "") {
+      return;
+    }
+    setActingRequestId(request.id);
+    void (async () => {
+      try {
+        const outcome = await approveTaskNodeRequest(request.id, {
+          title,
+          titleEn: draft.titleEn.trim() === "" ? null : draft.titleEn.trim(),
+        });
+        setNodeRequestNotice({
+          kind: "ok",
+          text: outcome.linkedExisting ? t("nodeRequests.linkedExisting") : t("nodeRequests.approved"),
+        });
+        clearRequestLocalState(request.id);
+        setNodesVersion((version) => version + 1);
+        setTemplatesVersion((version) => version + 1);
+        setNodeRequestsVersion((version) => version + 1);
+        // 待处理条数变了：让「任务模板」导航红点跟着重算
+        void refreshTaskNodePending(canManageNodes);
+      } catch (error) {
+        setNodeRequestNotice({
+          kind: "error",
+          text: t("nodeRequests.actionFailed", { message: nodeRequestErrorMessage(error, t("tpl.err.retryLater")) }),
+        });
+      } finally {
+        setActingRequestId(null);
+      }
+    })();
+  };
+
+  /** 驳回：原因必填（默认「无」，可改；1..200，服务端复核）；成功后刷新列表，申请人随后能在「我的申请」看到原因。 */
+  const rejectRequest = (request: TaskNodeRequest): void => {
+    if (actingRequestId !== null) {
+      return;
+    }
+    const reason = rejectReason.trim();
+    if (reason === "") {
+      return;
+    }
+    setActingRequestId(request.id);
+    void (async () => {
+      try {
+        await rejectTaskNodeRequest(request.id, reason);
+        setNodeRequestNotice({ kind: "ok", text: t("nodeRequests.rejected") });
+        clearRequestLocalState(request.id);
+        setNodeRequestsVersion((version) => version + 1);
+        // 待处理条数变了：让「任务模板」导航红点跟着重算
+        void refreshTaskNodePending(canManageNodes);
+      } catch (error) {
+        setNodeRequestNotice({
+          kind: "error",
+          text: t("nodeRequests.actionFailed", { message: nodeRequestErrorMessage(error, t("tpl.err.retryLater")) }),
+        });
+      } finally {
+        setActingRequestId(null);
+      }
+    })();
+  };
+
+  /** 撤销本人待审申请（只能撤自己的 pending；服务端复核）。 */
+  const withdrawRequest = (request: TaskNodeRequest): void => {
+    if (actingRequestId !== null) {
+      return;
+    }
+    setActingRequestId(request.id);
+    void (async () => {
+      try {
+        await withdrawTaskNodeRequest(request.id);
+        setNodeRequestNotice({ kind: "ok", text: t("nodeRequests.withdrawn") });
+        clearRequestLocalState(request.id);
+        setNodeRequestsVersion((version) => version + 1);
+        // 待处理条数变了：让「任务模板」导航红点跟着重算
+        void refreshTaskNodePending(canManageNodes);
+      } catch (error) {
+        setNodeRequestNotice({
+          kind: "error",
+          text: t("nodeRequests.actionFailed", { message: nodeRequestErrorMessage(error, t("tpl.err.retryLater")) }),
+        });
+      } finally {
+        setActingRequestId(null);
+      }
+    })();
+  };
+
+  /** 实际展示的标签：没有节点库维护权时「待审核」这个标签不存在，一律回落到「我的申请」。 */
+  const shownRequestsTab: "pending" | "mine" = canManageNodes ? nodeRequestsTab : "mine";
 
   /**
    * 鼠标底下是「哪块面板的第几格」（Push 116）：`data-template-panel` 认面板、卡片中线认格 ——
@@ -1000,7 +1299,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
               左列「任务节点」的吸顶位随之顺延（top = 64 + 59 − 1 = 122px，多叠 1px 防缝）。 */}
           <div data-template-tabs="true" className="sticky top-16 z-20 -mx-6 -mt-3 flex items-center gap-3 border-b border-zinc-200 bg-[#f5f6f8]/95 px-6 pt-3 backdrop-blur">
             <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-              {TEMPLATE_SECTIONS.map((stage) => {
+              {TEMPLATE_STAGE_SECTIONS.map((stage) => {
                 const active = stage === activeSection;
                 return (
                   <button
@@ -1008,23 +1307,40 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                     type="button"
                     onClick={() => replaceTemplateSection(stage)}
                     aria-current={active ? "page" : undefined}
-                    className={
-                      "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +
-                      (active
-                        ? "border-zinc-900 text-zinc-900"
-                        : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
-                    }
+                    className={templateTabClass(active)}
                   >
                     {stageText(locale, stage)}
                   </button>
                 );
               })}
             </div>
+            <button
+              type="button"
+              data-template-extra-section="inbound_review"
+              onClick={() => {
+                if (nodeRequestsSectionActive) {
+                  setNodeRequestsVersion((version) => version + 1);
+                }
+                replaceTemplateSection(TEMPLATE_SPECIAL_SECTION);
+              }}
+              aria-current={TEMPLATE_SPECIAL_SECTION === activeSection ? "page" : undefined}
+              className={"shrink-0 " + templateTabClass(TEMPLATE_SPECIAL_SECTION === activeSection)}
+            >
+              {stageText(locale, TEMPLATE_SPECIAL_SECTION)}
+              {navTemplatesPending ? (
+                <span
+                  role="img"
+                  data-template-inbound-review-dot=""
+                  aria-label={t("nav.templates.pendingAria")}
+                  className="ml-1.5 inline-block h-2 w-2 shrink-0 rounded-full bg-rose-500 align-middle"
+                />
+              ) : null}
+            </button>
             {/*
               新建模板的入口在板块标签栏这一行：点一下 = POST 一份空模板（默认名「未命名模板」），
               新面板插到「任务节点」右侧、原来的模板往右挪。写 = 系统管理员或有效项目经理，无权不渲染（服务端仍是最终裁决）。
             */}
-            {canManageTemplates ? (
+            {canManageTemplates && !nodeRequestsSectionActive ? (
               <button
                 type="button"
                 data-template-new=""
@@ -1042,7 +1358,282 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
             ) : null}
           </div>
 
-          <div className="relative mt-6">
+          {/* 入库审核工作台（2026-11-13 用户口径「远端仓库已经有审核的页面，我们用他的；本地的不用」
+              「我们的清单和他的审核页正好互补」）：本地左列列头的入口按钮 + 申请浮层已删除，
+              申请清单（待审核 / 我的申请）整体迁到「入库审核」板块；该板块只保留审核工作台，
+              节点库 / 模板面板与「新建模板」入口不在本板块渲染。「待审核」只给 canManageNodes（现仅系统管理员）的账号。 */}
+          {nodeRequestsSectionActive ? (
+            <section
+              data-node-requests-workbench=""
+              aria-label={t("nodeRequests.entry")}
+              className="mx-auto mt-4 flex w-full max-w-6xl flex-col overflow-clip rounded-2xl border border-white/80 bg-white/85 shadow-[0_8px_32px_rgba(15,23,42,0.10)] backdrop-blur-xl lg:h-[calc(100dvh-180px)]"
+            >
+              <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-zinc-200 px-4 py-2.5">
+                <h2 className="text-base font-semibold text-zinc-900">{t("nodeRequests.entry")}</h2>
+                {/* 列表只在进入板块时取一次：停在板块里等新申请时，用它手动重取（复用「重新加载」键） */}
+                <button
+                  type="button"
+                  onClick={() => { setNodeRequestsVersion((version) => version + 1); }}
+                  disabled={nodeRequestsLoading}
+                  data-node-requests-refresh=""
+                  className="ml-auto shrink-0 rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t("common.reload")}
+                </button>
+              </div>
+              <div role="tablist" aria-label={t("nodeRequests.entry")} className="flex shrink-0 flex-wrap items-center gap-1 border-b border-zinc-100 px-4 text-sm">
+                {canManageNodes ? (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={shownRequestsTab === "pending"}
+                    data-node-request-tab="pending"
+                    onClick={() => { setNodeRequestsTab("pending"); setRejectingRequestId(null); setRejectReason(""); }}
+                    className={
+                      "border-b-2 px-2.5 py-1.5 font-medium transition " +
+                      (shownRequestsTab === "pending"
+                        ? "border-zinc-900 text-zinc-900"
+                        : "border-transparent text-zinc-500 hover:text-zinc-800")
+                    }
+                  >
+                    {t("nodeRequests.tabPending")}
+                    {reviewPendingCount === 0 ? null : (
+                      <span className="ml-1 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                        {t("nodeRequests.pendingBadge", { n: reviewPendingCount })}
+                      </span>
+                    )}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={shownRequestsTab === "mine"}
+                  data-node-request-tab="mine"
+                  onClick={() => { setNodeRequestsTab("mine"); setRejectingRequestId(null); setRejectReason(""); }}
+                  className={
+                    "border-b-2 px-2.5 py-1.5 font-medium transition " +
+                    (shownRequestsTab === "mine"
+                      ? "border-zinc-900 text-zinc-900"
+                      : "border-transparent text-zinc-500 hover:text-zinc-800")
+                  }
+                >
+                  {t("nodeRequests.tabMine")}
+                  {myPendingCount === 0 ? null : (
+                    <span className="ml-1 rounded-full bg-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-zinc-600">
+                      {t("nodeRequests.pendingBadge", { n: myPendingCount })}
+                    </span>
+                  )}
+                </button>
+              </div>
+              <div data-node-request-list="" className="max-h-[min(420px,50vh)] overflow-y-auto px-3 py-2 lg:max-h-none lg:min-h-0 lg:flex-1">
+                {nodeRequestsError === null ? null : (
+                  <p className="rounded-xl border border-dashed border-rose-200 bg-rose-50/70 px-4 py-6 text-center text-xs text-rose-700">
+                    {t("nodeRequests.loadFailed", { message: nodeRequestsError })}
+                    <button
+                      type="button"
+                      onClick={() => { setNodeRequestsVersion((version) => version + 1); }}
+                      className="ml-2 rounded border border-rose-200 bg-white px-2 py-0.5 text-[11px] text-rose-700 transition hover:bg-rose-50"
+                    >
+                      {t("common.retry")}
+                    </button>
+                  </p>
+                )}
+
+                {nodeRequestsLoading ? (
+                  <p className="py-10 text-center text-xs text-zinc-500">{t("common.loading")}</p>
+                ) : null}
+
+                {!nodeRequestsLoading && nodeRequestsError === null && canManageNodes && shownRequestsTab === "pending" ? (
+                  pendingRequests.length === 0 ? (
+                    <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyPending")}</p>
+                  ) : (
+                    <>
+                      <ul className="space-y-1.5">
+                        {pendingRequests.map((request) => {
+                          const draft = requestDraftOf(request);
+                          const titleEmpty = draft.title.trim() === "";
+                          const acting = actingRequestId === request.id;
+                          const rejecting = rejectingRequestId === request.id;
+                          return (
+                            <li
+                              key={request.id}
+                              data-node-request-item={request.id}
+                              data-node-request-status={request.status}
+                              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs"
+                            >
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">
+                                  {stageText(locale, stageNameOf(request.stageKey))}
+                                </span>
+                                <span className="text-[11px] text-zinc-500">
+                                  {t("nodeRequests.requestedBy", { name: request.requestedByName ?? "—" })}
+                                </span>
+                                <span className="text-[11px] text-zinc-500">
+                                  {"· " + t("nodeRequests.submittedAt", { time: formatDateTime(request.requestedAt) })}
+                                </span>
+                                <span className="ml-auto text-[11px] text-zinc-400">
+                                  {t("nodeRequests.sourceProject", { name: sourceProjectLabel(request) })}
+                                </span>
+                              </div>
+                              <div className="mt-1.5 grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-center">
+                                <input
+                                  type="text"
+                                  value={draft.title}
+                                  onChange={(event) => { patchRequestDraft(request, { title: event.currentTarget.value }); }}
+                                  placeholder={t("import.nodes.requestName")}
+                                  aria-label={t("import.nodes.requestName") + " · " + request.title}
+                                  maxLength={200}
+                                  className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+                                  data-node-request-title={request.id}
+                                />
+                                <input
+                                  type="text"
+                                  value={draft.titleEn}
+                                  onChange={(event) => { patchRequestDraft(request, { titleEn: event.currentTarget.value }); }}
+                                  placeholder={t("import.nodes.requestNameEn")}
+                                  aria-label={t("import.nodes.requestNameEn") + " · " + request.title}
+                                  maxLength={200}
+                                  className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+                                  data-node-request-title-en={request.id}
+                                />
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={acting || titleEmpty}
+                                    onClick={() => { approveRequest(request); }}
+                                    data-node-request-approve={request.id}
+                                    className="rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                                  >
+                                    {t("nodeRequests.approve")}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={acting}
+                                    onClick={() => {
+                                      setRejectingRequestId(rejecting ? null : request.id);
+                                      setRejectReason("无");
+                                    }}
+                                    data-node-request-reject={request.id}
+                                    className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {t("nodeRequests.reject")}
+                                  </button>
+                                  {!acting ? null : <span className="text-[11px] text-zinc-400">{t("common.saving")}</span>}
+                                </div>
+                              </div>
+                              {!titleEmpty ? null : (
+                                <p className="mt-1 text-[11px] text-rose-600">{t("import.nodes.requestNameRequired")}</p>
+                              )}
+                              {!rejecting ? null : (
+                                <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-2.5">
+                                  <label
+                                    className="block text-[11px] font-medium text-zinc-600"
+                                    htmlFor={"node-request-reject-" + request.id}
+                                  >
+                                    {t("nodeRequests.rejectReason")}
+                                  </label>
+                                  <input
+                                    id={"node-request-reject-" + request.id}
+                                    type="text"
+                                    value={rejectReason}
+                                    onChange={(event) => { setRejectReason(event.currentTarget.value); }}
+                                    placeholder={t("nodeRequests.rejectPlaceholder")}
+                                    aria-label={t("nodeRequests.rejectReason")}
+                                    maxLength={200}
+                                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
+                                    data-node-request-reject-reason={request.id}
+                                  />
+                                  <div className="mt-2 flex items-center justify-end gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => { setRejectingRequestId(null); setRejectReason(""); }}
+                                      className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50"
+                                    >
+                                      {t("common.cancel")}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={acting || rejectReason.trim() === ""}
+                                      onClick={() => { rejectRequest(request); }}
+                                      data-node-request-reject-confirm={request.id}
+                                      className="rounded-md bg-rose-500 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-rose-600 disabled:cursor-not-allowed disabled:bg-rose-200"
+                                    >
+                                      {t("nodeRequests.reject")}
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </>
+                  )
+                ) : null}
+
+                {!nodeRequestsLoading && nodeRequestsError === null && shownRequestsTab === "mine" ? (
+                  myRequests.length === 0 ? (
+                    <p className="py-10 text-center text-xs text-zinc-500">{t("nodeRequests.emptyMine")}</p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {myRequests.map((request) => (
+                        <li
+                          key={request.id}
+                          data-node-request-item={request.id}
+                          data-node-request-status={request.status}
+                          className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs"
+                        >
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">
+                              {stageText(locale, stageNameOf(request.stageKey))}
+                            </span>
+                            <span className="min-w-0 font-medium text-zinc-800">
+                              {request.title}
+                              {request.titleEn === null || request.titleEn === "" ? "" : " · " + request.titleEn}
+                            </span>
+                            <span
+                              className={"ml-auto rounded-md border px-1.5 py-0.5 text-[11px] font-medium " + NODE_REQUEST_STATUS_STYLE[request.status]}
+                              data-node-request-status-badge={request.status}
+                            >
+                              {t(NODE_REQUEST_STATUS_KEY[request.status])}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-zinc-500">
+                            <span>
+                              {t("nodeRequests.submittedAt", { time: formatDateTime(request.requestedAt) })}
+                              {" · "}
+                              {t("nodeRequests.sourceProject", { name: sourceProjectLabel(request) })}
+                            </span>
+                            {request.status !== "pending" ? null : (
+                              <button
+                                type="button"
+                                disabled={actingRequestId !== null}
+                                onClick={() => { withdrawRequest(request); }}
+                                data-node-request-withdraw={request.id}
+                                className="ml-auto rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {t("nodeRequests.withdraw")}
+                              </button>
+                            )}
+                          </div>
+                          {request.reviewNote === null || request.reviewNote === "" ? null : (
+                            <p className="mt-1 text-[11px] text-zinc-600">
+                              {(request.status === "rejected" ? t("nodeRequests.rejectReason") : t("nodeRequests.reviewNote")) +
+                                " · " +
+                                request.reviewNote}
+                            </p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+
+          {nodeRequestsSectionActive ? null : (
+          <div data-template-board="" className="relative mt-6">
             {/* 毛玻璃底衬：玻璃要有可透的背景才看得出效果，这里垫一层很淡的色雾（纯装饰、不接收鼠标事件）。 */}
             <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 overflow-x-clip">
               <div className="sticky top-0 h-[70vh]">
@@ -1072,8 +1663,8 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                     {canManageNodes ? (
                       <button
                         type="button"
-                        onClick={openCreateForm}
-                        aria-expanded={nodeForm?.mode === "create"}
+                        onClick={() => { openCreateForm(); }}
+                        aria-expanded={nodeForm?.mode === "create" && nodeForm.templateId === null}
                         title={t("tpl.nodes.addTitle", { stage: stageText(locale, activeSection) })}
                         className="shrink-0 rounded-md border border-white/70 bg-white/60 px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-white hover:text-zinc-900"
                       >
@@ -1082,7 +1673,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                     ) : null}
                   </span>
                 </div>
-                {nodeForm !== null && nodeForm.mode === "create" ? renderNodeForm(nodeForm) : null}
+                {nodeForm !== null && nodeForm.mode === "create" && nodeForm.templateId === null ? renderNodeForm(nodeForm) : null}
                 {/* 搜索框：按中 / 英文名过滤左列的节点卡片（切板块时自动清空） */}
                 <div className="relative mb-3">
                   <svg
@@ -1228,11 +1819,23 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                               (isLocalizedLocale(locale) ? "min-w-[12rem]" : "min-w-0")
                             }
                           />
-                          {/* 「计数 / 保存 / 删除」收成一组：放得下就一行右对齐；英文面板放不下时整组换到第二行（名字优先占满第一行）。 */}
+                          {/* 「计数 / 添加节点 / 保存 / 删除」收成一组：放得下就一行右对齐；英文面板放不下时整组换到第二行（名字优先占满第一行）。 */}
                           <span className="ml-auto flex min-w-0 items-center gap-2">
                             <span aria-label={t("tpl.nodes.selectedAria")} className="shrink-0 text-xs text-zinc-500">
                               {t("tpl.nodes.n", { n: nodeCount })}
                             </span>
+                            {canManageThisTemplate ? (
+                              <button
+                                type="button"
+                                data-template-add-node={template.id}
+                                onClick={() => { openCreateForm(template.id); }}
+                                aria-expanded={nodeForm?.mode === "create" && nodeForm.templateId === template.id}
+                                title={t("tpl.nodes.addToTemplateTitle", { name: localize(template.name) })}
+                                className="shrink-0 whitespace-nowrap rounded-md border border-white/70 bg-white/60 px-2 py-0.5 text-xs font-medium text-zinc-700 transition hover:bg-white hover:text-zinc-900"
+                              >
+                                {t("tpl.nodes.add")}
+                              </button>
+                            ) : null}
                             {canManageThisTemplate ? (
                               <button
                                 type="button"
@@ -1351,6 +1954,9 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                           ) : null}
                         </div>
                       </div>
+                      {nodeForm?.mode === "create" && nodeForm.templateId === template.id ? (
+                        renderNodeForm(nodeForm, localize(template.name))
+                      ) : null}
                       <div
                         className={
                           "flex flex-1 flex-col rounded-xl border transition " +
@@ -1363,7 +1969,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
                       >
                         {nodeCount === 0 ? (
                           <p className="flex min-h-[160px] flex-1 items-center justify-center px-4 text-center text-xs text-zinc-400">
-                            {canManageThisTemplate ? t("tpl.dropHere") : t("tpl.dropHereReadonly")}
+                            {canManageThisTemplate ? t("tpl.dropHereOrAdd") : t("tpl.dropHereReadonly")}
                           </p>
                         ) : (
                           <div className="space-y-3 p-3">
@@ -1437,6 +2043,7 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
               </div>
             </div>
           </div>
+          )}
           {newTemplateVisibilityOpen ? (
             <div
               className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/30 px-4 backdrop-blur-[2px]"
@@ -1535,6 +2142,15 @@ export default function PlaceholderPage({ me, page, section, canManageNodes, can
               kind="error"
               text={templateNotice}
               onClose={() => { setTemplateNotice(null); }}
+            />
+          )}
+          {/* 申请审核 / 撤销的结果提示（成功与失败同一位置；通过时区分「新建」与「已关联同名节点」） */}
+          {nodeRequestNotice === null ? null : (
+            <Toast
+              kind={nodeRequestNotice.kind}
+              text={nodeRequestNotice.text}
+              onClose={() => { setNodeRequestNotice(null); }}
+              anchor={{ name: "data-node-request-notice", value: nodeRequestNotice.kind }}
             />
           )}
         </main>

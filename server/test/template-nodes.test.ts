@@ -5,7 +5,7 @@
  * 3) 编辑：PATCH /api/v1/task-nodes/{id} —— 改名 / 英文名（trim；空串 → null 清空）；乐观锁 version 过期 409 VERSION_CONFLICT；
  *    改成同阶段已有名字 409 NODE_ALREADY_EXISTS（排除自身）；不存在 404 NOT_FOUND；
  * 4) 删除：物理删行 + 删除前快照写审计（objectType = task_node）；不存在 404 NOT_FOUND；
- * 5) 权限：写（新增 / 编辑 / 删除）= 节点库管理权（系统管理员，或至少管理一个有效项目的项目经理；ADR-019 / ADR-020）—— 无权 403，且不落库、不留痕；
+ * 5) 权限：公共节点写（新增 / 编辑 / 删除）= 仅系统管理员；项目经理、普通成员与任务负责人均无权 —— 无权 403，且不落库、不留痕；
  * 6) 留痕：新增 / 编辑 / 删除各一条审计（create / update / delete；编辑写字段级 changes）；本刀不写 outbox（与字典维护同口径）。
  * 契约见 shared/src/modules/templates.ts；真机口径见 server/src/modules/template/README.md。
  */
@@ -27,6 +27,7 @@ const AT = new Date("2026-09-24T03:00:00Z");
 function makeRow(overrides: Partial<TaskNodeRow> = {}): TaskNodeRow {
   return {
     id: NODE,
+    ownerTemplateId: null,
     stageKey: "install",
     seq: 10,
     title: "货架组装",
@@ -45,21 +46,27 @@ class FakeTaskNodeRepository {
 
   async list(stageKey: string | null): Promise<TaskNodeRow[]> {
     this.listStages.push(stageKey);
-    return this.rows.filter((row) => stageKey === null || row.stageKey === stageKey).map((row) => ({ ...row }));
+    return this.rows
+      .filter((row) => row.ownerTemplateId === null && (stageKey === null || row.stageKey === stageKey))
+      .map((row) => ({ ...row }));
   }
 
   async findById(id: string): Promise<TaskNodeRow | null> {
-    const row = this.rows.find((item) => item.id === id);
+    const row = this.rows.find((item) => item.id === id && item.ownerTemplateId === null);
     return row === undefined ? null : { ...row };
   }
 
-  async findByTitle(stageKey: string, title: string): Promise<TaskNodeRow | null> {
-    const row = this.rows.find((item) => item.stageKey === stageKey && item.title === title);
+  async findByTitle(stageKey: string, title: string, ownerTemplateId: string | null = null): Promise<TaskNodeRow | null> {
+    const row = this.rows.find(
+      (item) => item.stageKey === stageKey && item.title === title && item.ownerTemplateId === ownerTemplateId,
+    );
     return row === undefined ? null : { ...row };
   }
 
   async maxSeq(stageKey: string): Promise<number> {
-    const values = this.rows.filter((row) => row.stageKey === stageKey).map((row) => row.seq);
+    const values = this.rows
+      .filter((row) => row.ownerTemplateId === null && row.stageKey === stageKey)
+      .map((row) => row.seq);
     return values.length === 0 ? 0 : Math.max(...values);
   }
 
@@ -97,7 +104,7 @@ class FakePermissionService {
   }
   async assertCanManageTaskNodes(_actorId: string, message?: string): Promise<void> {
     this.lastKey = "taskNode.manage";
-    if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "维护任务节点库需要项目经理或管理员权限");
+    if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "维护公共任务节点库需要系统管理员权限");
   }
 }
 
@@ -148,6 +155,17 @@ describe("节点库列表（读 = 登录即可）", () => {
     expect(result.items.map((item) => item.title)).toEqual(["货架组装", "方案评审"]);
   });
 
+  it("入库审核是模板独立板块：可按 inbound_review 读取，不混入验收", async () => {
+    const { service, repo } = makeService();
+    repo.rows = [
+      makeRow(),
+      makeRow({ id: MISSING, stageKey: "inbound_review", title: "入库复核" }),
+    ];
+    const result = await service.listNodes({ stage: "inbound_review" });
+    expect(repo.listStages).toEqual(["inbound_review"]);
+    expect(result.items.map((item) => item.title)).toEqual(["入库复核"]);
+  });
+
   it("指定阶段 = 只回该阶段节点；契约字段齐（ISO 时间 + version 只读 0）", async () => {
     const { service, repo } = makeService();
     repo.rows = [makeRow(), makeRow({ id: MISSING, stageKey: "design", title: "方案评审" })];
@@ -193,6 +211,13 @@ describe("新增节点（写 = 节点库管理权）", () => {
     const { service } = makeService();
     const created = await service.createNode({ stageKey: "install", title: "线缆铺设", titleEn: "  Cabling  " }, ACTOR);
     expect(created.titleEn).toBe("Cabling");
+  });
+
+  it("可在入库审核板块新增公共节点；审计按板块展示，不影响九阶段节点", async () => {
+    const { service, audit } = makeService();
+    const created = await service.createNode({ stageKey: "inbound_review", title: "入库资料复核" }, ACTOR);
+    expect(created).toMatchObject({ stageKey: "inbound_review", seq: 10, title: "入库资料复核" });
+    expect(audit.records[0]?.summary).toBe("新增任务节点：入库审核 · 入库资料复核");
   });
 
   it("显式 seq 原样落库（插队场景）", async () => {

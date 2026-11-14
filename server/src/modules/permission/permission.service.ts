@@ -249,14 +249,14 @@ export class PermissionService {
     throw new AppError("FORBIDDEN", message ?? "维护流程蓝图需要系统管理员权限");
   }
 
-  /** 任务节点库维护：系统管理员，或至少管理一个未软删项目的项目经理；部门编辑范围不授予。 */
+  /** 公共任务节点库维护：仅系统管理员；项目经理、部门编辑范围与普通成员均不授予。模板私有节点另随模板编辑权。 */
   async canManageTaskNodes(actorId: string): Promise<boolean> {
-    return this.hasActiveManagedProject(actorId);
+    return (await this.groupAccessOf(actorId)).admin;
   }
 
   async assertCanManageTaskNodes(actorId: string, message?: string): Promise<void> {
     if (await this.canManageTaskNodes(actorId)) return;
-    throw new AppError("FORBIDDEN", message ?? "维护任务节点库需要项目经理或管理员权限");
+    throw new AppError("FORBIDDEN", message ?? "维护公共任务节点库需要系统管理员权限");
   }
 
   /**

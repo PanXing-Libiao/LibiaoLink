@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
-import { IMPORT_ALLOWED_EXTENSIONS, IMPORT_MAX_FILE_BYTES, IMPORT_PREVIEW_TTL_MINUTES } from "@libiaolink/contracts";
+import {
+  IMPORT_ALLOWED_EXTENSIONS,
+  IMPORT_MAX_FILE_BYTES,
+  IMPORT_PREVIEW_TTL_MINUTES,
+  STAGE_NAMES,
+} from "@libiaolink/contracts";
 import type {
   ImportAccount,
   ImportIssue,
@@ -31,7 +36,7 @@ import { AuditService } from "../admin/index.js";
 import type { UserRow } from "../identity/index.js";
 import { PermissionService, ProjectManagerEligibilityService } from "../permission/index.js";
 import { FlowService, ProjectMemberRepository, ProjectRepository } from "../project/index.js";
-import { TaskNodeRepository } from "../template/index.js";
+import { TaskNodeRepository, TemplateService } from "../template/index.js";
 import { TranslateService } from "../translate/index.js";
 import { convertLegacyWorkbook } from "./legacy.js";
 import type {
@@ -58,6 +63,7 @@ import { ImportAdmissionGate } from "./import-admission.gate.js";
 import { ImportNodeMatcher } from "./import-node-matcher.js";
 import type { ImportLibraryNode } from "./import-node-matcher.js";
 import { ZipArchive, parseWorkbook, parseWorkbookFile } from "./xlsx.js";
+import { TaskNodeRequestService } from "../template/index.js";
 import type { ParsedWorkbook } from "./xlsx.js";
 
 /**
@@ -71,7 +77,7 @@ import type { ParsedWorkbook } from "./xlsx.js";
  * 口径铁律：
  * 1. 照原值导入 + 提醒（日期笔误 / 三档提醒见 legacy.ts 的 seeds；不因提醒阻断）；
  * 2. 五档进度 = 0 / 0.25 / 0.5 / 0.75 / 1（进行中封顶 75%；完成日期未填 = 不算完成）；
- * 3. 任务节点：同阶段精确 / 语义匹配复用并采用标准名称；不确定项人工确认，新节点由开关决定是否补库；
+ * 3. 任务节点：同阶段精确匹配自动复用；AI 建议逐条选择，保留原名可选加入个人模板；
  *    阶段外为临时任务，多任务指向同一节点时人工选择一条关联并保留其他任务；
  * 4. 账号：只对账不建号 —— 测试环境缺号需先在账号体系建号并登录一次（面板列出 isNew 账号）；正式环境用户目录完整、
  *    全部直接命中，无需任何建号动作（业务口径 2026-10-14：自动创号仅测试环境需要）。提交时账号仍不存在不阻断 ——
@@ -161,6 +167,8 @@ const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 /** 变更 / 日报长文本入库上限（与库内 check 同值：daily_reports 2000 / issues.title 500 / 文本类 2000）。 */
 const TEXT_LIMIT = 2000;
 const TITLE_LIMIT = 500;
+/** 阶段 key → 展示名（提醒文案用，与 template 模块同口径）。 */
+const STAGE_NAME_BY_KEY = STAGE_NAMES as Record<string, string>;
 
 /** 导入表导入用例（h2+ · 导入项目按钮的服务端落点）。 */
 @Injectable()
@@ -181,6 +189,8 @@ export class ProjectImportService implements OnModuleInit {
     private readonly translate: TranslateService,
     private readonly admission: ImportAdmissionGate,
     private readonly nodeMatcher: ImportNodeMatcher,
+    private readonly templateService: TemplateService,
+    private readonly nodeRequests: TaskNodeRequestService,
   ) {}
 
   /** 启动清掉上次进程崩溃遗留的导入临时目录（按前缀 + mtime 保龄，不碰活跃请求）。 */
@@ -226,7 +236,9 @@ export class ProjectImportService implements OnModuleInit {
     }
     const extraSeeds: LegacyIssueSeed[] = [];
     const resolution = await this.resolveAccounts(collectPeople(parse));
-    const { groups, groupIndexByTask, library } = await this.buildNodeGroups(parse.tasks);
+    const grouping = await this.buildNodeGroups(parse.tasks);
+    let groups = grouping.groups;
+    const { groupIndexByTask, library } = grouping;
     const candidates = groups.flatMap((group, index) =>
       group.matchKind === "uncertain" && group.stageKey !== null
         ? [{ index, stageKey: group.stageKey, title: group.title, titleEn: group.titleEn }]
@@ -265,6 +277,10 @@ export class ProjectImportService implements OnModuleInit {
         (/^[\x20-\x7e]+$/.test(selected.title) ? selected.title : nodeKey(selected.title) === nodeKey(group.title) ? group.sourceTitleEn : null);
       for (const taskIndex of group.taskIndexes) parse.tasks[taskIndex]!.titleEn ??= group.sourceTitleEn;
     });
+    // 语义建议按任务逐条确认，即使源表中有完全相同的描述。
+    groups = groups.flatMap((group) => group.matchKind === "semantic" && group.taskIndexes.length > 1
+      ? group.taskIndexes.map((taskIndex) => ({ ...group, taskCount: 1, taskIndexes: [taskIndex] })) : [group]);
+    groups.forEach((group, index) => group.taskIndexes.forEach((taskIndex) => { groupIndexByTask[taskIndex] = index; }));
     const previewId = randomUUID();
     const objectKey = "imports/" + previewId + "/source." + extensionOf(fileName);
     await this.putSource(objectKey, input, sizeBytes);
@@ -297,7 +313,7 @@ export class ProjectImportService implements OnModuleInit {
       imagesManual: parse.manualFiles.length,
       stakeholders: parse.stakeholders.length,
       accountsNew: resolution.accounts.filter((account) => account.isNew).length,
-      nodesNew: groups.filter((group) => group.matchKind === "new").length,
+      nodesNew: 0, // 兼容旧客户端字段：导入不再向节点库新增节点。
     };
     if (parse.stakeholderSheetName === null) {
       extraSeeds.push(stakeholderSheetMissingSeed());
@@ -331,6 +347,7 @@ export class ProjectImportService implements OnModuleInit {
       imagesManual: parse.manualFiles.map((file, index) => manualImageOf(file, index, input.locale)),
       nodes: groups.map((group, index) => contractNodeOf(group, index, parse.tasks)),
       nodeLibrary: library,
+      personalTemplates: await this.templateService.listPersonalImportTemplates(input.actorId),
       issues,
     };
   }
@@ -438,6 +455,39 @@ export class ProjectImportService implements OnModuleInit {
     if (payload.nodeSnapshot === undefined) throw new AppError("VALIDATION_FAILED", "导入预览已更新，请重新选择文件解析");
     const { groups, groupIndexByTask } = payload.nodeSnapshot;
     const nodePlan = resolveNodePlan(payload.nodeSnapshot, body, await this.nodes.list(null));
+    const selectedGroups = new Set<number>();
+    const personalSelections = (body.personalTemplateSelections ?? []).map((selection) => {
+      const group = groups[selection.groupIndex];
+      const plan = nodePlan.groups[selection.groupIndex];
+      if (group === undefined || group.stageKey === null || plan === undefined || plan.node !== null || selectedGroups.has(selection.groupIndex)) {
+        throw new AppError("VALIDATION_FAILED", "个人模板的任务选择无效");
+      }
+      selectedGroups.add(selection.groupIndex);
+      return { templateId: selection.templateId, version: selection.version, stageKey: group.stageKey, title: group.title, titleEn: group.sourceTitleEn };
+    });
+    // 公共节点申请（2026-11-13）：只允许对「保留 Excel 原名」的阶段内节点提交；同一分组只能提交一次。
+    const requestItems: Array<{ stageKey: string; title: string; titleEn: string | null }> = [];
+    const requestedGroups = new Set<number>();
+    for (const item of body.nodeRequests ?? []) {
+      const group = groups[item.groupIndex];
+      const plan = nodePlan.groups[item.groupIndex];
+      if (group === undefined || plan === undefined || group.stageKey === null || plan.node !== null) {
+        throw new AppError("VALIDATION_FAILED", "公共节点申请只能针对保留 Excel 原名的任务");
+      }
+      if (requestedGroups.has(item.groupIndex)) {
+        throw new AppError("VALIDATION_FAILED", "同一任务节点只能提交一次公共节点申请");
+      }
+      requestedGroups.add(item.groupIndex);
+      const title = (item.title ?? group.title).trim();
+      if (title === "") throw new AppError("VALIDATION_FAILED", "公共节点申请的名称不能为空");
+      const titleEn = item.titleEn === undefined
+        ? group.sourceTitleEn
+        : item.titleEn === null || item.titleEn.trim() === ""
+          ? null
+          : item.titleEn.trim();
+      requestItems.push({ stageKey: group.stageKey, title: clipText(title, 200), titleEn: clipNullable(titleEn, 200) });
+    }
+
     // 人工改选的标准节点可能没有英文；按最终名称生成，避免沿用不同源任务的译文。
     const selectedEnglish = new Map<string, string>();
     const missingSelected = new Map<string, { index: number; title: string }>();
@@ -459,17 +509,13 @@ export class ProjectImportService implements OnModuleInit {
       const english = translatedSelected.get(item.index);
       if (english !== undefined) selectedEnglish.set(id, english);
     }
-    const eligibleManagerIds = await this.managerEligibility.eligibleUserIds();
+    // Excel 导入以源表为准：命中账号的项目经理直接保留，不套用「项目部成员 / 系统管理员」资格过滤；
+    // 新建 / 编辑项目与名册指派仍在 ProjectManagerEligibilityService 校验。
     const managerIds: string[] = [];
-    const ineligibleManagerNames: string[] = [];
     for (const name of placement.managerNames) {
       const displayName = stripParen(name);
       const id = resolution.byName.get(displayName) ?? null;
       if (id === null) continue;
-      if (!eligibleManagerIds.has(id)) {
-        if (!ineligibleManagerNames.includes(displayName)) ineligibleManagerNames.push(displayName);
-        continue;
-      }
       if (!managerIds.includes(id)) managerIds.push(id);
     }
     const extraSeeds: LegacyIssueSeed[] = [];
@@ -483,28 +529,17 @@ export class ProjectImportService implements OnModuleInit {
     if (unresolvedChangeApplicants.length > 0) extraSeeds.push(changeApplicantMissingSeed(unresolvedChangeApplicants));
     const unresolvedChangeWriters = unresolvedNamesOf(changeWriterIds);
     if (unresolvedChangeWriters.length > 0) extraSeeds.push(changeWriterMissingSeed(unresolvedChangeWriters));
-    if (ineligibleManagerNames.length > 0) {
-      extraSeeds.push(ineligibleManagerSeed(ineligibleManagerNames, managerIds.length === 0));
-    }
     if (managerIds.length === 0) {
-      if (!eligibleManagerIds.has(actorId)) {
-        throw new AppError(
-          "VALIDATION_FAILED",
-          "导入项目的项目经理必须选择有效项目部成员或系统管理员；源表项目经理不符合条件，且导入人也不具备项目经理资格，请调整源表或由符合条件的账号导入",
-        );
-      }
+      // 源表经理账号仍不存在时保留既有兜底：导入人记录为项目经理并提醒；导入路径不校验项目经理资格。
       managerIds.push(actorId);
-      if (ineligibleManagerNames.length === 0) {
-        extraSeeds.push(
-          managerFallbackSeed(placement.managerNames.map((name) => stripParen(name))),
-        );
-      }
+      extraSeeds.push(managerFallbackSeed(placement.managerNames.map((name) => stripParen(name))));
     }
     const groupAccess = await this.permission.groupAccessOf(actorId);
     const autoManageOwnProjects =
       groupAccess.enforced && !groupAccess.admin && groupAccess.ownEdit && !groupAccess.allEdit;
     let addImporterAsProjectMember = false;
     if (autoManageOwnProjects && !managerIds.includes(actorId)) {
+      const eligibleManagerIds = await this.managerEligibility.eligibleUserIds();
       if (eligibleManagerIds.has(actorId)) {
         // 「仅自己的项目可编辑」且本人符合资格：与 ProjectService 新建口径一致，自动成为项目经理。
         managerIds.push(actorId);
@@ -576,6 +611,7 @@ export class ProjectImportService implements OnModuleInit {
     throwIfCancelled(signal);
     const commitTx = this.database.db.transaction(async (tx) => {
       throwIfCancelled(signal);
+      await this.templateService.appendImportedPrivateNodes(personalSelections, actorId, tx);
       const projectRow = await this.projects.insert(
         {
           id: projectId,
@@ -591,6 +627,13 @@ export class ProjectImportService implements OnModuleInit {
         at,
         tx,
       );
+      // 公共节点申请：与项目 / 任务在同一事务里落库（导入回滚则申请一起回滚；申请不阻塞导入）。
+      const requestOutcome = requestItems.length === 0
+        ? { requests: [], existingNodes: [], reusedPending: 0 as number }
+        : await this.nodeRequests.createFromImport(
+            { actorId, projectId: projectRow.id, previewId: preview.id, items: requestItems },
+            tx,
+          );
       const imported = await this.flow.importSnapshot(tx, {
         projectId: projectRow.id,
         projectType: projectRow.projectType,
@@ -604,42 +647,6 @@ export class ProjectImportService implements OnModuleInit {
       }
       if (addImporterAsProjectMember) {
         await this.members.upsert(projectRow.id, actorId, "project_member", at, tx);
-      }
-
-      // 经用户确认的新节点按开关补库；阶段外任务不补。
-      const nodeIdByGroup = new Map<number, string | null>();
-      let nodesAdded = 0;
-      if (body.addMissingNodes) {
-        const seqCursor = new Map<string, number>();
-        for (let index = 0; index < groups.length; index += 1) {
-          throwIfCancelled(signal);
-          const group = groups[index]!;
-          if (nodePlan.groups[index]!.action !== "new" || group.stageKey === null) continue;
-          let seq = seqCursor.get(group.stageKey);
-          if (seq === undefined) seq = await this.nodes.maxSeq(group.stageKey, tx);
-          seq += 10;
-          seqCursor.set(group.stageKey, seq);
-          const nodeRow = await this.nodes.insert(
-            { stageKey: group.stageKey, seq, title: clipText(group.title, 200), titleEn: clipNullable(group.sourceTitleEn, 200) },
-            tx,
-          );
-          nodesAdded += 1;
-          nodeIdByGroup.set(index, nodeRow.id);
-          await this.audit.record(tx, {
-            actorId,
-            action: "create",
-            objectType: "task_node",
-            objectId: nodeRow.id,
-            projectId: projectRow.id,
-            summary: "导入表导入新增任务节点：" + nodeRow.title,
-            changes: [
-              { field: "stageKey", from: null, to: nodeRow.stageKey },
-              { field: "title", from: null, to: nodeRow.title },
-              { field: "titleEn", from: null, to: nodeRow.titleEn },
-            ],
-            metadata: { source: "project-import", previewId: preview.id },
-          });
-        }
       }
 
       // 任务：同一阶段内 sortIndex 递增（0 起、密集）；ownerIds 只挂库内已有账号（缺号进提醒，不阻断）。
@@ -664,7 +671,7 @@ export class ProjectImportService implements OnModuleInit {
         return {
           stageKey: task.stageKey,
           taskNodeId: nodeChoice.key !== null && nodePlan.linkedTaskByKey.get(nodeChoice.key) === taskIndex
-            ? (nodeChoice.node?.id ?? nodeIdByGroup.get(groupIndex) ?? null) : null,
+            ? (nodeChoice.node?.id ?? null) : null,
           title: clipText(nodeChoice.node?.title ?? task.title, 200),
           titleEn: clipNullable(nodeChoice.node === null ? task.titleEn : nodeChoice.node.titleEn ?? selectedEnglish.get(nodeChoice.node.id) ??
             (nodeKey(nodeChoice.node.title) === nodeKey(task.title) ? task.titleEn : null), 200),
@@ -804,7 +811,7 @@ export class ProjectImportService implements OnModuleInit {
         stakeholders: stakeholderRows.length,
         images: fileRows.length,
         accountsCreated: resolution.accounts.length,
-        nodesAdded,
+        nodesAdded: 0,
       };
       throwIfCancelled(signal);
       await this.audit.record(tx, {
@@ -841,13 +848,19 @@ export class ProjectImportService implements OnModuleInit {
           previewId: preview.id,
           fileName: preview.fileName,
           counts,
-          addMissingNodes: body.addMissingNodes,
         },
       });
       throwIfCancelled(signal);
       await this.previews.markCommitted(preview.id, projectRow.id, at, tx);
       const manualTargets = buildManualTargets(parse.manualFiles, taskIds, changeIds, changeLinks);
-      return { projectId: projectRow.id, code: projectRow.code, name: projectRow.name, counts, manualTargets };
+      return {
+        projectId: projectRow.id,
+        code: projectRow.code,
+        name: projectRow.name,
+        counts,
+        manualTargets,
+        requestOutcome,
+      };
     });
     let written: {
       projectId: string;
@@ -855,6 +868,7 @@ export class ProjectImportService implements OnModuleInit {
       name: string;
       counts: ImportResultCounts;
       manualTargets: ImportManualTarget[];
+      requestOutcome: { requests: Array<{ id: string; stageKey: string; title: string; status: string }>; existingNodes: Array<{ stageKey: string; title: string }>; reusedPending: number };
     };
     try {
       written = await commitTx;
@@ -863,6 +877,16 @@ export class ProjectImportService implements OnModuleInit {
       throw error;
     }
 
+    if (written.requestOutcome.existingNodes.length > 0) {
+      extraSeeds.push(
+        nodeRequestExistingNodeSeed(
+          written.requestOutcome.existingNodes.map((item) => STAGE_NAME_BY_KEY[item.stageKey] + " · " + item.title),
+        ),
+      );
+    }
+    if (written.requestOutcome.reusedPending > 0) {
+      extraSeeds.push(nodeRequestReusedSeed(written.requestOutcome.reusedPending));
+    }
     if (unresolvedOwners.size > 0) {
       extraSeeds.push(unresolvedOwnersSeed([...unresolvedOwners]));
     }
@@ -881,6 +905,12 @@ export class ProjectImportService implements OnModuleInit {
       name: written.name,
       counts: written.counts,
       manualTargets: written.manualTargets,
+      nodeRequests: written.requestOutcome.requests.map((row) => ({
+        id: row.id,
+        stageKey: row.stageKey as ProjectImportResult["nodeRequests"][number]["stageKey"],
+        title: row.title,
+        status: row.status as ProjectImportResult["nodeRequests"][number]["status"],
+      })),
       issues,
     };
   }
@@ -1145,6 +1175,7 @@ function collectPeople(parse: LegacyParse): string[] {
     seen.add(base);
     names.push(base);
   };
+  for (const manager of parse.project.managerNames) push(manager);
   for (const task of parse.tasks) {
     push(task.managerName ?? "");
     for (const owner of task.ownerNames) push(owner);
@@ -1212,7 +1243,6 @@ function contractNodeOf(group: NodeGroup, groupIndex: number, tasks: readonly Le
 }
 
 type NodePlanGroup = {
-  action: "existing" | "new" | "standalone";
   node: ImportLibraryNode | null;
   key: string | null;
 };
@@ -1239,13 +1269,20 @@ function resolveNodePlan(
       if (choice !== undefined && choice.action !== "standalone") {
         throw new AppError("VALIDATION_FAILED", "阶段外任务不能关联或新增任务节点");
       }
-      return { action: "standalone", node: null, key: null };
+      return { node: null, key: null };
     }
-    const action = choice?.action ?? (
-      group.matchKind === "exact" || group.matchKind === "semantic" ? "existing" :
-      group.matchKind === "new" ? "new" : null
+    if (group.matchKind === "exact" && choice !== undefined && (choice.action !== "existing" || choice.nodeId !== group.libraryId)) {
+      throw new AppError("VALIDATION_FAILED", "名称一致的任务须使用节点库标准名称");
+    }
+    if (group.matchKind === "semantic" && choice?.action === "existing" && choice.nodeId !== group.libraryId) {
+      throw new AppError("VALIDATION_FAILED", "请选择 AI 建议的节点或保留 Excel 名称");
+    }
+    const requestedAction = choice?.action ?? (
+      group.matchKind === "exact" ? "existing" : group.matchKind === "new" ? "standalone" : null
     );
-    if (action === null) throw new AppError("VALIDATION_FAILED", "请先处理待人工确认的任务节点");
+    if (requestedAction === null) throw new AppError("VALIDATION_FAILED", "请先处理待人工确认的任务节点");
+    // 旧客户端的 new 选择只保留任务，不再创建节点。
+    const action = requestedAction === "new" ? "standalone" : requestedAction;
     if (choice !== undefined && action !== "existing" && choice.nodeId !== null) {
       throw new AppError("VALIDATION_FAILED", "节点处理选择无效，请重新确认");
     }
@@ -1263,18 +1300,13 @@ function resolveNodePlan(
       }
       node = current;
       key = "existing:" + current.id;
-    } else if (action === "new" && body.addMissingNodes) {
-      if (currentLibrary.some((item) => item.stageKey === group.stageKey && nodeKey(item.title) === nodeKey(group.title))) {
-        throw new AppError("VERSION_CONFLICT", "节点库已有同名节点，请重新选择文件解析");
-      }
-      key = "new:" + String(groupIndex);
     }
     if (key !== null) {
       const indexes = tasksByKey.get(key) ?? [];
       for (const taskIndex of group.taskIndexes) indexes.push(taskIndex);
       tasksByKey.set(key, indexes);
     }
-    return { action, node, key };
+    return { node, key };
   });
 
   const conflictChoices = new Map<string, number>();
@@ -1465,6 +1497,31 @@ function stakeholderFillerMissingSeed(names: readonly string[]): LegacyIssueSeed
   };
 }
 
+/** 公共节点申请：该阶段已有同名公共节点 → 不提交申请（任务仍按原名导入）。 */
+function nodeRequestExistingNodeSeed(items: readonly string[]): LegacyIssueSeed {
+  const list = items.join("、");
+  return {
+    level: "warning",
+    code: "NODE_REQUEST_EXISTING_NODE",
+    row: null,
+    subject: list,
+    zh: "该阶段已有同名公共节点，本次未提交申请（任务仍按 Excel 原名导入）：" + list,
+    en: "A public node with the same name already exists in that stage; no request was submitted (tasks keep the Excel names): " + list,
+  };
+}
+
+/** 公共节点申请：同阶段同名已有待审申请 → 直接沿用，不重复提交（info）。 */
+function nodeRequestReusedSeed(count: number): LegacyIssueSeed {
+  return {
+    level: "info",
+    code: "NODE_REQUEST_REUSED",
+    row: null,
+    subject: null,
+    zh: "有 " + String(count) + " 条同名申请已在审核队列中：本次直接沿用，不会重复提交",
+    en: String(count) + " request(s) with the same names are already pending review: reused instead of submitting duplicates.",
+  };
+}
+
 /** 变更申请人未命中（Push 347）：按导入人记录（与负责人 / 日报作者回落同口径，出 warning 提醒）。 */
 function changeApplicantMissingSeed(names: readonly string[]): LegacyIssueSeed {
   const list = names.join("、");
@@ -1521,28 +1578,6 @@ function unknownPeopleSeed(names: readonly string[]): LegacyIssueSeed {
       "People missing from the registry (no pinyin username): " +
       list +
       ". Add them to the registry and re-run the preview; owners / managers fall back for this import.",
-  };
-}
-
-function ineligibleManagerSeed(names: readonly string[], fallbackImporter: boolean): LegacyIssueSeed {
-  const list = names.join("、");
-  return {
-    level: "warning",
-    code: "MANAGER_INELIGIBLE",
-    row: null,
-    subject: list,
-    zh:
-      "源表项目经理不符合资格（仅有效项目部成员或系统管理员）：" +
-      list +
-      (fallbackImporter
-        ? "；本次已改记导入人为项目经理，请导入后核对成员名册"
-        : "；本次已跳过，请在项目成员名册中重新指定"),
-    en:
-      "Managers do not meet the eligibility rule (active Project Department member or system administrator): " +
-      list +
-      (fallbackImporter
-        ? ". The importer is recorded as project manager for this import; please verify the roster."
-        : ". They were skipped; please assign an eligible project manager in the member list."),
   };
 }
 

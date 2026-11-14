@@ -11,6 +11,7 @@
  * 字段面 = 前端消费面；正式契约由后端落 shared/src/modules/imports.ts（见《前端功能需求》§3.9）。
  */
 import { apiRequest, apiSend } from "./api";
+import type { TaskNodeRequestStatus } from "./templateApi";
 
 /** 提醒等级：error = 阻断（处理完才能导入）；warning = 照原值导入只提示；info = 口径说明。 */
 export type ImportIssueLevel = "error" | "warning" | "info";
@@ -47,7 +48,7 @@ export type ImportManualImage = {
   reason: string;
 };
 
-/** 任务节点匹配：精确 / 语义命中复用，未知项人工确认，已确认新节点可补库。 */
+/** 任务节点匹配：精确命中复用，语义建议逐条选择，保留原名可加入个人模板。 */
 export type ImportTaskNode = {
   name: string;
   /** 节点英文名（节点库 title_en 口径 / 未匹配时取源表英文列）：节点库中英文名成对，导入新节点时一并落库；源表没英文 = null。 */
@@ -91,19 +92,27 @@ export type ProjectImportPreview = {
   imagesManual: ImportManualImage[];
   nodes: ImportTaskNode[];
   nodeLibrary: Array<{ id: string; stageKey: string; title: string; titleEn: string | null; version: number }>;
+  personalTemplates: Array<{ id: string; name: string; stageKey: string; version: number }>;
   issues: ImportIssue[];
 };
 
-/** 确认导入（落位确认 + 节点补库开关）。 */
+/** 确认导入（落位、人工确认及冲突选择）。 */
 export type ProjectImportCommitInput = {
   previewId: string;
   /** 项目地区（标准国家 / 地区名或字典码）—— 源表识别不出时必须由用户在面板里选。 */
   region: string;
   /** 项目类型（字典 projectType 的码）；空串 = 未指定（解析按源表关键字给默认，如 AIRROB → 飞箱）。 */
   projectType: string;
-  /** 是否把文件里未匹配的新任务节点补进「任务节点」库（阶段范围外的任务按临时任务处理）。 */
-  addMissingNodes: boolean;
-  nodeDecisions?: Array<{ groupIndex: number; action: "existing" | "new" | "standalone"; nodeId: string | null }>;
+  /** 兼容旧服务端，明确关闭节点补库。 */
+  addMissingNodes?: false;
+  nodeDecisions?: Array<{ groupIndex: number; action: "existing" | "standalone"; nodeId: string | null }>;
+  personalTemplateSelections?: Array<{ groupIndex: number; templateId: string; version: number }>;
+  /**
+   * 公共节点申请（可选）：只允许对「保留 Excel 原名」的阶段内节点提交，同一 groupIndex 只能出现一次。
+   * title 缺省 = 源表原名；titleEn 缺省 = 预览补全的英文；显式 null = 无英文。
+   * 申请与导入同一事务提交 —— 申请失败不影响项目写入，反之亦然（整批回滚）。
+   */
+  nodeRequests?: Array<{ groupIndex: number; title?: string; titleEn?: string | null }>;
   conflictChoices?: Array<{ key: string; taskIndex: number }>;
 };
 
@@ -132,6 +141,8 @@ export type ProjectImportResult = {
   };
   /** 手动文件落位目标（与预览 imagesManual 同序；旧服务端缺省 = 空数组）。 */
   manualTargets?: ImportManualTarget[];
+  /** 本次随导入提交的公共节点申请（含合并到同名待审申请的；旧服务端缺省 = 空数组）。完成页据此提示「等待管理员审核」。 */
+  nodeRequests?: Array<{ id: string; stageKey: string; title: string; status: TaskNodeRequestStatus }>;
   issues: ImportIssue[];
 };
 

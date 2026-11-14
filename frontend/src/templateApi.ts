@@ -1,18 +1,31 @@
 /**
  * 任务节点库 / 任务模板接口封装（M3-05 余 · 第一段接线 + 第二段模板落库）：契约 shared/src/modules/templates.ts。
- * - 列表 GET /api/v1/task-nodes?stage=<九阶段 key>（任务模板页左列与「添加任务」卡片的「任务节点」标签同源）
- * - 新增 POST /api/v1/task-nodes（写 = 系统管理员 / 部门编辑账号；同阶段同名 409 NODE_ALREADY_EXISTS）
- * - 编辑 PATCH /api/v1/task-nodes/{id}（写 = 节点库维护权（系统管理员或有效项目经理）；乐观锁 version 必传：过期 409 VERSION_CONFLICT）
+ * - 列表 GET /api/v1/task-nodes?stage=<九阶段或 inbound_review 板块 key>（任务模板页左列与「添加任务」卡片的「任务节点」标签同源）
+ * - 新增 POST /api/v1/task-nodes（写 = 系统管理员 / 部门编辑账号；同板块同名 409 NODE_ALREADY_EXISTS）
+ * - 编辑 PATCH /api/v1/task-nodes/{id}（写 = 公共节点库维护权（仅系统管理员）；乐观锁 version 必传：过期 409 VERSION_CONFLICT）
  * - 删除 DELETE /api/v1/task-nodes/{id}（写 = blueprint.manage；物理删行 + 审计留痕；已生成的项目任务不受影响）
+ * - 模板内新增 POST /api/v1/task-templates/{id}/nodes（只写当前模板私有节点，不进入公共节点库）
+ * - 公共节点申请：GET /api/v1/task-node-requests（mine = true 看本人申请，任何账号可用；缺省 = 审核人看全部，需节点库维护权）
+ *   + POST .../{id}/approve（通过时按同阶段同名判重：已存在则关联、否则建节点）/ .../{id}/reject（原因必填）/ .../{id}/withdraw
+ *   —— 导入面板里「保留 Excel 原名」的节点可顺带申请；申请本身不改节点库，审核通过才落 task_nodes。
  * 任务模板（第二段 · Push 182）：GET/POST /api/v1/task-templates、PATCH/DELETE /api/v1/task-templates/{id}
  *   —— 写同样 = 模板管理权（新建：管理员或有效项目经理；编辑 / 删除：创建人或管理员）；新建时可选 private（仅自己）/ public（有浏览权的人），
  *      创建后只有填写人本人可随 PATCH 切换可见范围；
- * 阶段名（界面板块）↔ 阶段 key 的换算复用 taskApi 的 stageKeyOfName（同一份九阶段字典，避免两处各写一份）。
+ * 板块名 ↔ 板块 key：九阶段复用 taskApi 的 stageKeyOfName；「入库审核」是模板库特殊分组，映射 inbound_review。
  * 注意：任务侧还没有「节点库来源」字段（契约 taskNodeId 现解析为项目流程节点），
  * 「已添加」一律按「同阶段同名」折算（见 data/tasks.ts 的 addedNodeKeysOf）。
  */
 import { apiRequest, apiSend } from "./api";
 import { stageKeyOfName } from "./taskApi";
+
+/** 任务模板页专属分组：不是项目阶段，只用于模板库。 */
+const TEMPLATE_SECTION_KEYS_BY_NAME: Record<string, string> = {
+  "入库审核": "inbound_review",
+};
+
+function templateSectionKeyOfName(sectionName: string): string | null {
+  return stageKeyOfName(sectionName) ?? TEMPLATE_SECTION_KEYS_BY_NAME[sectionName] ?? null;
+}
 
 /** 契约 TaskNode（只取界面用得到的字段；服务端多给字段忽略即可）。 */
 export type ApiTaskNode = {
@@ -33,9 +46,9 @@ export function toNodeItem(node: ApiTaskNode): TaskNodeItem {
   return { id: node.id, title: node.title, titleEn: node.titleEn ?? "", version: node.version };
 }
 
-/** 某个板块（阶段名）的节点库列表；板块名不认识 = 空列表（不发请求）。 */
+/** 某个模板板块的节点库列表；板块名不认识 = 空列表（不发请求）。 */
 export async function fetchStageNodes(stageName: string): Promise<TaskNodeItem[]> {
-  const stageKey = stageKeyOfName(stageName);
+  const stageKey = templateSectionKeyOfName(stageName);
   if (stageKey === null) {
     return [];
   }
@@ -45,9 +58,9 @@ export async function fetchStageNodes(stageName: string): Promise<TaskNodeItem[]
   return payload.items.map(toNodeItem);
 }
 
-/** 新增节点（中文名必填、英文名可空；缺省追加到该阶段末尾）；返回落库后的条目。 */
+/** 新增节点（中文名必填、英文名可空；缺省追加到该板块末尾）；返回落库后的条目。 */
 export async function createStageNode(stageName: string, title: string, titleEn: string): Promise<TaskNodeItem> {
-  const stageKey = stageKeyOfName(stageName);
+  const stageKey = templateSectionKeyOfName(stageName);
   if (stageKey === null) {
     throw new Error("未知阶段：" + stageName);
   }
@@ -57,6 +70,20 @@ export async function createStageNode(stageName: string, title: string, titleEn:
     titleEn: titleEn.trim() === "" ? null : titleEn,
   });
   return toNodeItem(payload);
+}
+
+/** 在指定模板内新增私有节点；返回值只用于追加当前模板草稿，不进入左侧公共节点库。 */
+export async function createTemplateStageNode(
+  templateId: string,
+  title: string,
+  titleEn: string,
+): Promise<TaskNodeItem> {
+  const payload = await apiSend<{ nodeId: string; seq: number; title: string; titleEn: string | null }>(
+    "/api/v1/task-templates/" + encodeURIComponent(templateId) + "/nodes",
+    "POST",
+    { title, titleEn: titleEn.trim() === "" ? null : titleEn },
+  );
+  return { id: payload.nodeId, title: payload.title, titleEn: payload.titleEn ?? "", version: 0 };
 }
 
 /**
@@ -83,7 +110,7 @@ export function deleteTaskNode(id: string): Promise<{ id: string; deleted: boole
 /** 节点库写入失败的统一文案（409 NODE_ALREADY_EXISTS / 403 FORBIDDEN 等；服务端仍是最终裁决）。 */
 export function nodeWriteMessage(error: { code: string; message: string }): string {
   if (error.code === "NODE_ALREADY_EXISTS") {
-    return "该阶段已有同名节点，换个名字试试";
+    return "该板块已有同名节点，换个名字试试";
   }
   if (error.code === "FORBIDDEN") {
     return "维护节点库需要编辑权限";
@@ -96,6 +123,114 @@ export function nodeWriteMessage(error: { code: string; message: string }): stri
   }
   if (error.code === "VALIDATION_FAILED") {
     return "节点名称不合规：" + error.message;
+  }
+  return error.message;
+}
+
+// ---------- 公共节点申请（导入侧发起 · 节点库维护侧审核）----------
+
+/** 申请状态：pending = 待审核；approved = 已通过（已建或已关联公共节点）；rejected = 已驳回；withdrawn = 申请人已撤销。 */
+export type TaskNodeRequestStatus = "pending" | "approved" | "rejected" | "withdrawn";
+
+/** 契约 TaskNodeRequest（申请本身不改节点库；通过时才写 task_nodes）。 */
+export type TaskNodeRequest = {
+  id: string;
+  stageKey: string;
+  title: string;
+  titleEn: string | null;
+  status: TaskNodeRequestStatus;
+  requestedBy: string;
+  requestedByName: string | null;
+  requestedAt: string;
+  /** 来源项目（导入提交时同事务创建的项目；非导入来源为空）。 */
+  projectId: string | null;
+  projectCode: string | null;
+  projectName: string | null;
+  reviewedBy: string | null;
+  reviewedByName: string | null;
+  reviewedAt: string | null;
+  /** 审核意见（驳回原因必填；通过时可空）。 */
+  reviewNote: string | null;
+  /** 通过后创建 / 关联到的公共节点 id。 */
+  nodeId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** 申请列表：pendingCount = 当前视角下的待审条数（审核人 = 全局待审；本人视角 = 本人待审）。 */
+export type TaskNodeRequestList = { items: TaskNodeRequest[]; total: number; pendingCount: number };
+
+/** 审核 / 撤销结果：linkedExisting = 该阶段已有同名公共节点，本次直接关联而未新建。 */
+export type TaskNodeRequestDecision = {
+  request: TaskNodeRequest;
+  node: ApiTaskNode | null;
+  linkedExisting: boolean;
+};
+
+/**
+ * 列出公共节点申请：mine = true 只看本人申请（任何登录账号可用）；
+ * mine 缺省 = 审核人视角看全部（需节点库维护权，否则 403 FORBIDDEN）。
+ * 查询串只带真正用到的筛选项（mine 只在 true 时带，避免把 false 当成「也看全部」的歧义写法传上去）。
+ */
+export async function listTaskNodeRequests(
+  params: { stage?: string; status?: TaskNodeRequestStatus; mine?: boolean } = {},
+): Promise<TaskNodeRequestList> {
+  const query: string[] = [];
+  if (params.stage !== undefined && params.stage !== "") {
+    query.push("stage=" + encodeURIComponent(params.stage));
+  }
+  if (params.status !== undefined) {
+    query.push("status=" + encodeURIComponent(params.status));
+  }
+  if (params.mine === true) {
+    query.push("mine=true");
+  }
+  const path = "/api/v1/task-node-requests" + (query.length === 0 ? "" : "?" + query.join("&"));
+  return apiRequest<TaskNodeRequestList>(path);
+}
+
+/** 审核通过：中英文名缺省 = 按申请原值定稿（titleEn 显式 null = 清空）；同阶段同名已有公共节点则直接关联。 */
+export function approveTaskNodeRequest(
+  id: string,
+  body: { title?: string; titleEn?: string | null; note?: string },
+): Promise<TaskNodeRequestDecision> {
+  return apiSend<TaskNodeRequestDecision>(
+    "/api/v1/task-node-requests/" + encodeURIComponent(id) + "/approve",
+    "POST",
+    body,
+  );
+}
+
+/** 驳回（原因必填 1..200；申请人可见）。 */
+export function rejectTaskNodeRequest(id: string, reason: string): Promise<TaskNodeRequestDecision> {
+  return apiSend<TaskNodeRequestDecision>(
+    "/api/v1/task-node-requests/" + encodeURIComponent(id) + "/reject",
+    "POST",
+    { reason },
+  );
+}
+
+/** 撤销本人待审申请（无 body）。 */
+export function withdrawTaskNodeRequest(id: string): Promise<TaskNodeRequestDecision> {
+  return apiSend<TaskNodeRequestDecision>(
+    "/api/v1/task-node-requests/" + encodeURIComponent(id) + "/withdraw",
+    "POST",
+  );
+}
+
+/** 申请写入失败的统一文案（403 无审核权 / 409 并发 / VALIDATION_FAILED 已处理等；服务端仍是最终裁决）。 */
+export function nodeRequestWriteMessage(error: { code: string; message: string }): string {
+  if (error.code === "FORBIDDEN") {
+    return "审核公共节点申请需要节点库维护权限（项目经理或管理员）";
+  }
+  if (error.code === "VALIDATION_FAILED") {
+    return "申请状态已变化：" + error.message;
+  }
+  if (error.code === "NOT_FOUND") {
+    return "这条申请已经不在了，刷新看看";
+  }
+  if (error.code === "CONFLICT" || error.code === "VERSION_CONFLICT") {
+    return "这条申请刚被别人处理过，刷新后再试";
   }
   return error.message;
 }
@@ -147,9 +282,9 @@ export function toTemplateItem(template: ApiTaskTemplate): TemplateItem {
   };
 }
 
-/** 某个板块（阶段名）的模板列表；板块名不认识 = 空列表（不发请求）。 */
+/** 某个模板板块的模板列表；板块名不认识 = 空列表（不发请求）。 */
 export async function fetchStageTemplates(stageName: string): Promise<TemplateItem[]> {
-  const stageKey = stageKeyOfName(stageName);
+  const stageKey = templateSectionKeyOfName(stageName);
   if (stageKey === null) {
     return [];
   }
@@ -159,14 +294,14 @@ export async function fetchStageTemplates(stageName: string): Promise<TemplateIt
   return payload.items.map(toTemplateItem);
 }
 
-/** 新建模板（名称 + 所属阶段 + 可见范围 + 节点顺序；nodeIds 允许空 —— 新建后逐步拖入）。 */
+/** 新建模板（名称 + 所属板块 + 可见范围 + 节点顺序；nodeIds 允许空 —— 新建后逐步拖入）。 */
 export async function createTaskTemplate(
   stageName: string,
   name: string,
   nodeIds: string[],
   visibility: TemplateVisibility,
 ): Promise<TemplateItem> {
-  const stageKey = stageKeyOfName(stageName);
+  const stageKey = templateSectionKeyOfName(stageName);
   if (stageKey === null) {
     throw new Error("未知阶段：" + stageName);
   }

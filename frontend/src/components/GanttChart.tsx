@@ -1469,9 +1469,6 @@ export function GanttChart({ tasks, members, tierTint = false, onPatchTask, onSe
         ) : null}
       </div>
       <div className="mt-2 flex items-center justify-end gap-2 border-t border-zinc-100 pt-2">
-        <p data-gantt-help="" className="min-w-0 flex-1 text-[11px] leading-4 text-zinc-400">
-          {t("gantt.hint.barOps")}
-        </p>
         <button
           type="button"
           data-gantt-lock={barsLocked ? "locked" : "unlocked"}

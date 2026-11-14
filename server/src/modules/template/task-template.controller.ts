@@ -10,6 +10,7 @@ import {
   TaskTemplateCreateBodySchema,
   TaskTemplateDeleteBodySchema,
   TaskTemplateListQuerySchema,
+  TaskTemplateNodeCreateBodySchema,
   TaskTemplateUpdateBodySchema,
   UuidSchema,
 } from "@libiaolink/contracts";
@@ -20,6 +21,8 @@ import type {
   TaskTemplateDeleteResponse,
   TaskTemplateListQuery,
   TaskTemplateListResponse,
+  TaskTemplateNode,
+  TaskTemplateNodeCreateBody,
   TaskTemplateUpdateBody,
 } from "@libiaolink/contracts";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
@@ -37,7 +40,7 @@ export class TaskTemplateController {
     private readonly permission: PermissionService,
   ) {}
 
-  /** 模板列表（按阶段过滤；缺省全部阶段，排序 = 九阶段顺序 → created_at → id）。 */
+  /** 模板列表（按模板板块过滤；缺省全部板块，排序 = 板块顺序（九阶段 + 入库审核）→ created_at → id）。 */
   @Get()
   async list(
     @Query(new ZodValidationPipe(TaskTemplateListQuerySchema)) query: TaskTemplateListQuery,
@@ -62,6 +65,17 @@ export class TaskTemplateController {
     @CurrentActorId() actorId: string,
   ): Promise<TaskTemplate> {
     return this.templates.createTemplate(body, actorId);
+  }
+
+  /** 在模板内新增私有节点：只属于当前模板，不进入公共节点库；权限跟随模板编辑权。 */
+  @Post(":id/nodes")
+  @HttpCode(201)
+  addNode(
+    @Param("id", idParam) id: string,
+    @Body(new ZodValidationPipe(TaskTemplateNodeCreateBodySchema)) body: TaskTemplateNodeCreateBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<TaskTemplateNode> {
+    return this.templates.createTemplateNode(id, body, actorId);
   }
 
   /** 编辑模板（改名 / visibility / nodeIds 全量替换，乐观锁 version 必传）：不存在 404；版本过期 409。 */

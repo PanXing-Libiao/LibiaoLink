@@ -202,7 +202,7 @@
           },
           "taskNodeManage": {
             "type": "boolean",
-            "description": "是否可新增 / 编辑 / 删除公共任务节点库：管理员，或至少管理一个未删除项目的项目经理；部门编辑范围不授予"
+            "description": "是否可新增 / 编辑 / 删除公共任务节点库：仅系统管理员；项目经理、部门编辑范围与普通成员均不授予"
           },
           "taskTemplateRead": {
             "type": "boolean",
@@ -634,6 +634,7 @@
           "daily_report",
           "issue",
           "task_node",
+          "task_node_request",
           "task_template",
           "user",
           "wecom_dm_binding",
@@ -643,7 +644,7 @@
           "group_access_admin",
           "ai_model_provider"
         ],
-        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24） / ai_model_provider 模型服务（对象 id = 服务 id；不记录密钥）"
+        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_node_request 公共任务节点申请（对象 id = 申请 id；导入侧提交不单独留痕，审核通过 / 驳回 / 申请人撤销写审计） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24） / ai_model_provider 模型服务（对象 id = 服务 id；不记录密钥）"
       },
       "AuditResult": {
         "type": "string",
@@ -6054,7 +6055,8 @@
           },
           "nodesNew": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "公共节点补库兼容字段，恒为 0"
           }
         },
         "required": [
@@ -6156,7 +6158,8 @@
           },
           "nodesAdded": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "公共节点补库兼容字段，恒为 0"
           }
         },
         "required": [
@@ -6194,7 +6197,7 @@
               "null"
             ],
             "maxLength": 200,
-            "description": "源表英文名或 AI 补全的英文，人工改选新节点时使用"
+            "description": "源表英文名或 AI 补全的英文，未匹配任务直接导入时使用"
           },
           "matched": {
             "type": "boolean",
@@ -6219,7 +6222,8 @@
               "new",
               "uncertain",
               "temporary"
-            ]
+            ],
+            "description": "new 表示未匹配，按原名导入并可选加入个人模板"
           },
           "libraryId": {
             "allOf": [
@@ -9620,7 +9624,8 @@
                     "existing",
                     "new",
                     "standalone"
-                  ]
+                  ],
+                  "description": "new 为旧客户端兼容值，按 standalone 处理"
                 },
                 "nodeId": {
                   "allOf": [
@@ -9642,7 +9647,32 @@
                 "nodeId"
               ]
             },
-            "maxItems": 2000
+            "maxItems": 200000
+          },
+          "personalTemplateSelections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "groupIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "templateId": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "groupIndex",
+                "templateId",
+                "version"
+              ]
+            },
+            "maxItems": 200000
           },
           "conflictChoices": {
             "type": "array",
@@ -9666,17 +9696,49 @@
             },
             "maxItems": 2000
           },
+          "nodeRequests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "groupIndex": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "预览 nodes[] 的分组下标（必须是保留 Excel 原名的阶段内节点）"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "申请的中文名（缺省 = 源表原名）"
+                },
+                "titleEn": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 200,
+                  "description": "申请的英文名（缺省 = 预览补全的英文；可空）"
+                }
+              },
+              "required": [
+                "groupIndex"
+              ]
+            },
+            "maxItems": 2000,
+            "description": "公共节点申请：随导入同一事务提交，管理员审核通过后才进公共节点库（不阻塞导入）"
+          },
           "addMissingNodes": {
             "type": "boolean",
-            "default": true,
-            "description": "是否把未匹配的任务节点补进节点库（只有落在阶段范围内的会补；阶段外按临时任务）"
+            "default": false,
+            "description": "已停用，仅兼容旧客户端；不再通过此字段新增公共节点"
           }
         },
         "required": [
           "previewId",
           "region"
         ],
-        "description": "确认导入（落位确认 + 节点补库开关）"
+        "description": "确认导入（落位、节点处理及冲突选择）"
       },
       "ProjectImportPreview": {
         "type": "object",
@@ -9729,7 +9791,7 @@
             "items": {
               "$ref": "#/components/schemas/ImportTaskNode"
             },
-            "maxItems": 2000
+            "maxItems": 200000
           },
           "nodeLibrary": {
             "type": "array",
@@ -9771,6 +9833,38 @@
             },
             "maxItems": 10000
           },
+          "personalTemplates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "stageKey": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "stageKey",
+                "version"
+              ]
+            },
+            "maxItems": 10000
+          },
           "issues": {
             "type": "array",
             "items": {
@@ -9789,6 +9883,7 @@
           "imagesManual",
           "nodes",
           "nodeLibrary",
+          "personalTemplates",
           "issues"
         ],
         "description": "导入表导入预览报告（解析不写库；确认后才写入）"
@@ -9811,6 +9906,35 @@
           },
           "counts": {
             "$ref": "#/components/schemas/ImportResultCounts"
+          },
+          "nodeRequests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "stageKey": {
+                  "$ref": "#/components/schemas/StageKey"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/TaskNodeRequestStatus"
+                }
+              },
+              "required": [
+                "id",
+                "stageKey",
+                "title",
+                "status"
+              ]
+            },
+            "maxItems": 2000,
+            "default": [],
+            "description": "本次随导入提交的公共节点申请（含已存在同名待审申请而合并的；前端在完成页提示「等待管理员审核」）"
           },
           "manualTargets": {
             "type": "array",
@@ -12505,7 +12629,7 @@
             "$ref": "#/components/schemas/Uuid"
           },
           "stageKey": {
-            "$ref": "#/components/schemas/StageKey"
+            "$ref": "#/components/schemas/TemplateSectionKey"
           },
           "seq": {
             "type": "integer",
@@ -12544,20 +12668,20 @@
           "createdAt",
           "updatedAt"
         ],
-        "description": "任务节点库条目（任务模板的节点来源）"
+        "description": "任务节点库条目（任务模板的节点来源；stageKey 可为九阶段或入库审核）"
       },
       "TaskNodeCreateBody": {
         "type": "object",
         "properties": {
           "stageKey": {
-            "$ref": "#/components/schemas/StageKey"
+            "$ref": "#/components/schemas/TemplateSectionKey"
           },
           "title": {
             "type": "string",
             "minLength": 1,
             "maxLength": 200,
             "example": "货架组装",
-            "description": "节点名称（中文；同阶段内唯一）"
+            "description": "节点名称（中文；同板块内唯一）"
           },
           "titleEn": {
             "type": [
@@ -12570,7 +12694,7 @@
           "seq": {
             "type": "integer",
             "exclusiveMinimum": 0,
-            "description": "库内排序；缺省 = 追加到该阶段末尾（末位 seq + 10）"
+            "description": "库内排序；缺省 = 追加到该板块末尾（末位 seq + 10）"
           }
         },
         "required": [
@@ -12612,6 +12736,266 @@
           "items",
           "total"
         ]
+      },
+      "TaskNodeRequest": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "stageKey": {
+            "$ref": "#/components/schemas/StageKey"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "货架复检",
+            "description": "申请加入公共节点库的中文名（申请时 = 源表原名，审核通过时按审核人口径定稿）"
+          },
+          "titleEn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "申请的英文名（可空；审核通过时按审核人口径定稿）"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskNodeRequestStatus"
+          },
+          "requestedBy": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "requestedByName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "申请人显示名（users.display_name）"
+          },
+          "requestedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "projectId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "来源项目（导入提交时同事务创建的项目；非导入来源为空）"
+              }
+            ]
+          },
+          "projectCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "来源项目编号（读面冗余，方便审核人判断上下文）"
+          },
+          "projectName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reviewedBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "reviewedByName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reviewedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "reviewNote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "审核意见（驳回原因必填；通过时可空）"
+          },
+          "nodeId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "通过后创建 / 关联到的公共节点 id"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "id",
+          "stageKey",
+          "title",
+          "titleEn",
+          "status",
+          "requestedBy",
+          "requestedByName",
+          "requestedAt",
+          "projectId",
+          "projectCode",
+          "projectName",
+          "reviewedBy",
+          "reviewedByName",
+          "reviewedAt",
+          "reviewNote",
+          "nodeId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "公共任务节点申请（导入侧发起，节点库维护侧审核）"
+      },
+      "TaskNodeRequestApproveBody": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "货架复检",
+            "description": "定稿中文名（缺省 = 申请时的名称）"
+          },
+          "titleEn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "定稿英文名（缺省 = 申请时的英文；显式 null = 清空）"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "审核意见（可空）"
+          }
+        },
+        "description": "通过公共节点申请（可改中英文名后建节点）"
+      },
+      "TaskNodeRequestDecisionResponse": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "$ref": "#/components/schemas/TaskNodeRequest"
+          },
+          "node": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskNode"
+              },
+              {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "通过时创建或关联到的公共节点；驳回 / 撤销为空"
+              }
+            ]
+          },
+          "linkedExisting": {
+            "type": "boolean",
+            "description": "true = 通过时该阶段已有同名公共节点，本次直接关联而未新建"
+          }
+        },
+        "required": [
+          "request",
+          "node",
+          "linkedExisting"
+        ],
+        "description": "申请审核 / 撤销结果"
+      },
+      "TaskNodeRequestListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskNodeRequest"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pendingCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "当前视角下的待审核条数（审核人 = 全局待审；本人视角 = 本人待审）"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "pendingCount"
+        ],
+        "description": "公共节点申请列表"
+      },
+      "TaskNodeRequestRejectBody": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "与现有节点重复，请改用其它名称",
+            "description": "驳回原因（必填；申请人可见）"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "description": "驳回公共节点申请（原因必填）"
+      },
+      "TaskNodeRequestStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected",
+          "withdrawn"
+        ],
+        "description": "pending = 待审核；approved = 已通过（已建或已关联公共节点）；rejected = 已驳回；withdrawn = 申请人已撤销"
       },
       "TaskNodeUpdateBody": {
         "type": "object",
@@ -12748,7 +13132,7 @@
             "description": "模板名称（列头可直接改名）"
           },
           "stageKey": {
-            "$ref": "#/components/schemas/StageKey"
+            "$ref": "#/components/schemas/TemplateSectionKey"
           },
           "visibility": {
             "$ref": "#/components/schemas/TaskTemplateVisibility"
@@ -12803,7 +13187,7 @@
           "createdAt",
           "updatedAt"
         ],
-        "description": "任务模板（名称 + 阶段 + 可见范围 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）"
+        "description": "任务模板（名称 + 模板板块 + 可见范围 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）"
       },
       "TaskTemplateCreateBody": {
         "type": "object",
@@ -12814,7 +13198,7 @@
             "maxLength": 100
           },
           "stageKey": {
-            "$ref": "#/components/schemas/StageKey"
+            "$ref": "#/components/schemas/TemplateSectionKey"
           },
           "visibility": {
             "allOf": [
@@ -12840,7 +13224,7 @@
           "name",
           "stageKey"
         ],
-        "description": "新建任务模板；visibility 缺省 public（兼容旧客户端）"
+        "description": "新建任务模板（stageKey 为模板板块：九阶段或 inbound_review）；visibility 缺省 public（兼容旧客户端）"
       },
       "TaskTemplateDeleteBody": {
         "type": "object",
@@ -12914,7 +13298,31 @@
           "title",
           "titleEn"
         ],
-        "description": "模板内节点（引用任务节点库 + 模板内顺序 + 名称摘要）"
+        "description": "模板内节点（公共节点或该模板私有节点 + 模板内顺序 + 名称摘要）"
+      },
+      "TaskTemplateNodeCreateBody": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "货架复检",
+            "description": "节点名称（当前模板内唯一）"
+          },
+          "titleEn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "英文名（可空）"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "description": "在指定模板内新增私有节点（不进入公共节点库）"
       },
       "TaskTemplateUpdateBody": {
         "type": "object",
@@ -13102,6 +13510,22 @@
           "version"
         ],
         "description": "编辑任务（乐观锁 version 必传；阶段不在本接口；status 支持五态并联动进度与完成日期，进度 / 完成日期仍走 /progress；ownerIds 显式 [] = 待分配、传数组 = 整体替换，sortIndex = 组内重排）；title / titleEn（Push 196）仅**未归入阶段**的临时任务可改，阶段任务 / 节点 / 模板生成的任务仍锁定（带字段请求 400）；deliverableTypes（2026-10-08 起）常规编辑开放，原「生成后锁定 / 仅管理员例外调整」下架"
+      },
+      "TemplateSectionKey": {
+        "type": "string",
+        "enum": [
+          "presale",
+          "design",
+          "purchase",
+          "assembly",
+          "install",
+          "deploy",
+          "trial",
+          "production",
+          "acceptance",
+          "inbound_review"
+        ],
+        "description": "任务模板板块 key：九阶段 + inbound_review（入库审核，不属于项目阶段）"
       },
       "TranslateBatchBody": {
         "type": "object",
@@ -17677,21 +18101,21 @@
         "tags": [
           "templates"
         ],
-        "summary": "任务节点库（任务模板的节点来源；按阶段过滤）",
+        "summary": "任务节点库（任务模板的节点来源；按九阶段或入库审核过滤）",
         "parameters": [
           {
             "schema": {
               "allOf": [
                 {
-                  "$ref": "#/components/schemas/StageKey"
+                  "$ref": "#/components/schemas/TemplateSectionKey"
                 },
                 {
-                  "description": "按阶段过滤；缺省 = 全部阶段"
+                  "description": "按模板板块过滤（九阶段或 inbound_review）；缺省 = 全部板块"
                 }
               ]
             },
             "required": false,
-            "description": "按阶段过滤；缺省 = 全部阶段",
+            "description": "按模板板块过滤（九阶段或 inbound_review）；缺省 = 全部板块",
             "name": "stage",
             "in": "query"
           }
@@ -17713,7 +18137,7 @@
         "tags": [
           "templates"
         ],
-        "summary": "新增任务节点（管理端维护节点库；同阶段同名 409）",
+        "summary": "新增公共任务节点（仅系统管理员；同板块同名 409）",
         "parameters": [
           {
             "schema": {
@@ -17783,7 +18207,7 @@
         "tags": [
           "templates"
         ],
-        "summary": "编辑任务节点（改名 / 英文名；乐观锁 version 必传）",
+        "summary": "编辑公共任务节点（仅系统管理员；乐观锁 version 必传）",
         "parameters": [
           {
             "schema": {
@@ -17861,7 +18285,7 @@
         "tags": [
           "templates"
         ],
-        "summary": "删除任务节点（物理删行；删除前快照写审计；已生成的项目任务不变）",
+        "summary": "删除公共任务节点（仅系统管理员；物理删行；已生成的项目任务不变）",
         "parameters": [
           {
             "schema": {
@@ -17907,12 +18331,12 @@
         }
       }
     },
-    "/api/v1/task-templates": {
+    "/api/v1/task-node-requests": {
       "get": {
         "tags": [
           "templates"
         ],
-        "summary": "任务模板列表（按阶段过滤；含节点顺序与名称摘要）",
+        "summary": "公共任务节点申请列表（审核人看全部；本人视角只看自己）",
         "parameters": [
           {
             "schema": {
@@ -17927,6 +18351,305 @@
             },
             "required": false,
             "description": "按阶段过滤；缺省 = 全部阶段",
+            "name": "stage",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/TaskNodeRequestStatus"
+                },
+                {
+                  "description": "按状态过滤；缺省 = 全部状态"
+                }
+              ]
+            },
+            "required": false,
+            "description": "按状态过滤；缺省 = 全部状态",
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "true = 只看本人申请（任何登录账号可用）；false / 缺省 = 审核人视角看全部申请（需节点库维护权）"
+            },
+            "required": false,
+            "description": "true = 只看本人申请（任何登录账号可用）；false / 缺省 = 审核人视角看全部申请（需节点库维护权）",
+            "name": "mine",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "申请列表 + 待审条数",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskNodeRequestListResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/task-node-requests/{id}/approve": {
+      "post": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "通过公共节点申请（可先改中英文名；同阶段已有同名节点则直接关联）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskNodeRequestApproveBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "审核结果（含创建或关联到的节点）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskNodeRequestDecisionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/task-node-requests/{id}/reject": {
+      "post": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "驳回公共节点申请（原因必填，申请人可见）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskNodeRequestRejectBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "驳回结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskNodeRequestDecisionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/task-node-requests/{id}/withdraw": {
+      "post": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "撤销本人的待审申请（仅 pending 可撤销）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "撤销结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskNodeRequestDecisionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/task-templates": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "任务模板列表（按板块过滤；含节点顺序与名称摘要）",
+        "parameters": [
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/TemplateSectionKey"
+                },
+                {
+                  "description": "按模板板块过滤（九阶段或 inbound_review）；缺省 = 全部板块"
+                }
+              ]
+            },
+            "required": false,
+            "description": "按模板板块过滤（九阶段或 inbound_review）；缺省 = 全部板块",
             "name": "stage",
             "in": "query"
           }
@@ -17948,7 +18671,7 @@
         "tags": [
           "templates"
         ],
-        "summary": "新建任务模板（名称 + 阶段 + 节点顺序）",
+        "summary": "新建任务模板（名称 + 模板板块 + 节点顺序）",
         "parameters": [
           {
             "schema": {
@@ -18133,6 +18856,95 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TaskTemplateDeleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/task-templates/{id}/nodes": {
+      "post": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "在模板内新增私有节点（只属于当前模板，不进入公共节点库）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            },
+            "required": false,
+            "description": "写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果",
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskTemplateNodeCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "创建成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskTemplateNode"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
