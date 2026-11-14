@@ -23,7 +23,7 @@ import { createHash, randomBytes } from "node:crypto";
  *
  * 它验什么（24 项）：
  *   A. 顶栏「任务模板」红点：有待审申请时出现、待审清零后消失；同一待审态下「入库审核」板块标签同步亮红点，点进板块后标签红点消失；板块标签栏 11 枚且第 10 枚 = 入库审核；
- *   B. 「入库审核」板块 = 仅审核工作台（待审核 / 我的申请 两个标签、申请行在；节点库 / 模板面板与新建模板入口不再渲染），
+ *   B. 「入库审核」板块 = 仅审核工作台（待审核 / 审核记录 / 我的申请 三个标签、申请行在；节点库 / 模板面板与新建模板入口不再渲染），
  *      本地那套「待审申请」入口按钮与浮层已彻底删除；
  *   C. 端到端：在工作台里通过申请 → 公共节点库落库；
  *   D. 导入预览面板：节点行同时给「库内标准名称」与「导入表格名称」，标题下两句重复提示不再渲染，
@@ -159,8 +159,14 @@ check("B0 点击「入库审核」后进入审核板块，顶栏与标签红点�
 check("B1 「入库审核」板块内渲染审核工作台", workbench === true);
 const legacy = await ev("JSON.stringify({entry:document.querySelector('[data-node-requests-entry]')!==null,dialog:document.querySelector('[data-node-requests-dialog]')!==null})");
 check("B2 本地旧入口按钮与申请浮层已删除", legacy === JSON.stringify({ entry: false, dialog: false }), legacy);
-const tabs = await ev("JSON.stringify({pending:document.querySelector('[data-node-request-tab=\"pending\"]')!==null,mine:document.querySelector('[data-node-request-tab=\"mine\"]')!==null})");
-check("B3 工作台有「待审核 / 我的申请」两个标签（审核人 = 系统管理员）", tabs === JSON.stringify({ pending: true, mine: true }), tabs);
+const tabs = await ev("JSON.stringify({pending:document.querySelector('[data-node-request-tab=\"pending\"]')!==null,records:document.querySelector('[data-node-request-tab=\"records\"]')!==null,mine:document.querySelector('[data-node-request-tab=\"mine\"]')!==null})");
+check("B3 工作台有「待审核 / 审核记录 / 我的申请」三个标签（审核人 = 系统管理员）", tabs === JSON.stringify({ pending: true, records: true, mine: true }), tabs);
+const recordsTabOpened = await ev("(function(){var b=document.querySelector('[data-node-request-tab=\"records\"]');if(b===null){return false;}b.click();return true;})()");
+const recordsTabState = await waitFor("document.querySelector('[data-node-request-tab=\"records\"]')?.getAttribute('aria-selected') === 'true' && document.querySelector('[data-node-request-records]') !== null");
+const recordsHaveNoPending = await ev("document.querySelectorAll('[data-node-request-records] [data-node-request-status=\"pending\"]').length === 0");
+check("B3b 「审核记录」可打开且不混入待审核申请", recordsTabOpened === true && recordsTabState === true && recordsHaveNoPending === true, JSON.stringify({ recordsTabOpened, recordsTabState, recordsHaveNoPending }));
+await ev("(function(){var b=document.querySelector('[data-node-request-tab=\"pending\"]');if(b!==null){b.click();}})()");
+await waitFor("document.querySelector('[data-node-request-tab=\"pending\"]')?.getAttribute('aria-selected') === 'true'");
 const rowCount = await ev("document.querySelectorAll('[data-node-request-item]').length");
 check("B4 待审核列表出现申请行", rowCount > 0, String(rowCount));
 const boardState = await ev("JSON.stringify({board:document.querySelector(\"[data-template-board]\")!==null,newTemplate:document.querySelector(\"[data-template-new]\")!==null,workbench:document.querySelector(\"[data-node-requests-workbench]\")!==null})");
